@@ -20,8 +20,8 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
 
 ## Technischer Stack
 
-- Next.js `14.2.5`, App Router
-- React 18, React Server Components und Client Components
+- Next.js `15.5.21`, App Router
+- React 19, React Server Components und Client Components
 - TypeScript 5 im Strict-Modus
 - PostgreSQL mit Prisma 5
 - NextAuth 4, Credentials Provider und JWT-Sessions
@@ -133,6 +133,21 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
 - Secrets nur serverseitig; `.env.local` nie committen oder dokumentieren.
 - Keine Passwörter, Tokens oder vollständigen sensiblen Daten loggen.
 - In-Memory-Rate-Limit ist nur für Einzelprozess-/Entwicklungsbetrieb belastbar.
+
+## Next.js Image Optimizer
+
+- Das Projekt verwendet aktuell kein `next/image`.
+- Der interne Pfad `/_next/image` ist bewusst deaktiviert.
+- Die Sperre erfolgt über einen exakten `beforeFiles`-Rewrite in `next.config.mjs`.
+- Der Zielhandler `app/api/image-optimizer-disabled/route.ts` liefert HTTP 404.
+- `/_next/static` darf durch diese Sperre nicht beeinflusst werden.
+- Die Sperre ist eine kompensierende Sicherheitsmaßnahme wegen des transitiven
+  Sharp-/libvips-Risikos in der verwendeten Next.js-Version.
+- `next/image`, `images.remotePatterns`, `images.domains` oder ein eigener Image Loader dürfen
+  nicht eingeführt werden, ohne diese Sicherheitsentscheidung neu zu prüfen.
+- Wird `next/image` künftig benötigt, müssen die Sperre bewusst entfernt, Sharp und Next.js neu
+  bewertet, Sicherheits- und Regressionstests ergänzt und alle Release-Gates erneut ausgeführt
+  werden.
 
 ## UI-Regeln
 

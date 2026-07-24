@@ -2,7 +2,7 @@
 
 ## Architektur
 
-TWIR ist eine Next.js-14-App-Router-Anwendung. Seiten unter `app/(dashboard)` sind überwiegend
+TWIR ist eine Next.js-15-App-Router-Anwendung. Seiten unter `app/(dashboard)` sind überwiegend
 Server Components; interaktive Formulare und Dialoge unter `components/` sind Client Components.
 Schreibzugriffe laufen über Server Actions oder Route Handler, danach über `lib/services/` zu
 Prisma/PostgreSQL.

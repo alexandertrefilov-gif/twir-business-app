@@ -15,6 +15,17 @@ const nextConfig = {
     ignoreDuringBuilds: false,
   },
 
+  async rewrites() {
+    return {
+      beforeFiles: [
+        {
+          source: '/_next/image',
+          destination: '/api/image-optimizer-disabled',
+        },
+      ],
+    }
+  },
+
   // Sicherheits-Header
   async headers() {
     return [
