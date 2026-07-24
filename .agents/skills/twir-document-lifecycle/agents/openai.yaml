@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Document Lifecycle"
+  short_description: "Dokumentstatus und Lebenszyklen prüfen"
+  default_prompt: "Use $twir-document-lifecycle to review the relevant TWIR project area against the current code."

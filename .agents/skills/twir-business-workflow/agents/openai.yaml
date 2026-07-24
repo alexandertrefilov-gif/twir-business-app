@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Business Workflow"
+  short_description: "Geschäftsprozess konsistent prüfen"
+  default_prompt: "Use $twir-business-workflow to review the relevant TWIR project area against the current code."

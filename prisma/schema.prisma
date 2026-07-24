@@ -1,0 +1,781 @@
+// ============================================================
+// PRISMA SCHEMA — Business Web App
+// Industrie-Dienstleister · MVP v1
+// Phase 2 — Database Architect
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RoleName {
+  ADMIN
+  OFFICE         // Büro
+  PROJECT_MANAGER
+  EMPLOYEE       // Mitarbeiter
+  ACCOUNTING     // Buchhaltung
+}
+
+enum OfferStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CONVERTED_TO_ORDER
+}
+
+enum OrderStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  INVOICED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  FINALIZED
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+  CORRECTED
+}
+
+enum InvoiceType {
+  STANDARD          // Normale Rechnung
+  ADVANCE           // Abschlagsrechnung
+  PARTIAL           // Teilrechnung
+  FINAL             // Schlussrechnung
+  CORRECTION        // Korrekturrechnung
+  CANCELLATION      // Stornorechnung
+}
+
+enum DocumentType {
+  OFFER_PDF
+  ORDER_PDF
+  INVOICE_PDF
+  SERVICE_REPORT_PDF
+  CORRECTION_PDF
+  CANCELLATION_PDF
+  UPLOAD             // Manueller Upload
+  OTHER
+}
+
+enum NumberSequenceType {
+  OFFER
+  ORDER
+  INVOICE
+  SERVICE_REPORT
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE           // Soft delete
+  STATUS_CHANGE
+  FINALIZE
+  CANCEL
+  CORRECT
+  PAYMENT_ADDED
+  PAYMENT_REMOVED
+  DOCUMENT_UPLOADED
+  DOCUMENT_DELETED
+  LOGIN
+  LOGOUT
+  PERMISSION_CHANGED
+  SETTINGS_CHANGED
+}
+
+// ============================================================
+// IDENTITY & ACCESS MANAGEMENT
+// ============================================================
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  firstName    String     @map("first_name")
+  lastName     String     @map("last_name")
+  status       UserStatus @default(ACTIVE)
+
+  roleId       String     @map("role_id")
+  role         Role       @relation(fields: [roleId], references: [id])
+
+  // Timestamps
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  deletedAt    DateTime?  @map("deleted_at")
+  lastLoginAt  DateTime?  @map("last_login_at")
+
+  // Relations
+  createdOffers         Offer[]         @relation("OfferCreatedBy")
+  createdOrders         Order[]         @relation("OrderCreatedBy")
+  createdInvoices       Invoice[]       @relation("InvoiceCreatedBy")
+  createdServiceReports ServiceReport[] @relation("ServiceReportCreatedBy")
+  auditLogs             AuditLog[]
+
+  @@index([email])
+  @@index([roleId])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Role {
+  id          String     @id @default(uuid())
+  name        RoleName   @unique
+  displayName String     @map("display_name")
+  description String?
+
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  resource    String   // "invoice" | "customer" | "offer" | "order" | "payment" | ...
+  action      String   // "create" | "read" | "update" | "delete" | "finalize" | "cancel" | "export"
+  description String?
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  roles       RolePermission[]
+
+  @@unique([resource, action])
+  @@index([resource])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String     @map("role_id")
+  permissionId String     @map("permission_id")
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ============================================================
+// CUSTOMERS & CONTACTS
+// ============================================================
+
+model Customer {
+  id           String    @id @default(uuid())
+  number       String    @unique                  // Kundennummer, z.B. "KD-0001"
+
+  // Stammdaten
+  name         String                             // Anzeigename / Kurzname
+  legalName    String?   @map("legal_name")       // Vollständiger Firmenname §14 UStG
+  legalForm    String?   @map("legal_form")        // "GmbH", "AG", "e.K.", ...
+
+  // Steuer
+  vatId        String?   @map("vat_id")           // USt-IdNr. §14 Abs.1 S.1 Nr.3 UStG
+  taxNumber    String?   @map("tax_number")        // Steuernummer
+
+  // Adresse (flach für Snapshot-Kompatibilität)
+  street       String?
+  houseNumber  String?   @map("house_number")
+  postalCode   String?   @map("postal_code")
+  city         String?
+  country      String    @default("DE")
+
+  // Kontakt
+  email        String?
+  phone        String?
+  fax          String?
+  website      String?
+
+  // Intern
+  notes        String?
+  isActive     Boolean   @default(true) @map("is_active")
+
+  // Timestamps
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")       // Soft delete — nie hart löschen
+
+  // Relations
+  contacts     Contact[]
+  offers       Offer[]
+  orders       Order[]
+  invoices     Invoice[]
+  documents    Document[]
+
+  @@index([name])
+  @@index([number])
+  @@index([deletedAt])
+  @@map("customers")
+}
+
+model Contact {
+  id          String    @id @default(uuid())
+  customerId  String    @map("customer_id")
+  customer    Customer  @relation(fields: [customerId], references: [id])
+
+  salutation  String?                              // "Herr" | "Frau" | ...
+  firstName   String    @map("first_name")
+  lastName    String    @map("last_name")
+  position    String?                              // Abteilung / Funktion
+  email       String?
+  phone       String?
+  mobile      String?
+  isPrimary   Boolean   @default(false) @map("is_primary")
+  notes       String?
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@index([customerId])
+  @@index([deletedAt])
+  @@map("contacts")
+}
+
+// ============================================================
+// OFFERS (Angebote)
+// ============================================================
+
+model Offer {
+  id           String      @id @default(uuid())
+  offerNumber  String      @unique @map("offer_number")   // AN-2024-0001
+  customerId   String      @map("customer_id")
+  customer     Customer    @relation(fields: [customerId], references: [id])
+  status       OfferStatus @default(DRAFT)
+
+  // Snapshot beim Versenden — Kundendaten eingefroren
+  customerSnapshot Json?   @map("customer_snapshot")
+
+  // Inhalt
+  title        String?
+  introText    String?     @map("intro_text")
+  outroText    String?     @map("outro_text")
+
+  // Termine
+  offerDate    DateTime    @default(now()) @map("offer_date")
+  validUntil   DateTime?   @map("valid_until")
+  sentAt       DateTime?   @map("sent_at")
+  acceptedAt   DateTime?   @map("accepted_at")
+  rejectedAt   DateTime?   @map("rejected_at")
+  expiredAt    DateTime?   @map("expired_at")
+
+  // Beträge (cached, bei jeder Positionsänderung neu berechnet)
+  totalNet     Decimal     @default(0) @map("total_net")   @db.Decimal(12, 2)
+  totalTax     Decimal     @default(0) @map("total_tax")   @db.Decimal(12, 2)
+  totalGross   Decimal     @default(0) @map("total_gross") @db.Decimal(12, 2)
+
+  // PDF
+  pdfPath      String?     @map("pdf_path")
+  pdfVersion   Int         @default(0) @map("pdf_version")
+
+  // Ersteller
+  createdById  String      @map("created_by_id")
+  createdBy    User        @relation("OfferCreatedBy", fields: [createdById], references: [id])
+
+  // Timestamps
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+  deletedAt    DateTime?   @map("deleted_at")
+
+  // Relations
+  items        OfferItem[]
+  order        Order?                               // Resultierender Auftrag
+  documents    Document[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([offerDate])
+  @@index([deletedAt])
+  @@map("offers")
+}
+
+model OfferItem {
+  id          String  @id @default(uuid())
+  offerId     String  @map("offer_id")
+  offer       Offer   @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  position    Int                                   // Reihenfolge
+  description String
+  quantity    Decimal @db.Decimal(10, 3)
+  unit        String  @default("Stk.")
+  unitPrice   Decimal @map("unit_price") @db.Decimal(12, 2)
+  taxRate     Decimal @map("tax_rate")   @db.Decimal(5, 2)  // z.B. 19.00
+  netAmount   Decimal @map("net_amount") @db.Decimal(12, 2)
+  taxAmount   Decimal @map("tax_amount") @db.Decimal(12, 2)
+  grossAmount Decimal @map("gross_amount") @db.Decimal(12, 2)
+  notes       String?
+
+  @@index([offerId])
+  @@map("offer_items")
+}
+
+// ============================================================
+// ORDERS (Aufträge)
+// ============================================================
+
+model Order {
+  id          String      @id @default(uuid())
+  orderNumber String      @unique @map("order_number")     // AU-2024-0001
+  customerId  String      @map("customer_id")
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  offerId     String?     @unique @map("offer_id")         // Quellangebot
+  offer       Offer?      @relation(fields: [offerId], references: [id])
+  status      OrderStatus @default(OPEN)
+
+  // Snapshot beim Anlegen
+  customerSnapshot Json?  @map("customer_snapshot")
+
+  // Inhalt
+  title        String?
+  description  String?
+
+  // Termine
+  orderDate    DateTime    @default(now()) @map("order_date")
+  startDate    DateTime?   @map("start_date")
+  endDate      DateTime?   @map("end_date")
+  completedAt  DateTime?   @map("completed_at")
+
+  // Beträge (cached)
+  totalNet     Decimal     @default(0) @map("total_net")   @db.Decimal(12, 2)
+  totalTax     Decimal     @default(0) @map("total_tax")   @db.Decimal(12, 2)
+  totalGross   Decimal     @default(0) @map("total_gross") @db.Decimal(12, 2)
+
+  // Ersteller
+  createdById  String      @map("created_by_id")
+  createdBy    User        @relation("OrderCreatedBy", fields: [createdById], references: [id])
+
+  // Timestamps
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+  deletedAt    DateTime?   @map("deleted_at")
+
+  // Relations
+  items          OrderItem[]
+  serviceReports ServiceReport[]
+  invoices       Invoice[]
+  documents      Document[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([orderDate])
+  @@index([deletedAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String  @id @default(uuid())
+  orderId     String  @map("order_id")
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  position    Int
+  description String
+  quantity    Decimal @db.Decimal(10, 3)
+  unit        String  @default("Stk.")
+  unitPrice   Decimal @map("unit_price") @db.Decimal(12, 2)
+  taxRate     Decimal @map("tax_rate")   @db.Decimal(5, 2)
+  netAmount   Decimal @map("net_amount") @db.Decimal(12, 2)
+  taxAmount   Decimal @map("tax_amount") @db.Decimal(12, 2)
+  grossAmount Decimal @map("gross_amount") @db.Decimal(12, 2)
+  notes       String?
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ============================================================
+// SERVICE REPORTS (Leistungserfassung)
+// ============================================================
+
+model ServiceReport {
+  id           String    @id @default(uuid())
+  reportNumber String    @unique @map("report_number")     // LN-2024-0001
+  orderId      String    @map("order_id")
+  order        Order     @relation(fields: [orderId], references: [id])
+
+  title        String?
+  description  String?
+  reportDate   DateTime  @map("report_date")
+
+  // Beträge netto (Leistungsnachweise haben oft kein MwSt.)
+  totalNet     Decimal   @default(0) @map("total_net") @db.Decimal(12, 2)
+
+  // PDF
+  pdfPath      String?   @map("pdf_path")
+
+  // Ersteller
+  createdById  String    @map("created_by_id")
+  createdBy    User      @relation("ServiceReportCreatedBy", fields: [createdById], references: [id])
+
+  // Timestamps
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  items        ServiceReportItem[]
+  documents    Document[]
+
+  @@index([orderId])
+  @@index([reportDate])
+  @@map("service_reports")
+}
+
+model ServiceReportItem {
+  id              String        @id @default(uuid())
+  serviceReportId String        @map("service_report_id")
+  serviceReport   ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
+
+  position    Int
+  type        String            // "hours" | "material" | "flat"
+  description String
+  quantity    Decimal           @db.Decimal(10, 3)
+  unit        String            @default("Std.")
+  unitPrice   Decimal           @map("unit_price") @db.Decimal(12, 2)
+  netAmount   Decimal           @map("net_amount") @db.Decimal(12, 2)
+  notes       String?
+
+  @@index([serviceReportId])
+  @@map("service_report_items")
+}
+
+// ============================================================
+// INVOICES (Rechnungen) — kritischste Tabelle
+// ============================================================
+
+model Invoice {
+  id             String        @id @default(uuid())
+
+  // Rechnungsnummer: NULL bis Finalisierung — danach UNIQUE und unveränderlich
+  invoiceNumber  String?       @unique @map("invoice_number")
+
+  customerId     String        @map("customer_id")
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  orderId        String?       @map("order_id")
+  order          Order?        @relation(fields: [orderId], references: [id])
+
+  status         InvoiceStatus @default(DRAFT)
+  type           InvoiceType   @default(STANDARD)
+
+  // Storno / Korrektur-Verknüpfungen
+  originalInvoiceId    String? @map("original_invoice_id")   // Diese RE korrigiert/storniert welche?
+  cancelledByInvoiceId String? @map("cancelled_by_invoice_id") // Welche RE storniert diese?
+
+  // ─────────────────────────────────────────────────────────
+  // PFLICHT-SNAPSHOTS gemäß §14 UStG
+  // Müssen bei Finalisierung befüllt sein — NICHT nullable nach Finalisierung
+  // Typ: Json (nicht nullable in Service-Layer erzwungen)
+  // ─────────────────────────────────────────────────────────
+  customerSnapshot Json?       @map("customer_snapshot")     // Name, Adresse, USt-ID des Kunden
+  companySnapshot  Json?       @map("company_snapshot")      // Eigene Firma: Name, Adresse, USt-ID, Steuernummer
+
+  // Pflichtdaten §14 UStG
+  invoiceDate    DateTime      @map("invoice_date")           // Rechnungsdatum
+  deliveryDate   DateTime?     @map("delivery_date")          // Leistungsdatum (Einzeltag)
+  deliveryPeriodStart DateTime? @map("delivery_period_start") // Leistungszeitraum von
+  deliveryPeriodEnd   DateTime? @map("delivery_period_end")   // Leistungszeitraum bis
+  dueDate        DateTime?     @map("due_date")               // Zahlungsziel
+
+  // Status-Zeitstempel
+  finalizedAt    DateTime?     @map("finalized_at")
+  sentAt         DateTime?     @map("sent_at")
+
+  // Beträge (Snapshot bei Finalisierung — cached)
+  totalNet       Decimal       @default(0) @map("total_net")   @db.Decimal(12, 2)
+  totalTax       Decimal       @default(0) @map("total_tax")   @db.Decimal(12, 2)
+  totalGross     Decimal       @default(0) @map("total_gross") @db.Decimal(12, 2)
+  paidAmount     Decimal       @default(0) @map("paid_amount") @db.Decimal(12, 2)
+
+  // Zahlungsdetails
+  paymentTermDays Int?          @map("payment_term_days")
+  paymentNote    String?        @map("payment_note")          // z.B. IBAN, Verwendungszweck-Hinweis
+
+  // Texte
+  introText      String?        @map("intro_text")
+  outroText      String?        @map("outro_text")
+
+  // PDF — nach Finalisierung immutable archiviert
+  pdfPath        String?        @map("pdf_path")
+  pdfVersion     Int            @default(0) @map("pdf_version")
+  pdfGeneratedAt DateTime?      @map("pdf_generated_at")
+
+  // E-Rechnung Vorbereitung (Phase 8 — Felder existieren, bleiben leer)
+  xrechnungXml   String?        @map("xrechnung_xml")
+  zugferdData    Json?          @map("zugferd_data")
+
+  // Ersteller
+  createdById    String         @map("created_by_id")
+  createdBy      User           @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+
+  // Timestamps
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  items          InvoiceItem[]
+  payments       Payment[]
+  documents      Document[]
+  dunningNotices DunningNotice[]
+
+  @@index([customerId])
+  @@index([orderId])
+  @@index([status])
+  @@index([invoiceDate])
+  @@index([dueDate])
+  @@index([finalizedAt])
+  @@map("invoices")
+}
+
+// Rechnungspositionen — Preis-Snapshot bei Finalisierung eingefroren
+model InvoiceItem {
+  id          String  @id @default(uuid())
+  invoiceId   String  @map("invoice_id")
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  position    Int
+  description String
+
+  // ─────────────────────────────────────────────────────────
+  // PREIS-SNAPSHOT: Werte zum Zeitpunkt der Finalisierung
+  // Änderungen an Stammdaten dürfen diese Felder NICHT verändern
+  // ─────────────────────────────────────────────────────────
+  quantity    Decimal @db.Decimal(10, 3)
+  unit        String  @default("Stk.")
+  unitPrice   Decimal @map("unit_price")  @db.Decimal(12, 2)
+  taxRate     Decimal @map("tax_rate")    @db.Decimal(5, 2)   // Steuersatz-Snapshot
+  netAmount   Decimal @map("net_amount")  @db.Decimal(12, 2)
+  taxAmount   Decimal @map("tax_amount")  @db.Decimal(12, 2)
+  grossAmount Decimal @map("gross_amount") @db.Decimal(12, 2)
+  notes       String?
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ============================================================
+// PAYMENTS (Zahlungen)
+// ============================================================
+
+model Payment {
+  id          String    @id @default(uuid())
+  invoiceId   String    @map("invoice_id")
+  invoice     Invoice   @relation(fields: [invoiceId], references: [id])
+
+  amount      Decimal   @db.Decimal(12, 2)
+  paymentDate DateTime  @map("payment_date")
+  method      String?                           // "bank_transfer" | "cash" | "sepa_direct"
+  reference   String?                           // Verwendungszweck / Buchungsreferenz
+
+  notes       String?
+
+  // Soft delete — Zahlung nie hart löschen, Audit-Log Pflicht
+  createdAt   DateTime  @default(now()) @map("created_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@index([invoiceId])
+  @@index([paymentDate])
+  @@map("payments")
+}
+
+// ============================================================
+// DOCUMENTS (Dokumentenarchiv)
+// ============================================================
+
+model Document {
+  id          String       @id @default(uuid())
+  type        DocumentType
+
+  // Polymorphe Verknüpfungen (optional — Dokument kann zu mehreren Entities gehören)
+  customerId      String?  @map("customer_id")
+  customer        Customer? @relation(fields: [customerId], references: [id])
+  offerId         String?  @map("offer_id")
+  offer           Offer?   @relation(fields: [offerId], references: [id])
+  orderId         String?  @map("order_id")
+  order           Order?   @relation(fields: [orderId], references: [id])
+  serviceReportId String?  @map("service_report_id")
+  serviceReport   ServiceReport? @relation(fields: [serviceReportId], references: [id])
+  invoiceId       String?  @map("invoice_id")
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+
+  // Dateiinfo
+  filename        String                        // Generierter Dateiname (eindeutig)
+  originalName    String   @map("original_name") // Originaler Upload-Name
+  mimeType        String   @map("mime_type")
+  fileSize        Int      @map("file_size")    // Bytes
+  storagePath     String   @map("storage_path") // Interner Pfad / S3-Key
+  checksum        String?                       // SHA-256 für Integritätsprüfung
+
+  // Versionierung
+  version         Int      @default(1)
+  isArchived      Boolean  @default(false) @map("is_archived")
+
+  uploadedById    String   @map("uploaded_by_id")  // userId
+
+  // Timestamps
+  createdAt       DateTime @default(now()) @map("created_at")
+  deletedAt       DateTime? @map("deleted_at")    // Soft delete
+
+  @@index([customerId])
+  @@index([offerId])
+  @@index([orderId])
+  @@index([invoiceId])
+  @@index([type])
+  @@index([deletedAt])
+  @@map("documents")
+}
+
+// ============================================================
+// NUMBER SEQUENCES (Nummernkreise)
+// ============================================================
+
+model NumberSequence {
+  id          String             @id @default(uuid())
+  type        NumberSequenceType
+  year        Int                                  // z.B. 2024
+
+  prefix      String             @default("")      // z.B. "RE", "AN", "AU"
+  lastNumber  Int                @default(0) @map("last_number")
+  format      String             @default("{prefix}{year}-{number:04}")
+
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  // Kritisch: Unique constraint verhindert doppelte Sequenzen
+  @@unique([type, year])
+  @@map("number_sequences")
+}
+
+// ============================================================
+// AUDIT LOG — unveränderlich, kein Update, kein Delete
+// ============================================================
+
+model AuditLog {
+  id          String      @id @default(uuid())
+
+  // Wer — nullable für System-Aktionen
+  userId      String?     @map("user_id")
+  user        User?       @relation(fields: [userId], references: [id])
+  userEmail   String?     @map("user_email")    // Snapshot des E-Mail zum Zeitpunkt
+
+  // Was
+  action      AuditAction
+  entityType  String      @map("entity_type")   // "invoice" | "customer" | "offer" | ...
+  entityId    String      @map("entity_id")
+
+  // Zustand vor und nach der Änderung
+  oldValue    Json?       @map("old_value")
+  newValue    Json?       @map("new_value")
+
+  // Kontext
+  metadata    Json?       // { ip, userAgent, reason, ... }
+
+  // Timestamp — kein updatedAt, kein deletedAt — IMMUTABLE
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// COMPANY SETTINGS (Firmeneinstellungen)
+// ============================================================
+
+model CompanySetting {
+  id           String   @id @default(uuid())
+
+  // Firmendaten — erscheinen auf allen Dokumenten
+  companyName  String   @map("company_name")
+  legalForm    String?  @map("legal_form")       // "GmbH", "AG", "e.K.", ...
+  street       String?
+  houseNumber  String?  @map("house_number")
+  postalCode   String?  @map("postal_code")
+  city         String?
+  country      String   @default("DE")
+
+  // Steuer — Pflicht auf Rechnungen §14 UStG
+  vatId        String?  @map("vat_id")           // USt-IdNr.
+  taxNumber    String?  @map("tax_number")        // Steuernummer
+  taxOffice    String?  @map("tax_office")        // Finanzamt
+
+  // Bankverbindung — Pflicht auf Rechnungen
+  bankName     String?  @map("bank_name")
+  iban         String?
+  bic          String?
+
+  // Kontakt
+  email        String?
+  phone        String?
+  fax          String?
+  website      String?
+
+  // Register (optional)
+  registerCourt   String? @map("register_court")    // Amtsgericht
+  registerNumber  String? @map("register_number")   // HRB-Nummer
+  managingDirector String? @map("managing_director") // Geschäftsführer
+
+  // Rechnungs-Defaults
+  invoicePrefix        String  @default("RE")  @map("invoice_prefix")
+  offerPrefix          String  @default("AN")  @map("offer_prefix")
+  orderPrefix          String  @default("AU")  @map("order_prefix")
+  serviceReportPrefix  String  @default("LN")  @map("service_report_prefix")
+  defaultPaymentTermDays Int   @default(14)    @map("default_payment_term_days")
+  defaultTaxRate       Decimal @default(19.00) @map("default_tax_rate") @db.Decimal(5, 2)
+
+  // Standard-Texte
+  defaultInvoiceIntro  String? @map("default_invoice_intro")
+  defaultInvoiceOutro  String? @map("default_invoice_outro")
+  defaultOfferIntro    String? @map("default_offer_intro")
+  defaultOfferOutro    String? @map("default_offer_outro")
+
+  // Logo
+  logoPath     String?  @map("logo_path")
+  logoStorageKey String? @map("logo_storage_key")
+
+  // Timestamps
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("company_settings")
+}
+
+// ─── Phase 7: DunningNotice ─────────────────────────────────
+model DunningNotice {
+  id           String    @id @default(uuid())
+  invoiceId    String    @map("invoice_id")
+  invoice      Invoice   @relation(fields: [invoiceId], references: [id])
+  level        Int
+  levelLabel   String    @map("level_label")
+  sentAt       DateTime? @map("sent_at")
+  dueDate      DateTime  @map("due_date")
+  fee          Decimal?  @db.Decimal(10, 2) @map("fee")
+  pdfPath      String?   @map("pdf_path")
+  createdById  String    @map("created_by_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  deletedAt    DateTime? @map("deleted_at")
+  @@index([invoiceId])
+  @@map("dunning_notices")
+}

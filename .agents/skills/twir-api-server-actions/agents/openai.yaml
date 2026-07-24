@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR API Server Actions"
+  short_description: "APIs und Server Actions prüfen"
+  default_prompt: "Use $twir-api-server-actions to review the relevant TWIR project area against the current code."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Code Review"
+  short_description: "Änderungen risikobasiert prüfen"
+  default_prompt: "Use $twir-code-review to review the relevant TWIR project area against the current code."

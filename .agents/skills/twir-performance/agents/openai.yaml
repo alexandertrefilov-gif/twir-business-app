@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Performance"
+  short_description: "Performanceprobleme evidenzbasiert prüfen"
+  default_prompt: "Use $twir-performance to review the relevant TWIR project area against the current code."

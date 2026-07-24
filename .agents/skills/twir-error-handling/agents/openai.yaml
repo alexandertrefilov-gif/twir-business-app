@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Error Handling"
+  short_description: "Fehlerbehandlung konsistent prüfen"
+  default_prompt: "Use $twir-error-handling to review the relevant TWIR project area against the current code."

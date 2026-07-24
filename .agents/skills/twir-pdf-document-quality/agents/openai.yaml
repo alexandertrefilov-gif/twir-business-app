@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR PDF Document Quality"
+  short_description: "PDF-Dokumente fachlich prüfen"
+  default_prompt: "Use $twir-pdf-document-quality to review the relevant TWIR project area against the current code."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Deployment Operations"
+  short_description: "Build und Betrieb sicher prüfen"
+  default_prompt: "Use $twir-deployment-operations to review the relevant TWIR project area against the current code."

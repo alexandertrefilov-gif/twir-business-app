@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR UI UX"
+  short_description: "Business-Oberfläche konsistent prüfen"
+  default_prompt: "Use $twir-ui-ux to review the relevant TWIR project area against the current code."

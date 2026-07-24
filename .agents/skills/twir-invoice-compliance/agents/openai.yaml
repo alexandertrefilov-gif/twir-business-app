@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Invoice Compliance"
+  short_description: "Rechnungsregeln und Storno prüfen"
+  default_prompt: "Use $twir-invoice-compliance to review the relevant TWIR project area against the current code."

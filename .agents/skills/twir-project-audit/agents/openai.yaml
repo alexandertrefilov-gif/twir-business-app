@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Project Audit"
+  short_description: "Projektzustand read-only analysieren"
+  default_prompt: "Use $twir-project-audit to review the relevant TWIR project area against the current code."

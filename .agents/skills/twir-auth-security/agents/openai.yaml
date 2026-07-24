@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Auth Security"
+  short_description: "Authentifizierung und Zugriffsschutz prüfen"
+  default_prompt: "Use $twir-auth-security to review the relevant TWIR project area against the current code."

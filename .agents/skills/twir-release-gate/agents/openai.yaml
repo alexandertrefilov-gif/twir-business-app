@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Release Gate"
+  short_description: "Releasefreigabe nachvollziehbar prüfen"
+  default_prompt: "Use $twir-release-gate to review the relevant TWIR project area against the current code."

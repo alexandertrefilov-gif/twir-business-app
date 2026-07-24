@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Safe Feature Development"
+  short_description: "Features architekturtreu umsetzen"
+  default_prompt: "Use $twir-safe-feature-development to review the relevant TWIR project area against the current code."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Database Migration"
+  short_description: "Prisma-Migrationen sicher planen"
+  default_prompt: "Use $twir-database-migration to review the relevant TWIR project area against the current code."

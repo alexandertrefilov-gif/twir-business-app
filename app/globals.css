@@ -1,0 +1,185 @@
+/* app/globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+
+@layer base {
+  :root {
+    /* ── Brand ── */
+    --accent:          215 70% 38%;   /* blue-700 hsl */
+    --accent-fg:       0 0% 100%;
+
+    /* ── Layout ── */
+    --sidebar-bg:      220 22% 11%;   /* deep navy-black */
+    --sidebar-border:  220 18% 16%;
+    --sidebar-text:    220 12% 62%;
+    --sidebar-hover:   220 18% 16%;
+    --sidebar-active-bg: 220 16% 17%;
+
+    /* ── Surfaces ── */
+    --background:      36 15% 96%;    /* warm off-white */
+    --card:            0 0% 100%;
+    --card-border:     30 10% 88%;
+    --popover:         0 0% 100%;
+
+    /* ── Text ── */
+    --foreground:      222 22% 12%;
+    --muted-foreground: 220 10% 46%;
+    --subtle-foreground: 220 8% 62%;
+
+    /* ── UI ── */
+    --border:          30 10% 88%;
+    --input:           30 10% 88%;
+    --ring:            215 70% 38%;
+
+    /* ── Semantic ── */
+    --success:         142 60% 36%;
+    --success-bg:      142 50% 95%;
+    --warning:         38 90% 42%;
+    --warning-bg:      38 80% 95%;
+    --danger:          0 68% 44%;
+    --danger-bg:       0 60% 96%;
+    --info:            215 70% 38%;
+    --info-bg:         215 70% 95%;
+
+    /* ── shadcn ── */
+    --primary:         215 70% 38%;
+    --primary-foreground: 0 0% 100%;
+    --secondary:       220 8% 96%;
+    --secondary-foreground: 222 22% 12%;
+    --muted:           220 8% 96%;
+    --destructive:     0 68% 44%;
+    --destructive-foreground: 0 0% 100%;
+    --radius:          0.375rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Mono for numbers, codes, IDs */
+  .mono {
+    font-family: 'DM Mono', monospace;
+    font-feature-settings: "tnum";
+  }
+
+  /* Table number columns */
+  td.num, th.num {
+    font-family: 'DM Mono', monospace;
+    font-feature-settings: "tnum";
+    font-size: 0.8125rem;
+  }
+}
+
+@layer components {
+  /* ── Sidebar ── */
+  .sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded text-sm
+           transition-colors duration-100 cursor-pointer select-none;
+    color: hsl(var(--sidebar-text));
+  }
+  .sidebar-item:hover {
+    background: hsl(var(--sidebar-hover));
+    color: hsl(0 0% 90%);
+  }
+  .sidebar-item.active {
+    background: hsl(var(--sidebar-active-bg));
+    color: hsl(0 0% 100%);
+    @apply border-l-2 border-blue-500 -ml-px pl-[11px];
+  }
+  .sidebar-item .icon {
+    @apply w-4 h-4 shrink-0 opacity-70;
+  }
+  .sidebar-item.active .icon {
+    @apply opacity-100;
+  }
+
+  /* ── Page Layout ── */
+  .page-content {
+    @apply flex-1 min-h-screen flex flex-col;
+    background: hsl(var(--background));
+  }
+
+  /* ── Cards ── */
+  .card-base {
+    @apply bg-white rounded-lg border border-stone-200;
+  }
+
+  /* ── Stat card ── */
+  .stat-card {
+    @apply bg-white rounded-lg border border-stone-200 p-5;
+  }
+  .stat-value {
+    @apply text-2xl font-600 tracking-tight mono;
+  }
+  .stat-label {
+    @apply text-xs uppercase tracking-widest text-muted-foreground font-500 mt-1;
+  }
+
+  /* ── Table ── */
+  .data-table {
+    @apply w-full text-sm;
+  }
+  .data-table thead tr {
+    @apply border-b border-stone-200 bg-stone-50;
+  }
+  .data-table th {
+    @apply px-4 py-2.5 text-left text-xs font-600 uppercase tracking-wider
+           text-muted-foreground whitespace-nowrap;
+  }
+  .data-table td {
+    @apply px-4 py-3 border-b border-stone-100 align-middle;
+  }
+  .data-table tbody tr:hover {
+    @apply bg-stone-50/60;
+  }
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* ── Form ── */
+  .form-section {
+    @apply bg-white rounded-lg border border-stone-200 p-6;
+  }
+  .form-section + .form-section {
+    @apply mt-4;
+  }
+  .form-section-title {
+    @apply text-sm font-600 text-foreground mb-4 pb-3 border-b border-stone-100;
+  }
+  .field-label {
+    @apply block text-xs font-500 uppercase tracking-wider text-muted-foreground mb-1.5;
+  }
+  .field-required::after {
+    content: ' *';
+    @apply text-red-500;
+  }
+  .field-error {
+    @apply text-xs text-red-600 mt-1;
+  }
+  .field-hint {
+    @apply text-xs text-muted-foreground mt-1;
+  }
+
+  /* ── Status badges ── */
+  .badge-base {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-500;
+    font-family: 'DM Mono', monospace;
+  }
+  .badge-draft   { @apply bg-stone-100 text-stone-600 border border-stone-200; }
+  .badge-active  { @apply bg-emerald-50 text-emerald-700 border border-emerald-200; }
+  .badge-sent    { @apply bg-blue-50 text-blue-700 border border-blue-200; }
+  .badge-paid    { @apply bg-emerald-50 text-emerald-700 border border-emerald-200; }
+  .badge-overdue { @apply bg-red-50 text-red-700 border border-red-200; }
+  .badge-warning { @apply bg-amber-50 text-amber-700 border border-amber-200; }
+  .badge-cancelled { @apply bg-stone-100 text-stone-500 border border-stone-200; }
+}

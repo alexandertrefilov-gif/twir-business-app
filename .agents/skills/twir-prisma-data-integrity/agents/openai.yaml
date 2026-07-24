@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Prisma Data Integrity"
+  short_description: "Prisma-Datenintegrität prüfen"
+  default_prompt: "Use $twir-prisma-data-integrity to review the relevant TWIR project area against the current code."
