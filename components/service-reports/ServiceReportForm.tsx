@@ -1,8 +1,7 @@
 'use client'
 // components/service-reports/ServiceReportForm.tsx
 
-import { useMemo, useState } from 'react'
-import { useFormState } from 'react-dom'
+import { useActionState, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
 import type { ActionState } from '@/app/(dashboard)/services/actions'
@@ -62,7 +61,7 @@ const TYPE_COLORS: Record<ServiceItemType, string> = {
 export function ServiceReportForm({
   mode, orders, defaults = {}, action, lockOrder,
 }: ServiceReportFormProps) {
-  const [state, formAction] = useFormState(action, INIT)
+  const [state, formAction] = useActionState(action, INIT)
   const router = useRouter()
 
   const [items, setItems] = useState<ItemRow[]>(

@@ -9,23 +9,25 @@ import { DeleteCustomerButton } from '@/components/customers/DeleteCustomerButto
 import { format }         from 'date-fns'
 import { de }             from 'date-fns/locale'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
   await requirePermission(Resource.CUSTOMER, Action.READ)
 
   try {
-    const c = await getCustomerById(params.id)
+    const c = await getCustomerById(id)
     return { title: c.name }
   } catch {
     return { title: 'Kunde' }
   }
 }
 
-export default async function CustomerDetailPage({ params }: { params: { id: string } }) {
+export default async function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.CUSTOMER, Action.READ)
 
   let customer
   try {
-    customer = await getCustomerById(params.id)
+    customer = await getCustomerById(id)
   } catch {
     notFound()
   }

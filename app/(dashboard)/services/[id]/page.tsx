@@ -18,11 +18,12 @@ const TYPE_STYLES: Record<ServiceItemType, string> = {
   flat:     'bg-violet-50 text-violet-700 border-violet-200',
 }
 
-export default async function ServiceReportDetailPage({ params }: { params: { id: string } }) {
+export default async function ServiceReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const user = await requirePermission(Resource.SERVICE_REPORT, Action.READ)
 
   let report
-  try { report = await getServiceReportById(params.id, user.userId, user.role) }
+  try { report = await getServiceReportById(id, user.userId, user.role) }
   catch { notFound() }
 
   const [canEdit, canDelete] = await Promise.all([

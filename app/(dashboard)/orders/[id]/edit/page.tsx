@@ -8,16 +8,18 @@ import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }         from '@/lib/db/prisma'
 import { updateOrderAction } from '../../actions'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
-  try { const o = await getOrderById(params.id); return { title: `${o.orderNumber} bearbeiten` } }
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
+  try { const o = await getOrderById(id); return { title: `${o.orderNumber} bearbeiten` } }
   catch { return { title: 'Auftrag bearbeiten' } }
 }
 
-export default async function EditOrderPage({ params }: { params: { id: string } }) {
+export default async function EditOrderPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.ORDER, Action.UPDATE)
 
   let order
-  try { order = await getOrderById(params.id) }
+  try { order = await getOrderById(id) }
   catch { notFound() }
 
   // Only OPEN orders can be edited

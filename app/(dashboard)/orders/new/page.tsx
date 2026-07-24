@@ -8,7 +8,8 @@ import { createOrderAction } from '../actions'
 
 export const metadata: Metadata = { title: 'Neuer Auftrag' }
 
-export default async function NewOrderPage({ searchParams }: { searchParams: { customer?: string } }) {
+export default async function NewOrderPage({ searchParams }: { searchParams: Promise<{ customer?: string }> }) {
+  const query = await searchParams
   await requirePermission(Resource.ORDER, Action.CREATE)
 
   const customers = await prisma.customer.findMany({
@@ -27,7 +28,7 @@ export default async function NewOrderPage({ searchParams }: { searchParams: { c
         <OrderForm
           mode="create"
           customers={customers}
-          defaults={{ customerId: searchParams.customer }}
+          defaults={{ customerId: query.customer }}
           action={createOrderAction}
         />
       </div>

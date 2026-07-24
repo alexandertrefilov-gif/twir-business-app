@@ -1,7 +1,7 @@
 'use client'
 // components/settings/SettingsForm.tsx
 
-import { useFormState } from 'react-dom'
+import { useActionState } from 'react'
 import type { ActionState } from '@/app/(dashboard)/settings/actions'
 import { updateSettingsAction } from '@/app/(dashboard)/settings/actions'
 import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
@@ -21,7 +21,7 @@ interface SettingsFormProps {
 const INIT: ActionState = {}
 
 export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
-  const [state, formAction] = useFormState(updateSettingsAction, INIT)
+  const [state, formAction] = useActionState(updateSettingsAction, INIT)
   const fe = state.fieldErrors ?? {}
   const v  = (key: string) => String(defaults[key] ?? '')
 

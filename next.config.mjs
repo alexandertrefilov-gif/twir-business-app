@@ -1,7 +1,12 @@
 // next.config.mjs
+import { fileURLToPath } from 'node:url'
+
+const projectRoot = fileURLToPath(new URL('.', import.meta.url))
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  outputFileTracingRoot: projectRoot,
+
   // Strikte Typenprüfung im Build
   typescript: {
     ignoreBuildErrors: false,

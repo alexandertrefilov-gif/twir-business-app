@@ -10,11 +10,12 @@ import { updateServiceReportAction } from '../../actions'
 
 export const metadata: Metadata = { title: 'Leistungsnachweis bearbeiten' }
 
-export default async function EditServiceReportPage({ params }: { params: { id: string } }) {
+export default async function EditServiceReportPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const user = await requirePermission(Resource.SERVICE_REPORT, Action.UPDATE)
 
   let report
-  try { report = await getServiceReportById(params.id, user.userId, user.role) }
+  try { report = await getServiceReportById(id, user.userId, user.role) }
   catch { notFound() }
 
   // Employee restriction checked inside getServiceReportById – if we reach here we're allowed

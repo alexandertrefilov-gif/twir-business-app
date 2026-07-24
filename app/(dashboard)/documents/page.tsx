@@ -15,17 +15,18 @@ interface SearchParams {
   page?:      string
 }
 
-export default async function DocumentsPage({ searchParams }: { searchParams: SearchParams }) {
-  const page   = parseInt(searchParams.page ?? '1', 10)
-  const search = searchParams.search    ?? ''
+export default async function DocumentsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const query  = await searchParams
+  const page   = parseInt(query.page ?? '1', 10)
+  const search = query.search    ?? ''
 
   const [result, canDelete] = await Promise.all([
     getDocuments({
       search,
       page,
-      customerId: searchParams.customerId,
-      invoiceId:  searchParams.invoiceId,
-      orderId:    searchParams.orderId,
+      customerId: query.customerId,
+      invoiceId:  query.invoiceId,
+      orderId:    query.orderId,
     }),
     hasPermission(Resource.DOCUMENT, Action.DELETE),
   ])

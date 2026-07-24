@@ -51,16 +51,17 @@ function getAuditActionColor(action: string): string {
     : 'bg-stone-100 text-stone-600 border-stone-200'
 }
 
-export default async function AuditLogPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function AuditLogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const query = await searchParams
   await requirePermission(Resource.AUDIT_LOG, Action.READ)
 
-  const page       = parseInt(searchParams.page ?? '1', 10)
-  const entityType = searchParams.entityType ?? ''
-  const actionValue = searchParams.action    ?? ''
+  const page       = parseInt(query.page ?? '1', 10)
+  const entityType = query.entityType ?? ''
+  const actionValue = query.action    ?? ''
   const action     = isAuditAction(actionValue) ? actionValue : undefined
-  const search     = searchParams.search     ?? ''
-  const from       = searchParams.from ? new Date(searchParams.from) : undefined
-  const to         = searchParams.to   ? new Date(searchParams.to)   : undefined
+  const search     = query.search     ?? ''
+  const from       = query.from ? new Date(query.from) : undefined
+  const to         = query.to   ? new Date(query.to)   : undefined
 
   const result = await getAuditLogs({
     entityType: entityType || undefined,
@@ -112,10 +113,10 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Sea
               </select>
 
               <div className="flex items-center gap-1.5">
-                <input type="date" name="from" defaultValue={searchParams.from ?? ''}
+                <input type="date" name="from" defaultValue={query.from ?? ''}
                   className="h-8 px-2.5 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
                 <span className="text-xs text-muted-foreground">–</span>
-                <input type="date" name="to" defaultValue={searchParams.to ?? ''}
+                <input type="date" name="to" defaultValue={query.to ?? ''}
                   className="h-8 px-2.5 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
               </div>
 
@@ -123,10 +124,10 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Sea
                 className="h-8 px-3 rounded-md bg-stone-800 text-white text-xs font-500 hover:bg-stone-900 transition-colors">
                 Filtern
               </button>
-              {(search || entityType || actionValue || searchParams.from || searchParams.to) && (
-                <a href="/audit" className="text-xs text-muted-foreground hover:text-foreground">
+              {(search || entityType || actionValue || query.from || query.to) && (
+                <Link href="/audit" className="text-xs text-muted-foreground hover:text-foreground">
                   Zurücksetzen
-                </a>
+                </Link>
               )}
               <p className="ml-auto text-xs text-muted-foreground mono">
                 {result.total.toLocaleString('de-DE')} Einträge
@@ -213,13 +214,13 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Sea
               </p>
               <div className="flex gap-1">
                 {result.page > 1 && (
-                  <a href={`?${new URLSearchParams({ ...searchParams, page: String(result.page - 1) })}`}
+                  <a href={`?${new URLSearchParams({ ...query, page: String(result.page - 1) })}`}
                     className="h-7 px-2.5 rounded text-xs font-500 mono bg-white border border-stone-200 hover:bg-stone-50 transition-colors">
                     ←
                   </a>
                 )}
                 {result.page < result.totalPages && (
-                  <a href={`?${new URLSearchParams({ ...searchParams, page: String(result.page + 1) })}`}
+                  <a href={`?${new URLSearchParams({ ...query, page: String(result.page + 1) })}`}
                     className="h-7 px-2.5 rounded text-xs font-500 mono bg-white border border-stone-200 hover:bg-stone-50 transition-colors">
                     →
                   </a>

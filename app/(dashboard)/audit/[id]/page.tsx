@@ -10,10 +10,11 @@ import { de }              from 'date-fns/locale'
 
 export const metadata: Metadata = { title: 'Audit-Eintrag' }
 
-export default async function AuditDetailPage({ params }: { params: { id: string } }) {
+export default async function AuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.AUDIT_LOG, Action.READ)
 
-  const entry = await getAuditLogById(params.id)
+  const entry = await getAuditLogById(id)
   if (!entry) notFound()
 
   return (

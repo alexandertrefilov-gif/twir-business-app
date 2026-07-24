@@ -12,23 +12,25 @@ import { format }           from 'date-fns'
 import { de }               from 'date-fns/locale'
 import type { OfferStatus } from '@/types/enums'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
   await requirePermission(Resource.OFFER, Action.READ)
 
   try {
-    const o = await getOfferById(params.id)
+    const o = await getOfferById(id)
     return { title: o.offerNumber }
   } catch {
     return { title: 'Angebot' }
   }
 }
 
-export default async function OfferDetailPage({ params }: { params: { id: string } }) {
+export default async function OfferDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.OFFER, Action.READ)
 
   let offer
   try {
-    offer = await getOfferById(params.id)
+    offer = await getOfferById(id)
   } catch {
     notFound()
   }

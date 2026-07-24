@@ -112,37 +112,37 @@ const protectedPages: ProtectedEntry[] = [
     name: 'Kundenliste',
     resource: Resource.CUSTOMER,
     query: queries.getCustomers,
-    invoke: () => CustomersPage({ searchParams: {} }),
+    invoke: () => CustomersPage({ searchParams: Promise.resolve({}) }),
   },
   {
     name: 'Kundendetails',
     resource: Resource.CUSTOMER,
     query: queries.getCustomerById,
-    invoke: () => CustomerDetailPage({ params: { id: 'customer-1' } }),
+    invoke: () => CustomerDetailPage({ params: Promise.resolve({ id: 'customer-1' }) }),
   },
   {
     name: 'Angebotsliste',
     resource: Resource.OFFER,
     query: queries.getOffers,
-    invoke: () => OffersPage({ searchParams: {} }),
+    invoke: () => OffersPage({ searchParams: Promise.resolve({}) }),
   },
   {
     name: 'Angebotsdetails',
     resource: Resource.OFFER,
     query: queries.getOfferById,
-    invoke: () => OfferDetailPage({ params: { id: 'offer-1' } }),
+    invoke: () => OfferDetailPage({ params: Promise.resolve({ id: 'offer-1' }) }),
   },
   {
     name: 'Rechnungsliste',
     resource: Resource.INVOICE,
     query: queries.getInvoices,
-    invoke: () => InvoicesPage({ searchParams: {} }),
+    invoke: () => InvoicesPage({ searchParams: Promise.resolve({}) }),
   },
   {
     name: 'Rechnungsdetails',
     resource: Resource.INVOICE,
     query: queries.getInvoiceById,
-    invoke: () => InvoiceDetailPage({ params: { id: 'invoice-1' } }),
+    invoke: () => InvoiceDetailPage({ params: Promise.resolve({ id: 'invoice-1' }) }),
   },
 ]
 
@@ -151,37 +151,37 @@ const protectedMetadata: ProtectedEntry[] = [
     name: 'Kunden-Metadaten',
     resource: Resource.CUSTOMER,
     query: queries.getCustomerById,
-    invoke: () => generateCustomerMetadata({ params: { id: 'customer-1' } }),
+    invoke: () => generateCustomerMetadata({ params: Promise.resolve({ id: 'customer-1' }) }),
   },
   {
     name: 'Kunden-Bearbeitungsmetadaten',
     resource: Resource.CUSTOMER,
     query: queries.getCustomerById,
-    invoke: () => generateEditCustomerMetadata({ params: { id: 'customer-1' } }),
+    invoke: () => generateEditCustomerMetadata({ params: Promise.resolve({ id: 'customer-1' }) }),
   },
   {
     name: 'Angebots-Metadaten',
     resource: Resource.OFFER,
     query: queries.getOfferById,
-    invoke: () => generateOfferMetadata({ params: { id: 'offer-1' } }),
+    invoke: () => generateOfferMetadata({ params: Promise.resolve({ id: 'offer-1' }) }),
   },
   {
     name: 'Angebots-Bearbeitungsmetadaten',
     resource: Resource.OFFER,
     query: queries.getOfferById,
-    invoke: () => generateEditOfferMetadata({ params: { id: 'offer-1' } }),
+    invoke: () => generateEditOfferMetadata({ params: Promise.resolve({ id: 'offer-1' }) }),
   },
   {
     name: 'Rechnungs-Metadaten',
     resource: Resource.INVOICE,
     query: queries.getInvoiceById,
-    invoke: () => generateInvoiceMetadata({ params: { id: 'invoice-1' } }),
+    invoke: () => generateInvoiceMetadata({ params: Promise.resolve({ id: 'invoice-1' }) }),
   },
   {
     name: 'Rechnungs-Bearbeitungsmetadaten',
     resource: Resource.INVOICE,
     query: queries.getInvoiceById,
-    invoke: () => generateEditInvoiceMetadata({ params: { id: 'invoice-1' } }),
+    invoke: () => generateEditInvoiceMetadata({ params: Promise.resolve({ id: 'invoice-1' }) }),
   },
 ]
 
@@ -259,7 +259,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
     authState.role = RoleName.EMPLOYEE
 
     await expect(
-      InvoiceDetailPage({ params: { id: 'invoice-1' } }),
+      InvoiceDetailPage({ params: Promise.resolve({ id: 'invoice-1' }) }),
     ).rejects.toBeInstanceOf(ForbiddenError)
 
     expect(queries.getInvoiceById).not.toHaveBeenCalled()
@@ -270,7 +270,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
     authState.role = RoleName.PROJECT_MANAGER
     queries.getInvoiceById.mockResolvedValue(invoiceFixture())
 
-    await InvoiceDetailPage({ params: { id: 'invoice-1' } })
+    await InvoiceDetailPage({ params: Promise.resolve({ id: 'invoice-1' }) })
 
     expect(queries.getInvoiceById).toHaveBeenCalledTimes(1)
     expect(authState.hasPermission)
@@ -283,7 +283,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
     authState.role = RoleName.ACCOUNTING
     queries.getInvoiceById.mockResolvedValue(invoiceFixture())
 
-    await InvoiceDetailPage({ params: { id: 'invoice-1' } })
+    await InvoiceDetailPage({ params: Promise.resolve({ id: 'invoice-1' }) })
 
     expect(queries.getInvoicePayments).toHaveBeenCalledWith('invoice-1')
     const paymentReadCall = authState.hasPermission.mock.calls.findIndex(

@@ -12,8 +12,9 @@ import fs                            from 'fs/promises'
 
 export async function GET(
   _req:     NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+  const { id } = await params
   // 1. Auth
   const session = await getServerSession(authOptions)
   if (!session?.user) {
@@ -23,7 +24,7 @@ export async function GET(
   // 2. Fetch document metadata
   let doc
   try {
-    doc = await getDocumentById(params.id)
+    doc = await getDocumentById(id)
   } catch {
     return NextResponse.json({ error: 'Nicht gefunden' }, { status: 404 })
   }

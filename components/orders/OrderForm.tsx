@@ -1,8 +1,7 @@
 'use client'
 // components/orders/OrderForm.tsx
 
-import { useMemo, useState } from 'react'
-import { useFormState } from 'react-dom'
+import { useActionState, useMemo, useState } from 'react'
 import { useRouter }   from 'next/navigation'
 import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
 import type { ActionState } from '@/app/(dashboard)/orders/actions'
@@ -45,7 +44,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10)
 const INIT: ActionState = {}
 
 export function OrderForm({ mode, customers, defaults = {}, action, lockCustomer }: OrderFormProps) {
-  const [state, formAction] = useFormState(action, INIT)
+  const [state, formAction] = useActionState(action, INIT)
   const router    = useRouter()
   const [items, setItems] = useState<ItemRow[]>(defaults.items ?? [])
   const [showItems, setShowItems] = useState((defaults.items?.length ?? 0) > 0)

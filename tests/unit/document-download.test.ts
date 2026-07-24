@@ -41,7 +41,7 @@ describe('Dokumentdownload', () => {
 
     const response = await GET(
       new NextRequest('http://localhost/api/documents/document-1/download'),
-      { params: { id: 'document-1' } },
+      { params: Promise.resolve({ id: 'document-1' }) },
     )
 
     expect(response.status).toBe(200)
@@ -58,7 +58,7 @@ describe('Dokumentdownload', () => {
 
     const response = await GET(
       new NextRequest('http://localhost/api/documents/document-1/download'),
-      { params: { id: 'document-1' } },
+      { params: Promise.resolve({ id: 'document-1' }) },
     )
 
     expect(response.status).toBe(401)

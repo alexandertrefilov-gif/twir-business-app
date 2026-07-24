@@ -13,10 +13,11 @@ export const metadata: Metadata = { title: 'Aufträge' }
 
 interface SearchParams { search?: string; status?: string; page?: string }
 
-export default async function OrdersPage({ searchParams }: { searchParams: SearchParams }) {
-  const page   = parseInt(searchParams.page ?? '1', 10)
-  const search = searchParams.search ?? ''
-  const status = searchParams.status ?? ''
+export default async function OrdersPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const query  = await searchParams
+  const page   = parseInt(query.page ?? '1', 10)
+  const search = query.search ?? ''
+  const status = query.status ?? ''
 
   const [result, canCreate] = await Promise.all([
     getOrders({ search, status: status || undefined, page }),

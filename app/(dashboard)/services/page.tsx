@@ -11,10 +11,11 @@ export const metadata: Metadata = { title: 'Leistungen' }
 
 interface SearchParams { search?: string; page?: string }
 
-export default async function ServicesPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function ServicesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const query      = await searchParams
   const user       = await requirePermission(Resource.SERVICE_REPORT, Action.READ)
-  const page       = parseInt(searchParams.page ?? '1', 10)
-  const search     = searchParams.search ?? ''
+  const page       = parseInt(query.page ?? '1', 10)
+  const search     = query.search ?? ''
 
   const [result, canCreate] = await Promise.all([
     getServiceReports({ search, page, userId: user.userId, userRole: user.role }),

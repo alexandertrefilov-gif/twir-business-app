@@ -18,14 +18,15 @@ interface SearchParams {
 export default async function CustomersPage({
   searchParams,
 }: {
-  searchParams: SearchParams
+  searchParams: Promise<SearchParams>
 }) {
+  const query = await searchParams
   await requirePermission(Resource.CUSTOMER, Action.READ)
 
-  const page    = parseInt(searchParams.page  ?? '1', 10)
-  const search  = searchParams.search ?? ''
-  const sort    = (searchParams.sort  ?? 'createdAt') as 'name' | 'number' | 'city' | 'createdAt'
-  const order   = (searchParams.order ?? 'desc')  as 'asc' | 'desc'
+  const page    = parseInt(query.page  ?? '1', 10)
+  const search  = query.search ?? ''
+  const sort    = (query.sort  ?? 'createdAt') as 'name' | 'number' | 'city' | 'createdAt'
+  const order   = (query.order ?? 'desc')  as 'asc' | 'desc'
 
   const [result, canCreate, canDelete] = await Promise.all([
     getCustomers({ search, page, sort, order }),

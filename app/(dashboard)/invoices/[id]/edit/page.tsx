@@ -12,20 +12,22 @@ import { InvoiceStatus }     from '@/types/enums'
 import { prisma }            from '@/lib/db/prisma'
 import { updateInvoiceDraftAction } from '../../actions'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
   await requirePermission(Resource.INVOICE, Action.READ)
 
   try {
-    const inv = await getInvoiceById(params.id)
+    const inv = await getInvoiceById(id)
     return { title: `${inv.invoiceNumber ?? 'Entwurf'} bearbeiten` }
   } catch { return { title: 'Rechnung bearbeiten' } }
 }
 
-export default async function EditInvoicePage({ params }: { params: { id: string } }) {
+export default async function EditInvoicePage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.INVOICE, Action.UPDATE)
 
   let invoice
-  try { invoice = await getInvoiceById(params.id) }
+  try { invoice = await getInvoiceById(id) }
   catch { notFound() }
 
   // Guard: nur DRAFT editierbar

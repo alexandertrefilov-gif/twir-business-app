@@ -7,23 +7,25 @@ import { getCustomerById } from '@/lib/services/customer.service'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { updateCustomerAction } from '../../actions'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
   await requirePermission(Resource.CUSTOMER, Action.READ)
 
   try {
-    const c = await getCustomerById(params.id)
+    const c = await getCustomerById(id)
     return { title: `${c.name} bearbeiten` }
   } catch {
     return { title: 'Kunde bearbeiten' }
   }
 }
 
-export default async function EditCustomerPage({ params }: { params: { id: string } }) {
+export default async function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.CUSTOMER, Action.UPDATE)
 
   let customer
   try {
-    customer = await getCustomerById(params.id)
+    customer = await getCustomerById(id)
   } catch {
     notFound()
   }

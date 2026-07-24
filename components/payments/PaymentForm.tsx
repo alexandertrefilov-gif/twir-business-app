@@ -3,8 +3,7 @@
 // Zahlungserfassung — pro Rechnung (inline auf Rechnungsdetailseite)
 // + Restbetrag-Anzeige in Echtzeit
 
-import { useState }                 from 'react'
-import { useFormState }             from 'react-dom'
+import { useActionState, useState } from 'react'
 import { PAYMENT_METHODS }          from '@/lib/validators/payment.schema'
 import { FormSubmitButton }         from '@/components/shared/FormSubmitButton'
 import type { ActionState }         from '@/app/(dashboard)/payments/actions'
@@ -23,7 +22,7 @@ const INIT: ActionState = {}
 export function PaymentForm({
   invoiceId, totalGross, paidAmount, action, onSuccess,
 }: PaymentFormProps) {
-  const [state, formAction] = useFormState(
+  const [state, formAction] = useActionState(
     async (prev: ActionState, fd: FormData) => {
       const res = await action(prev, fd)
       if (res.success && onSuccess) onSuccess()

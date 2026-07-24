@@ -11,8 +11,9 @@ export const metadata: Metadata = { title: 'Leistung erfassen' }
 export default async function NewServiceReportPage({
   searchParams,
 }: {
-  searchParams: { order?: string }
+  searchParams: Promise<{ order?: string }>
 }) {
+  const query = await searchParams
   await requirePermission(Resource.SERVICE_REPORT, Action.CREATE)
 
   // Only show open/in-progress orders
@@ -35,8 +36,8 @@ export default async function NewServiceReportPage({
         <ServiceReportForm
           mode="create"
           orders={orders}
-          defaults={{ orderId: searchParams.order }}
-          lockOrder={!!searchParams.order}
+          defaults={{ orderId: query.order }}
+          lockOrder={!!query.order}
           action={createServiceReportAction}
         />
       </div>

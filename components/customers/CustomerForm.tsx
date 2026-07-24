@@ -1,7 +1,7 @@
 'use client'
 // components/customers/CustomerForm.tsx
 
-import { useFormState } from 'react-dom'
+import { useActionState } from 'react'
 import { useRouter } from 'next/navigation'
 import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
 import type { ActionState } from '@/app/(dashboard)/customers/actions'
@@ -32,7 +32,7 @@ interface CustomerFormProps {
 const INITIAL_STATE: ActionState = {}
 
 export function CustomerForm({ mode, customerId, defaults = {}, action }: CustomerFormProps) {
-  const [state, formAction] = useFormState(action, INITIAL_STATE)
+  const [state, formAction] = useActionState(action, INITIAL_STATE)
   const router = useRouter()
 
   function err(field: string) {

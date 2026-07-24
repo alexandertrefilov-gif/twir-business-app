@@ -19,15 +19,16 @@ interface SearchParams {
 export default async function OffersPage({
   searchParams,
 }: {
-  searchParams: SearchParams
+  searchParams: Promise<SearchParams>
 }) {
+  const query = await searchParams
   await requirePermission(Resource.OFFER, Action.READ)
 
-  const page   = parseInt(searchParams.page ?? '1', 10)
-  const search = searchParams.search ?? ''
-  const status = searchParams.status ?? ''
-  const sort   = (searchParams.sort  ?? 'offerDate') as 'offerNumber' | 'offerDate' | 'totalGross' | 'status'
-  const order  = (searchParams.order ?? 'desc')      as 'asc' | 'desc'
+  const page   = parseInt(query.page ?? '1', 10)
+  const search = query.search ?? ''
+  const status = query.status ?? ''
+  const sort   = (query.sort  ?? 'offerDate') as 'offerNumber' | 'offerDate' | 'totalGross' | 'status'
+  const order  = (query.order ?? 'desc')      as 'asc' | 'desc'
 
   const [result, canCreate] = await Promise.all([
     getOffers({ search, status: status || undefined, page, sort, order }),

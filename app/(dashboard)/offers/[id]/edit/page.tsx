@@ -8,23 +8,25 @@ import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }          from '@/lib/db/prisma'
 import { updateOfferAction } from '../../actions'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
   await requirePermission(Resource.OFFER, Action.READ)
 
   try {
-    const o = await getOfferById(params.id)
+    const o = await getOfferById(id)
     return { title: `${o.offerNumber} bearbeiten` }
   } catch {
     return { title: 'Angebot bearbeiten' }
   }
 }
 
-export default async function EditOfferPage({ params }: { params: { id: string } }) {
+export default async function EditOfferPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.OFFER, Action.UPDATE)
 
   let offer
   try {
-    offer = await getOfferById(params.id)
+    offer = await getOfferById(id)
   } catch {
     notFound()
   }

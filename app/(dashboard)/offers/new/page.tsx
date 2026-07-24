@@ -11,8 +11,9 @@ export const metadata: Metadata = { title: 'Neues Angebot' }
 export default async function NewOfferPage({
   searchParams,
 }: {
-  searchParams: { customer?: string }
+  searchParams: Promise<{ customer?: string }>
 }) {
+  const query = await searchParams
   await requirePermission(Resource.OFFER, Action.CREATE)
 
   const customers = await prisma.customer.findMany({
@@ -35,7 +36,7 @@ export default async function NewOfferPage({
           mode="create"
           customers={customers}
           defaults={{
-            customerId: searchParams.customer,
+            customerId: query.customer,
           }}
           action={createOfferAction}
         />

@@ -11,14 +11,16 @@ import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import type { OrderStatus } from '@/types/enums'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
-  try { const o = await getOrderById(params.id); return { title: o.orderNumber } }
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
+  try { const o = await getOrderById(id); return { title: o.orderNumber } }
   catch { return { title: 'Auftrag' } }
 }
 
-export default async function OrderDetailPage({ params }: { params: { id: string } }) {
+export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   let order
-  try { order = await getOrderById(params.id) }
+  try { order = await getOrderById(id) }
   catch { notFound() }
 
   const [canEdit, canDelete] = await Promise.all([

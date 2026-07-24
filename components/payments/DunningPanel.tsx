@@ -2,8 +2,7 @@
 // components/payments/DunningPanel.tsx
 // Mahnwesen-Widget auf der Rechnungsdetailseite
 
-import { useState }                  from 'react'
-import { useFormState }              from 'react-dom'
+import { useActionState, useState }  from 'react'
 import { useRouter }                 from 'next/navigation'
 import { FormSubmitButton }          from '@/components/shared/FormSubmitButton'
 import { ConfirmDialog }             from '@/components/shared/ConfirmDialog'
@@ -31,7 +30,7 @@ export function DunningPanel({
   invoiceId, invoiceStatus, notices, canManage,
 }: DunningPanelProps) {
   const router            = useRouter()
-  const [state, formAction] = useFormState(
+  const [state, formAction] = useActionState(
     async (prev: ActionState, fd: FormData) => {
       const res = await createDunningAction(prev, fd)
       if (res.success) router.refresh()

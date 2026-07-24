@@ -13,12 +13,13 @@ export const metadata: Metadata = { title: 'Rechnungen' }
 
 interface SearchParams { search?: string; status?: string; page?: string }
 
-export default async function InvoicesPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function InvoicesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const query = await searchParams
   await requirePermission(Resource.INVOICE, Action.READ)
 
-  const page   = parseInt(searchParams.page ?? '1', 10)
-  const search = searchParams.search ?? ''
-  const status = searchParams.status ?? ''
+  const page   = parseInt(query.page ?? '1', 10)
+  const search = query.search ?? ''
+  const status = query.status ?? ''
 
   const [result, canCreate] = await Promise.all([
     getInvoices({ search, status: status || undefined, page }),

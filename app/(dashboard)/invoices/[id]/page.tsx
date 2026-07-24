@@ -25,20 +25,22 @@ import { addPaymentAction }   from '@/app/(dashboard)/payments/actions'
 import { format }             from 'date-fns'
 import { de }                 from 'date-fns/locale'
 
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params
   await requirePermission(Resource.INVOICE, Action.READ)
 
   try {
-    const inv = await getInvoiceById(params.id)
+    const inv = await getInvoiceById(id)
     return { title: inv.invoiceNumber ?? 'Rechnungsentwurf' }
   } catch { return { title: 'Rechnung' } }
 }
 
-export default async function InvoiceDetailPage({ params }: { params: { id: string } }) {
+export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   await requirePermission(Resource.INVOICE, Action.READ)
 
   let invoice
-  try { invoice = await getInvoiceById(params.id) }
+  try { invoice = await getInvoiceById(id) }
   catch { notFound() }
 
   const session  = await getServerSession(authOptions)

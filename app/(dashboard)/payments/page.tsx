@@ -17,13 +17,14 @@ interface SearchParams {
   page?:   string
 }
 
-export default async function PaymentsPage({ searchParams }: { searchParams: SearchParams }) {
+export default async function PaymentsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const query = await searchParams
   await requirePermission(Resource.PAYMENT, Action.READ)
 
-  const page   = parseInt(searchParams.page ?? '1', 10)
-  const search = searchParams.search ?? ''
-  const from   = searchParams.from ? new Date(searchParams.from) : undefined
-  const to     = searchParams.to   ? new Date(searchParams.to)   : undefined
+  const page   = parseInt(query.page ?? '1', 10)
+  const search = query.search ?? ''
+  const from   = query.from ? new Date(query.from) : undefined
+  const to     = query.to   ? new Date(query.to)   : undefined
 
   const { entries, total, totalAmount } = await getPaymentJournal({
     search, page, from, to,
@@ -79,17 +80,17 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Sea
                 className="h-8 px-3 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent w-56" />
               <div className="flex items-center gap-2">
                 <label className="text-xs text-muted-foreground">Von</label>
-                <input type="date" name="from" defaultValue={searchParams.from ?? ''}
+                <input type="date" name="from" defaultValue={query.from ?? ''}
                   className="h-8 px-3 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
                 <label className="text-xs text-muted-foreground">bis</label>
-                <input type="date" name="to" defaultValue={searchParams.to ?? ''}
+                <input type="date" name="to" defaultValue={query.to ?? ''}
                   className="h-8 px-3 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
               </div>
               <button type="submit"
                 className="h-8 px-3 rounded-md bg-stone-800 text-white text-xs font-500 hover:bg-stone-900 transition-colors">
                 Filtern
               </button>
-              {(search || searchParams.from || searchParams.to) && (
+              {(search || query.from || query.to) && (
                 <a href="/payments" className="text-xs text-muted-foreground hover:text-foreground">Zurücksetzen</a>
               )}
               <p className="ml-auto text-xs text-muted-foreground mono">{total} Einträge</p>

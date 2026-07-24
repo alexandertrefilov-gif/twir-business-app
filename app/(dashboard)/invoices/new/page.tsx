@@ -12,8 +12,9 @@ export const metadata: Metadata = { title: 'Neue Rechnung' }
 export default async function NewInvoicePage({
   searchParams,
 }: {
-  searchParams: { order?: string; customer?: string }
+  searchParams: Promise<{ order?: string; customer?: string }>
 }) {
+  const query = await searchParams
   await requirePermission(Resource.INVOICE, Action.CREATE)
 
   const [customers, orders, settings] = await Promise.all([
@@ -31,8 +32,8 @@ export default async function NewInvoicePage({
   ])
 
   // If from order, pre-fill customer
-  let defaultCustomerId = searchParams.customer
-  let defaultOrderId    = searchParams.order
+  let defaultCustomerId = query.customer
+  let defaultOrderId    = query.order
 
   if (defaultOrderId && !defaultCustomerId) {
     const order = orders.find(o => o.id === defaultOrderId)
@@ -50,8 +51,8 @@ export default async function NewInvoicePage({
           mode="create"
           customers={customers}
           orders={orders}
-          lockCustomer={!!searchParams.order && !!defaultCustomerId}
-          lockOrder={!!searchParams.order}
+          lockCustomer={!!query.order && !!defaultCustomerId}
+          lockOrder={!!query.order}
           action={createInvoiceDraftAction}
           defaults={{
             customerId: defaultCustomerId,
