@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server'
 import { GET } from '@/app/api/image-optimizer-disabled/route'
@@ -26,5 +28,14 @@ describe('Deaktivierter Next.js Image Optimizer', () => {
 
   it('behält den bestehenden Middleware-Schutz für Fachrouten bei', () => {
     expect(matchesMiddleware('/customers')).toBe(true)
+    expect(matchesMiddleware('/offers')).toBe(true)
+  })
+
+  it('beschränkt den Middleware-Importgraphen auf Edge-kompatible Einstiegspunkte', () => {
+    const source = readFileSync(resolve(process.cwd(), 'middleware.ts'), 'utf8')
+    const imports = [...source.matchAll(/from ['"]([^'"]+)['"]/g)]
+      .map((match) => match[1])
+
+    expect(imports).toEqual(['next-auth/middleware', 'next/server'])
   })
 })

@@ -149,6 +149,17 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
   bewertet, Sicherheits- und Regressionstests ergänzt und alle Release-Gates erneut ausgeführt
   werden.
 
+## Next.js Build Directories
+
+- `next dev` verwendet `.next-dev`.
+- `next build` und `next start` verwenden `.next`.
+- Die getrennten Verzeichnisse isolieren parallele Entwicklungs- und Produktionsartefakte.
+- Entwicklungs- und Produktionsserver dürfen nicht dasselbe Buildverzeichnis verwenden.
+- `.next-dev` muss in `.gitignore` bleiben.
+- `tsconfig.json` muss die generierten Typen aus `.next-dev/types` berücksichtigen.
+- Änderungen an `distDir` oder den Build-Skripten erfordern einen Parallelbetrieb-Test, einen
+  Produktions-Smoke-Test, einen Middleware-Test und die vollständigen Release-Gates.
+
 ## UI-Regeln
 
 - Tailwind-Tokens aus `app/globals.css` und `tailwind.config.ts` verwenden.
@@ -172,6 +183,11 @@ Nur vorhandene Befehle verwenden:
 
 `npm test` startet Vitest im Watch-Modus. Der Race-Condition-Integrationstest läuft nur mit
 `TEST_DATABASE_URL`; einen Skip ausdrücklich melden. Keine neue Testinfrastruktur ohne Auftrag.
+
+- Ein normales `npm ci` erzeugt den Prisma Client über `postinstall`.
+- `postinstall` führt ausschließlich `prisma generate` aus.
+- Nach `npm ci --ignore-scripts` muss `npm run db:generate` ausgeführt werden.
+- Typecheck und Build dürfen erst nach der Prisma-Generierung laufen.
 
 ## Arbeitsablauf
 

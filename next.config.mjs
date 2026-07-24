@@ -1,10 +1,11 @@
 // next.config.mjs
 import { fileURLToPath } from 'node:url'
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js'
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url))
 
 /** @type {import('next').NextConfig} */
-const nextConfig = {
+const sharedConfig = {
   outputFileTracingRoot: projectRoot,
 
   // Strikte Typenprüfung im Build
@@ -45,4 +46,22 @@ const nextConfig = {
   // Immer über API-Route mit Auth-Prüfung
 }
 
-export default nextConfig
+/** @type {import('next').NextConfig} */
+const developmentConfig = {
+  ...sharedConfig,
+  distDir: '.next-dev',
+}
+
+/**
+ * Entwicklungs- und Produktionsserver dürfen nicht dieselben Build-Artefakte
+ * verwenden. Andernfalls kann ein parallel laufendes `next dev` einen bereits
+ * gebauten Middleware-Bundle unter `.next` ersetzen.
+ *
+ * @param {string} phase
+ * @returns {import('next').NextConfig}
+ */
+export default function nextConfig(phase) {
+  return phase === PHASE_DEVELOPMENT_SERVER
+    ? developmentConfig
+    : sharedConfig
+}
