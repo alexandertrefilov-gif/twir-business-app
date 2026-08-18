@@ -376,7 +376,7 @@ function buildCustomerSnapshot(customer: {
   }
 }
 
-function buildCompanySnapshot(settings: {
+export function buildCompanySnapshot(settings: {
   companyName:  string
   legalForm:    string | null
   vatId:        string | null
@@ -391,6 +391,7 @@ function buildCompanySnapshot(settings: {
   bic:          string | null
   email:        string | null
   phone:        string | null
+  supplierNumber: string | null
 }) {
   return {
     companyName:  settings.companyName,
@@ -407,5 +408,6 @@ function buildCompanySnapshot(settings: {
     bic:          settings.bic,
     email:        settings.email,
     phone:        settings.phone,
+    supplierNumber: settings.supplierNumber,
   }
 }

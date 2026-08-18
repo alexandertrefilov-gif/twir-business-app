@@ -11,6 +11,7 @@ import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import type { OrderStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
+import { getSupplierNumber } from '@/lib/services/settings.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -42,12 +43,15 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const totalNet   = order.totalNet.toNumber()
   const totalGross = order.totalGross.toNumber()
   const fmt        = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const supplierNumber = await getSupplierNumber()
 
   return (
     <div>
       <PageHeader
         title={order.orderNumber}
         description={order.title ?? undefined}
+        supplierNumber={supplierNumber}
+        documentType="Auftrag"
         breadcrumbs={[{ label: 'Aufträge', href: '/orders' }, { label: order.orderNumber }]}
         actions={
           <div className="flex items-center gap-2">

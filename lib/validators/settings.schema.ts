@@ -9,6 +9,7 @@ export const SettingsUpdateSchema = z.object({
   // Firmendaten — Pflicht für Rechnungen §14 UStG
   companyName:    z.string().min(1, 'Firmenname ist erforderlich').max(200),
   legalForm:      z.string().max(50).optional().nullable(),
+  businessActivity: z.string().max(300).optional().nullable(),
 
   // Adresse
   street:         z.string().max(200).optional().nullable(),
@@ -47,6 +48,7 @@ export const SettingsUpdateSchema = z.object({
   registerCourt:   z.string().max(100).optional().nullable(),
   registerNumber:  z.string().max(50).optional().nullable(),
   managingDirector:z.string().max(200).optional().nullable(),
+  supplierNumber:  z.string().max(50).optional().nullable(),
 
   // Nummernkreis-Präfixe
   invoicePrefix:        z.string().min(1).max(10).default('RE'),
@@ -63,6 +65,9 @@ export const SettingsUpdateSchema = z.object({
   defaultInvoiceOutro:  z.string().max(3000).optional().nullable(),
   defaultOfferIntro:    z.string().max(3000).optional().nullable(),
   defaultOfferOutro:    z.string().max(3000).optional().nullable(),
+
+  // Logo-Darstellung in PDF-Dokumenten
+  logoScale: z.coerce.number().int().min(50).max(200).default(140),
 })
 
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>

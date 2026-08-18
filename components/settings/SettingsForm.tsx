@@ -1,9 +1,12 @@
 'use client'
 // components/settings/SettingsForm.tsx
 
-import { useActionState } from 'react'
+import { useActionState, useState, useTransition } from 'react'
 import type { ActionState } from '@/app/(dashboard)/settings/actions'
-import { updateSettingsAction } from '@/app/(dashboard)/settings/actions'
+import {
+  updateLogoScaleAction,
+  updateSettingsAction,
+} from '@/app/(dashboard)/settings/actions'
 import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
 
 interface SequenceStatus {
@@ -22,8 +25,31 @@ const INIT: ActionState = {}
 
 export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
   const [state, formAction] = useActionState(updateSettingsAction, INIT)
+  const [isSavingLogoScale, startLogoScaleTransition] = useTransition()
+  const [logoScaleMessage, setLogoScaleMessage] = useState('')
+  const [logoScale, setLogoScale] = useState(() => {
+    const initial = Number(defaults.logoScale ?? 140)
+    return Math.min(200, Math.max(50, initial))
+  })
   const fe = state.fieldErrors ?? {}
   const v  = (key: string) => String(defaults[key] ?? '')
+
+  function changeLogoScale(delta: number) {
+    const previous = logoScale
+    const next = Math.min(200, Math.max(50, previous + delta))
+    if (next === previous) return
+    setLogoScale(next)
+    setLogoScaleMessage('Wird gespeichert …')
+    startLogoScaleTransition(async () => {
+      const result = await updateLogoScaleAction(next)
+      if (result.success) {
+        setLogoScaleMessage('Gespeichert – neue PDF-Vorschau öffnen')
+      } else {
+        setLogoScale(previous)
+        setLogoScaleMessage(result.error ?? 'Speichern fehlgeschlagen')
+      }
+    })
+  }
 
   return (
     <form action={formAction} className="space-y-4">
@@ -41,8 +67,58 @@ export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
       {/* ── 1. Firmendaten ── */}
       <Section title="Firmendaten" hint="Erscheinen auf allen PDF-Dokumenten">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="col-span-full">
+            <label className="field-label" htmlFor="companyLogo">Firmenlogo für PDF-Kopfzeile</label>
+            <input
+              id="companyLogo"
+              name="companyLogo"
+              type="file"
+              accept="image/png,image/jpeg"
+              className="block w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-blue-50 file:px-3 file:py-1 file:text-xs file:font-600 file:text-blue-700"
+            />
+            <p className="field-hint">
+              PNG oder JPEG, maximal 2 MB. Das Logo erscheint rechts oben im Angebot.
+              {v('logoPath') ? ' Aktuell ist ein Logo hinterlegt.' : ''}
+            </p>
+            <div className="mt-3 flex items-center gap-3">
+              <input type="hidden" name="logoScale" value={logoScale} />
+              <button
+                type="button"
+                onClick={() => changeLogoScale(-10)}
+                disabled={logoScale <= 50 || isSavingLogoScale}
+                aria-label="Logo verkleinern"
+                className="h-9 w-9 rounded-md border border-stone-200 bg-white text-lg font-600 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                −
+              </button>
+              <div className="min-w-28 text-center">
+                <p className="text-sm font-600 text-foreground">{logoScale} %</p>
+                <p className="text-[11px] text-muted-foreground">Logo-Größe</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => changeLogoScale(10)}
+                disabled={logoScale >= 200 || isSavingLogoScale}
+                aria-label="Logo vergrößern"
+                className="h-9 w-9 rounded-md border border-blue-200 bg-blue-50 text-lg font-600 text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                ＋
+              </button>
+              {logoScaleMessage && (
+                <p className="text-xs text-muted-foreground" role="status">{logoScaleMessage}</p>
+              )}
+            </div>
+          </div>
           <F label="Firmenname" name="companyName" required defaultValue={v('companyName')} error={fe.companyName?.[0]} />
           <F label="Rechtsform" name="legalForm"   defaultValue={v('legalForm')} placeholder="GmbH, AG, e.K., …" />
+          <F
+            label="Art der Tätigkeit"
+            name="businessActivity"
+            defaultValue={v('businessActivity')}
+            placeholder="z. B. Fachbauleitung, Fremdfirmenkoordination"
+            error={fe.businessActivity?.[0]}
+            span
+          />
           <F label="Geschäftsführer / Vorstand" name="managingDirector" defaultValue={v('managingDirector')} span />
           <div className="col-span-full grid grid-cols-3 gap-3">
             <div className="col-span-2">
@@ -64,6 +140,12 @@ export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <F label="Amtsgericht (Registergericht)" name="registerCourt"  defaultValue={v('registerCourt')} />
           <F label="HRB-Nummer" name="registerNumber" defaultValue={v('registerNumber')} />
+          <F
+            label="Lieferantennummer (LN-Nr.)"
+            name="supplierNumber"
+            defaultValue={v('supplierNumber')}
+            placeholder="z. B. 18045419"
+          />
         </div>
       </Section>
 

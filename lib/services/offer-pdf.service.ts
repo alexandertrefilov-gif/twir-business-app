@@ -1,7 +1,12 @@
 import { format } from 'date-fns'
 import type { OfferPdfData } from '@/lib/pdf-templates/offer.template'
 import { getOfferById } from '@/lib/services/offer.service'
-import { getCompanySnapshot } from '@/lib/services/settings.service'
+import {
+  getCompanySnapshot,
+  hasValidCompanyLogoSignature,
+} from '@/lib/services/settings.service'
+import fs from 'fs/promises'
+import path from 'path'
 
 export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
   const [offer, company] = await Promise.all([
@@ -36,6 +41,8 @@ export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
     title: offer.title,
     introText: offer.introText,
     outroText: offer.outroText,
+    logoDataUri: await loadCompanyLogo(company.logoPath),
+    logoScale: company.logoScale,
     company,
     customer: {
       name: offer.customer.name,
@@ -54,5 +61,30 @@ export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
     totalTax: offer.totalTax.toNumber(),
     totalGross: offer.totalGross.toNumber(),
     taxGroups,
+  }
+}
+
+async function loadCompanyLogo(storageKey?: string | null): Promise<string | undefined> {
+  if (!storageKey || (process.env.STORAGE_DRIVER ?? 'local') !== 'local') return undefined
+
+  const storageRoot = path.resolve(process.env.STORAGE_LOCAL_PATH ?? './storage/documents')
+  const logoPath = path.resolve(storageRoot, storageKey)
+  if (!logoPath.startsWith(`${storageRoot}${path.sep}`)) return undefined
+
+  const extension = path.extname(logoPath).toLowerCase()
+  const mimeType = extension === '.png'
+    ? 'image/png'
+    : extension === '.jpg' || extension === '.jpeg'
+      ? 'image/jpeg'
+      : null
+  if (!mimeType) return undefined
+
+  try {
+    const buffer = await fs.readFile(logoPath)
+    if (buffer.length > 2 * 1024 * 1024) return undefined
+    if (!hasValidCompanyLogoSignature(buffer, mimeType)) return undefined
+    return `data:${mimeType};base64,${buffer.toString('base64')}`
+  } catch {
+    return undefined
   }
 }

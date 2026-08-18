@@ -1,4 +1,5 @@
 // components/shared/PageHeader.tsx
+import React from 'react'
 import Link from 'next/link'
 
 interface Breadcrumb {
@@ -11,9 +12,18 @@ interface PageHeaderProps {
   description?: string
   breadcrumbs?: Breadcrumb[]
   actions?:     React.ReactNode
+  supplierNumber?: string | null
+  documentType?: string
 }
 
-export function PageHeader({ title, description, breadcrumbs, actions }: PageHeaderProps) {
+export function PageHeader({
+  title,
+  description,
+  breadcrumbs,
+  actions,
+  supplierNumber,
+  documentType,
+}: PageHeaderProps) {
   return (
     <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-stone-200 bg-white">
       <div className="min-w-0">
@@ -37,10 +47,22 @@ export function PageHeader({ title, description, breadcrumbs, actions }: PageHea
         {description && (
           <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
         )}
+        {documentType && (
+          <p className="mt-2 text-sm font-400 text-foreground">{documentType}</p>
+        )}
       </div>
-      {actions && (
-        <div className="flex items-center gap-2 shrink-0">
-          {actions}
+      {(actions || supplierNumber) && (
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
+          {actions && (
+            <div className="flex items-center gap-2">
+              {actions}
+            </div>
+          )}
+          {supplierNumber && (
+            <p className="text-xs text-muted-foreground">
+              LN-Nr.: {supplierNumber}
+            </p>
+          )}
         </div>
       )}
     </div>

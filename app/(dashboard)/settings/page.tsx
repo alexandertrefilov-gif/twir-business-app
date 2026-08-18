@@ -2,7 +2,7 @@
 import type { Metadata }  from 'next'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { SettingsForm }   from '@/components/settings/SettingsForm'
-import { getSettings }    from '@/lib/services/settings.service'
+import { getCompanyLogoScale, getSettings } from '@/lib/services/settings.service'
 import { getSequenceStatus } from '@/lib/services/number-sequence.service'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 
@@ -11,9 +11,10 @@ export const metadata: Metadata = { title: 'Einstellungen' }
 export default async function SettingsPage() {
   await requirePermission(Resource.SETTINGS, Action.READ)
 
-  const [settings, sequences] = await Promise.all([
+  const [settings, sequences, logoScale] = await Promise.all([
     getSettings(),
     getSequenceStatus(),
+    getCompanyLogoScale(),
   ])
 
   return (
@@ -29,6 +30,7 @@ export default async function SettingsPage() {
           defaults={{
             companyName:           settings.companyName,
             legalForm:             settings.legalForm       ?? '',
+            businessActivity:      settings.businessActivity ?? '',
             street:                settings.street          ?? '',
             houseNumber:           settings.houseNumber     ?? '',
             postalCode:            settings.postalCode      ?? '',
@@ -47,6 +49,7 @@ export default async function SettingsPage() {
             registerCourt:         settings.registerCourt   ?? '',
             registerNumber:        settings.registerNumber  ?? '',
             managingDirector:      settings.managingDirector ?? '',
+            supplierNumber:        settings.supplierNumber   ?? '',
             invoicePrefix:         settings.invoicePrefix,
             offerPrefix:           settings.offerPrefix,
             orderPrefix:           settings.orderPrefix,
@@ -57,6 +60,8 @@ export default async function SettingsPage() {
             defaultInvoiceOutro:   settings.defaultInvoiceOutro ?? '',
             defaultOfferIntro:     settings.defaultOfferIntro  ?? '',
             defaultOfferOutro:     settings.defaultOfferOutro  ?? '',
+            logoPath:              settings.logoPath            ?? '',
+            logoScale,
           }}
           sequences={sequences.map((s) => ({
             type:       s.type,

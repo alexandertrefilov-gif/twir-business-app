@@ -24,6 +24,7 @@ export interface ServiceReportPdfData {
     city?:        string | null
     email?:       string | null
     phone?:       string | null
+    supplierNumber?: string | null
   }
 
   order: {
@@ -65,6 +66,7 @@ const S = StyleSheet.create({
   label:   { fontSize: 7,  color: '#6b6b80', marginBottom: 2 },
   small:   { fontSize: 7.5, color: '#6b6b80' },
   body:    { fontSize: 9, lineHeight: 1.5, color: '#3a3a50' },
+  documentType: { fontSize: 9, fontFamily: 'Helvetica', marginBottom: 10 },
 
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
   metaBox:   { alignItems: 'flex-end' },
@@ -126,12 +128,15 @@ export function ServiceReportDocument({ data }: { data: ServiceReportPdfData }) 
           </View>
           <View style={S.metaBox}>
             <Text style={S.docNum}>Leistungsnachweis {data.reportNumber}</Text>
+            {c.supplierNumber && <Text style={S.small}>LN-Nr.: {c.supplierNumber}</Text>}
             <Text style={S.small}>Datum: {data.reportDate}</Text>
             <Text style={S.small}>Auftrag: {data.order.orderNumber}</Text>
           </View>
         </View>
 
         <View style={S.divider} />
+
+        <Text style={S.documentType}>Leistung</Text>
 
         {/* Info grid */}
         <View style={S.infoGrid}>

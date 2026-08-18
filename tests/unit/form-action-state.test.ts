@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   requirePermission: vi.fn(),
   getServerSession: vi.fn(),
   updateSettings: vi.fn(),
+  saveCompanyLogoScale: vi.fn(),
   revalidatePath: vi.fn(),
 }))
 
@@ -18,13 +19,19 @@ vi.mock('next-auth', () => ({
 
 vi.mock('@/lib/services/settings.service', () => ({
   updateSettings: mocks.updateSettings,
+  saveCompanyLogoScale: mocks.saveCompanyLogoScale,
+  saveCompanyLogo: vi.fn(),
+  hasValidCompanyLogoSignature: vi.fn(),
 }))
 
 vi.mock('next/cache', () => ({
   revalidatePath: mocks.revalidatePath,
 }))
 
-import { updateSettingsAction } from '@/app/(dashboard)/settings/actions'
+import {
+  updateLogoScaleAction,
+  updateSettingsAction,
+} from '@/app/(dashboard)/settings/actions'
 
 function validSettingsForm() {
   const formData = new FormData()
@@ -46,6 +53,7 @@ describe('React-18-kompatibler Formularzustand', () => {
       user: { id: 'user-1', email: 'user@example.test' },
     })
     mocks.updateSettings.mockResolvedValue(undefined)
+    mocks.saveCompanyLogoScale.mockResolvedValue(undefined)
   })
 
   it('liefert den bestehenden Erfolgszustand', async () => {
@@ -53,6 +61,7 @@ describe('React-18-kompatibler Formularzustand', () => {
 
     expect(state).toEqual({ success: true })
     expect(mocks.updateSettings).toHaveBeenCalledTimes(1)
+    expect(mocks.saveCompanyLogoScale).toHaveBeenCalledWith(140)
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/settings')
   })
 
@@ -74,5 +83,19 @@ describe('React-18-kompatibler Formularzustand', () => {
       success: false,
       error: 'Speichern fehlgeschlagen',
     })
+  })
+
+  it('speichert eine geänderte Logo-Größe unmittelbar', async () => {
+    const state = await updateLogoScaleAction(200)
+
+    expect(state).toEqual({ success: true })
+    expect(mocks.saveCompanyLogoScale).toHaveBeenCalledWith(200)
+  })
+
+  it('weist eine Logo-Größe außerhalb des Bereichs zurück', async () => {
+    const state = await updateLogoScaleAction(210)
+
+    expect(state.success).toBe(false)
+    expect(mocks.saveCompanyLogoScale).not.toHaveBeenCalled()
   })
 })

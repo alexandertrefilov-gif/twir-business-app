@@ -10,6 +10,9 @@ import { prisma }            from '@/lib/db/prisma'
 import { buildAuditLogCreate } from '@/lib/services/audit.service'
 import { AuditAction }       from '@/types/enums'
 import type { SettingsUpdateInput } from '@/lib/validators/settings.schema'
+import fs from 'fs/promises'
+import path from 'path'
+import { generateStorageFilename } from '@/lib/services/document.service'
 
 const SETTINGS_ID = '00000000-0000-0000-0000-000000000001'   // aus seed.ts Phase 2
 
@@ -33,6 +36,15 @@ export async function getSettings() {
   return existing
 }
 
+/** Liest für Dokumentköpfe ausschließlich die optionale Lieferantennummer. */
+export async function getSupplierNumber(): Promise<string | null> {
+  const settings = await prisma.companySetting.findUnique({
+    where: { id: SETTINGS_ID },
+    select: { supplierNumber: true },
+  })
+  return settings?.supplierNumber ?? null
+}
+
 // ── UPDATE ────────────────────────────────────────────────────
 
 export async function updateSettings(
@@ -48,6 +60,7 @@ export async function updateSettings(
       data: {
         companyName:           data.companyName,
         legalForm:             data.legalForm             ?? null,
+        businessActivity:      data.businessActivity      ?? null,
         street:                data.street                ?? null,
         houseNumber:           data.houseNumber           ?? null,
         postalCode:            data.postalCode            ?? null,
@@ -66,6 +79,7 @@ export async function updateSettings(
         registerCourt:         data.registerCourt         ?? null,
         registerNumber:        data.registerNumber        ?? null,
         managingDirector:      data.managingDirector      ?? null,
+        supplierNumber:        data.supplierNumber        ?? null,
         invoicePrefix:         data.invoicePrefix         ?? 'RE',
         offerPrefix:           data.offerPrefix           ?? 'AN',
         orderPrefix:           data.orderPrefix           ?? 'AU',
@@ -101,9 +115,11 @@ export async function updateSettings(
 /** Für PDF-Templates: gibt Snapshot-kompatibles Objekt zurück */
 export async function getCompanySnapshot() {
   const s = await getSettings()
+  const logoScale = await getCompanyLogoScale()
   return {
     companyName:      s.companyName,
     legalForm:        s.legalForm,
+    businessActivity: s.businessActivity,
     street:           s.street,
     houseNumber:      s.houseNumber,
     postalCode:       s.postalCode,
@@ -119,5 +135,118 @@ export async function getCompanySnapshot() {
     registerCourt:    s.registerCourt,
     registerNumber:   s.registerNumber,
     managingDirector: s.managingDirector,
+    supplierNumber:   s.supplierNumber,
+    logoPath:          s.logoPath,
+    logoStorageKey:    s.logoStorageKey,
+    logoScale,
   }
+}
+
+const DEFAULT_LOGO_SCALE = 140
+
+export async function getCompanyLogoScale(): Promise<number> {
+  if ((process.env.STORAGE_DRIVER ?? 'local') !== 'local') return DEFAULT_LOGO_SCALE
+  const storageRoot = path.resolve(process.env.STORAGE_LOCAL_PATH ?? './storage/documents')
+  try {
+    const value = Number(await fs.readFile(path.join(storageRoot, 'company-logo-scale.txt'), 'utf8'))
+    return Number.isInteger(value) && value >= 50 && value <= 200
+      ? value
+      : DEFAULT_LOGO_SCALE
+  } catch {
+    return DEFAULT_LOGO_SCALE
+  }
+}
+
+export async function saveCompanyLogoScale(scale: number): Promise<void> {
+  if ((process.env.STORAGE_DRIVER ?? 'local') !== 'local') {
+    throw new Error('Logo-Größe ist für den konfigurierten Speicher noch nicht verfügbar.')
+  }
+  const storageRoot = path.resolve(process.env.STORAGE_LOCAL_PATH ?? './storage/documents')
+  await fs.mkdir(storageRoot, { recursive: true })
+  await fs.writeFile(path.join(storageRoot, 'company-logo-scale.txt'), String(scale), 'utf8')
+}
+
+export function hasValidCompanyLogoSignature(
+  contents: Uint8Array,
+  mimeType: string,
+): boolean {
+  if (mimeType === 'image/png') {
+    const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+    const hasSignature = signature.every((byte, index) => contents[index] === byte)
+    const hasHeader = contents.length >= 33 &&
+      contents[12] === 0x49 && contents[13] === 0x48 &&
+      contents[14] === 0x44 && contents[15] === 0x52
+    const hasEnd = contents.length >= 12 &&
+      contents[contents.length - 8] === 0x49 &&
+      contents[contents.length - 7] === 0x45 &&
+      contents[contents.length - 6] === 0x4e &&
+      contents[contents.length - 5] === 0x44
+    return hasSignature && hasHeader && hasEnd && hasSafePngDimensions(contents)
+  }
+  if (mimeType === 'image/jpeg') {
+    const hasStart = contents.length >= 4 &&
+      contents[0] === 0xff && contents[1] === 0xd8 && contents[2] === 0xff
+    const hasEnd = contents.length >= 2 &&
+      contents[contents.length - 2] === 0xff && contents[contents.length - 1] === 0xd9
+    return hasStart && hasEnd && hasSafeJpegDimensions(contents)
+  }
+  return false
+}
+
+function hasSafePngDimensions(contents: Uint8Array): boolean {
+  const view = new DataView(contents.buffer, contents.byteOffset, contents.byteLength)
+  const width = view.getUint32(16)
+  const height = view.getUint32(20)
+  return width >= 1 && height >= 1 && width <= 10_000 && height <= 10_000
+}
+
+function hasSafeJpegDimensions(contents: Uint8Array): boolean {
+  let offset = 2
+  while (offset + 8 < contents.length) {
+    if (contents[offset] !== 0xff) {
+      offset += 1
+      continue
+    }
+    const marker = contents[offset + 1]
+    if (marker === 0xd8 || marker === 0xd9) {
+      offset += 2
+      continue
+    }
+    if (marker === 0xda) return false
+    const segmentLength = (contents[offset + 2] << 8) | contents[offset + 3]
+    if (segmentLength < 2 || offset + 2 + segmentLength > contents.length) return false
+    if (
+      marker >= 0xc0 && marker <= 0xcf &&
+      marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
+    ) {
+      const height = (contents[offset + 5] << 8) | contents[offset + 6]
+      const width = (contents[offset + 7] << 8) | contents[offset + 8]
+      return width >= 1 && height >= 1 && width <= 10_000 && height <= 10_000
+    }
+    offset += 2 + segmentLength
+  }
+  return false
+}
+
+export async function saveCompanyLogo(file: File, contents: Uint8Array): Promise<void> {
+  if ((process.env.STORAGE_DRIVER ?? 'local') !== 'local') {
+    throw new Error('Logo-Upload ist für den konfigurierten Speicher noch nicht verfügbar.')
+  }
+
+  const storageRoot = path.resolve(process.env.STORAGE_LOCAL_PATH ?? './storage/documents')
+  const logoDirectory = path.join(storageRoot, 'logos')
+  const storageName = generateStorageFilename('company-logo', file.name)
+  const storageKey = path.join('logos', storageName)
+  const destination = path.resolve(storageRoot, storageKey)
+
+  if (!destination.startsWith(`${storageRoot}${path.sep}`)) {
+    throw new Error('Ungültiger Logo-Speicherpfad')
+  }
+
+  await fs.mkdir(logoDirectory, { recursive: true })
+  await fs.writeFile(destination, contents)
+  await prisma.companySetting.update({
+    where: { id: SETTINGS_ID },
+    data: { logoPath: storageKey, logoStorageKey: storageKey },
+  })
 }

@@ -10,6 +10,7 @@ import { DeleteServiceReportButton } from '@/components/service-reports/DeleteSe
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
+import { getSupplierNumber } from '@/lib/services/settings.service'
 
 export const metadata: Metadata = { title: 'Leistungsnachweis' }
 
@@ -48,6 +49,7 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
 
   const totalNet = report.totalNet.toNumber()
   const fmt      = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const supplierNumber = await getSupplierNumber()
 
   // Totals by type
   const byType: Record<string, number> = {}
@@ -60,6 +62,8 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
       <PageHeader
         title={report.reportNumber}
         description={report.title ?? undefined}
+        supplierNumber={supplierNumber}
+        documentType="Leistung"
         breadcrumbs={[
           { label: 'Leistungen', href: '/services' },
           { label: report.reportNumber },

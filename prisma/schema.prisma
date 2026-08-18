@@ -710,6 +710,7 @@ model CompanySetting {
   // Firmendaten — erscheinen auf allen Dokumenten
   companyName  String   @map("company_name")
   legalForm    String?  @map("legal_form")       // "GmbH", "AG", "e.K.", ...
+  businessActivity String? @map("business_activity") // z.B. Fachbauleitung, Fremdfirmenkoordination
   street       String?
   houseNumber  String?  @map("house_number")
   postalCode   String?  @map("postal_code")
@@ -736,6 +737,7 @@ model CompanySetting {
   registerCourt   String? @map("register_court")    // Amtsgericht
   registerNumber  String? @map("register_number")   // HRB-Nummer
   managingDirector String? @map("managing_director") // Geschäftsführer
+  supplierNumber   String? @map("supplier_number")   // Eigene Lieferantennummer beim Kunden
 
   // Rechnungs-Defaults
   invoicePrefix        String  @default("RE")  @map("invoice_prefix")

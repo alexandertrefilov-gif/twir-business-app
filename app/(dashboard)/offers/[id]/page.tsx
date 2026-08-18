@@ -13,6 +13,7 @@ import { format }           from 'date-fns'
 import { de }               from 'date-fns/locale'
 import type { OfferStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
+import { getSupplierNumber } from '@/lib/services/settings.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -67,6 +68,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
 
   const isLocked  = offer.status !== 'DRAFT'
   const canEditNow = canEdit && !isLocked
+  const supplierNumber = await getSupplierNumber()
 
   const fmt = (n: number) =>
     n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -76,6 +78,8 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
       <PageHeader
         title={offer.offerNumber}
         description={offer.title ?? undefined}
+        supplierNumber={supplierNumber}
+        documentType="Angebot"
         breadcrumbs={[
           { label: 'Angebote', href: '/offers' },
           { label: offer.offerNumber },

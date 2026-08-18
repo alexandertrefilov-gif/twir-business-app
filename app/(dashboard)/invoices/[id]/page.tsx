@@ -25,6 +25,7 @@ import { addPaymentAction }   from '@/app/(dashboard)/payments/actions'
 import { format }             from 'date-fns'
 import { de }                 from 'date-fns/locale'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
+import { getSupplierNumber } from '@/lib/services/settings.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -106,6 +107,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const fmtD = (d: Date) => format(new Date(d), 'dd. MMMM yyyy', { locale: de })
   const cs   = invoice.customerSnapshot as Record<string, any> | null
   const cmp  = invoice.companySnapshot  as Record<string, any> | null
+  const supplierNumber = invoice.status === InvoiceStatus.DRAFT
+    ? await getSupplierNumber()
+    : typeof cmp?.supplierNumber === 'string'
+      ? cmp.supplierNumber
+      : null
   const canAddPayment = canCreatePayment && remaining > 0 &&
     !['DRAFT', 'PAID', 'CANCELLED'].includes(invoice.status)
 
@@ -116,6 +122,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
         description={invoice.order
           ? `Auftrag ${invoice.order.orderNumber}${invoice.order.title ? ` · ${invoice.order.title}` : ''}`
           : undefined}
+        supplierNumber={supplierNumber}
+        documentType="Rechnung"
         breadcrumbs={[
           { label: 'Rechnungen', href: '/invoices' },
           { label: invoice.invoiceNumber ?? 'Entwurf' },
