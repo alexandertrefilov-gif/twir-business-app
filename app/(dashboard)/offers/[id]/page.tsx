@@ -12,6 +12,7 @@ import { calcOfferTotals }  from '@/lib/validators/offer.schema'
 import { format }           from 'date-fns'
 import { de }               from 'date-fns/locale'
 import type { OfferStatus } from '@/types/enums'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -271,7 +272,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
                 totalGross={totalGross}
                 offerNumber={offer.offerNumber}
                 canEdit={canEdit}
-                canDelete={canDelete}
+                canDelete={canDelete && isTestDeleteEnabled()}
                 canConvert={canConvert}
               />
             </div>

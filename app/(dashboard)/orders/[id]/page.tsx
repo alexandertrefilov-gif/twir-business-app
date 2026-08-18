@@ -10,6 +10,7 @@ import { hasPermission, Resource, Action } from '@/lib/auth/permissions'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import type { OrderStatus } from '@/types/enums'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -217,7 +218,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 status={order.status as OrderStatus}
                 orderNumber={order.orderNumber}
                 canEdit={canEdit}
-                canDelete={canDelete}
+                canDelete={canDelete && isTestDeleteEnabled()}
               />
             </div>
             <div className="card-base p-4 space-y-3">

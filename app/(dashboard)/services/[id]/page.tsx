@@ -9,6 +9,7 @@ import { SERVICE_ITEM_TYPE_LABELS, type ServiceItemType } from '@/lib/validators
 import { DeleteServiceReportButton } from '@/components/service-reports/DeleteServiceReportButton'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export const metadata: Metadata = { title: 'Leistungsnachweis' }
 
@@ -34,7 +35,9 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
   // Employees can only edit their own
   const isOwn      = report.createdBy.id === user.userId
   const canEditNow = canEdit && (user.role !== 'EMPLOYEE' || isOwn)
-  const canDelNow  = canDelete && (user.role !== 'EMPLOYEE' || isOwn)
+  const canDelNow  = canDelete &&
+    isTestDeleteEnabled() &&
+    (user.role !== 'EMPLOYEE' || isOwn)
 
   const items = report.items.map((i) => ({
     ...i,

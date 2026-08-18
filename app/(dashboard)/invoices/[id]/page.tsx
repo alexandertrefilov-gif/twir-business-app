@@ -24,6 +24,7 @@ import { isInvoiceLocked, InvoiceStatus, INVOICE_TYPE_LABELS } from '@/types/enu
 import { addPaymentAction }   from '@/app/(dashboard)/payments/actions'
 import { format }             from 'date-fns'
 import { de }                 from 'date-fns/locale'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -48,6 +49,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
   const [
     canEdit,
+    canDelete,
     canFinalize,
     canCancel,
     canCreatePayment,
@@ -55,6 +57,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     canManageDunning,
   ] = await Promise.all([
     hasPermission(Resource.INVOICE, Action.UPDATE),
+    hasPermission(Resource.INVOICE, Action.DELETE),
     hasPermission(Resource.INVOICE, Action.FINALIZE),
     hasPermission(Resource.INVOICE, Action.CANCEL),
     hasPermission(Resource.PAYMENT, Action.CREATE),
@@ -284,6 +287,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                 canFinalize={canFinalize}
                 canCancel={canCancel}
                 canEdit={canEdit}
+                canDelete={canDelete && isTestDeleteEnabled()}
               />
             </div>
 
