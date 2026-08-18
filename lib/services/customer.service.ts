@@ -162,10 +162,34 @@ export async function createCustomer(
   userEmail: string,
 ): Promise<string> {
   const number = await nextCustomerNumber()
+  const {
+    contactSalutation,
+    contactFirstName,
+    contactLastName,
+    contactDepartment,
+    ...customerData
+  } = data
+  const hasContact = Boolean(
+    contactSalutation || contactFirstName || contactLastName || contactDepartment,
+  )
 
   const customer = await prisma.$transaction(async (tx) => {
     const c = await tx.customer.create({
-      data: { ...data, number },
+      data: {
+        ...customerData,
+        number,
+        ...(hasContact && {
+          contacts: {
+            create: {
+              salutation: contactSalutation,
+              firstName: contactFirstName ?? '',
+              lastName: contactLastName ?? '',
+              position: contactDepartment,
+              isPrimary: true,
+            },
+          },
+        }),
+      },
     })
 
     await buildAuditLogCreate({
@@ -193,14 +217,60 @@ export async function updateCustomer(
 ): Promise<void> {
   const existing = await prisma.customer.findUnique({
     where: { id, deletedAt: null },
+    include: {
+      contacts: {
+        where: { deletedAt: null },
+        orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+        take: 1,
+      },
+    },
   })
   if (!existing) throw new NotFoundError('Kunde nicht gefunden')
+  const {
+    contactSalutation,
+    contactFirstName,
+    contactLastName,
+    contactDepartment,
+    ...customerData
+  } = data
+  const hasContact = Boolean(
+    contactSalutation || contactFirstName || contactLastName || contactDepartment,
+  )
+  const primaryContact = existing.contacts[0]
 
   await prisma.$transaction(async (tx) => {
     await tx.customer.update({
       where: { id },
-      data,
+      data: customerData,
     })
+    if (primaryContact && hasContact) {
+      await tx.contact.update({
+        where: { id: primaryContact.id },
+        data: {
+          salutation: contactSalutation,
+          firstName: contactFirstName ?? '',
+          lastName: contactLastName ?? '',
+          position: contactDepartment,
+          isPrimary: true,
+        },
+      })
+    } else if (!primaryContact && hasContact) {
+      await tx.contact.create({
+        data: {
+          customerId: id,
+          salutation: contactSalutation,
+          firstName: contactFirstName ?? '',
+          lastName: contactLastName ?? '',
+          position: contactDepartment,
+          isPrimary: true,
+        },
+      })
+    } else if (primaryContact && !hasContact) {
+      await tx.contact.update({
+        where: { id: primaryContact.id },
+        data: { deletedAt: new Date(), isPrimary: false },
+      })
+    }
 
     await buildAuditLogCreate({
       userId,
@@ -209,7 +279,7 @@ export async function updateCustomer(
       entityType: 'customer',
       entityId:   id,
       oldValue:   { name: existing.name, email: existing.email, city: existing.city },
-      newValue:   { name: data.name,     email: data.email,     city: data.city },
+      newValue:   { name: customerData.name, email: customerData.email, city: customerData.city },
     })
   })
 }

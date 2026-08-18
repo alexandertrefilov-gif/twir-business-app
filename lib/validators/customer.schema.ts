@@ -8,6 +8,10 @@ export const CustomerCreateSchema = z.object({
   name:        z.string().min(1, 'Kurzname ist erforderlich').max(200),
   legalName:   z.string().max(300).optional().nullable(),
   legalForm:   z.string().max(50).optional().nullable(),
+  contactSalutation: z.string().max(30).optional().nullable(),
+  contactFirstName:  z.string().max(100).optional().nullable(),
+  contactLastName:   z.string().max(100).optional().nullable(),
+  contactDepartment: z.string().max(150).optional().nullable(),
 
   // Steuer
   vatId:       z
@@ -44,6 +48,27 @@ export const CustomerCreateSchema = z.object({
     .transform((v) => v || null),
 
   notes:       z.string().max(2000).optional().nullable(),
+}).superRefine((data, ctx) => {
+  const hasContact = Boolean(
+    data.contactSalutation ||
+    data.contactFirstName ||
+    data.contactLastName ||
+    data.contactDepartment,
+  )
+  if (hasContact && !data.contactFirstName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['contactFirstName'],
+      message: 'Vorname des Ansprechpartners ist erforderlich',
+    })
+  }
+  if (hasContact && !data.contactLastName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['contactLastName'],
+      message: 'Nachname des Ansprechpartners ist erforderlich',
+    })
+  }
 })
 
 export const CustomerUpdateSchema = CustomerCreateSchema

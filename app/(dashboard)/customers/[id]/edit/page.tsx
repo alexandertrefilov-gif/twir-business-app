@@ -30,6 +30,9 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
     notFound()
   }
 
+  const primaryContact = customer.contacts.find((contact) => contact.isPrimary) ??
+    customer.contacts[0]
+
   // Bind customer ID to the action
   const boundAction = updateCustomerAction.bind(null, customer.id)
 
@@ -53,6 +56,10 @@ export default async function EditCustomerPage({ params }: { params: Promise<{ i
             name:        customer.name,
             legalName:   customer.legalName   ?? undefined,
             legalForm:   customer.legalForm   ?? undefined,
+            contactSalutation: primaryContact?.salutation ?? undefined,
+            contactFirstName:  primaryContact?.firstName  ?? undefined,
+            contactLastName:   primaryContact?.lastName   ?? undefined,
+            contactDepartment: primaryContact?.position   ?? undefined,
             vatId:       customer.vatId       ?? undefined,
             taxNumber:   customer.taxNumber   ?? undefined,
             street:      customer.street      ?? undefined,

@@ -13,6 +13,10 @@ interface CustomerFormProps {
     name:        string
     legalName:   string
     legalForm:   string
+    contactSalutation: string
+    contactFirstName:  string
+    contactLastName:   string
+    contactDepartment: string
     vatId:       string
     taxNumber:   string
     street:      string
@@ -71,6 +75,32 @@ export function CustomerForm({ mode, customerId, defaults = {}, action }: Custom
             placeholder="GmbH, AG, e.K., GbR, …"
           />
 
+        </div>
+      </div>
+
+      {/* ── Ansprechpartner / Briefkopf ── */}
+      <div className="form-section">
+        <h2 className="form-section-title">Ansprechpartner / Briefkopf</h2>
+        <p className="field-hint mb-3">
+          Alle Felder sind optional. Im Angebot erscheinen sie zwischen Firmenname und Adresse.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Anrede" name="contactSalutation"
+            defaultValue={defaults.contactSalutation} error={err('contactSalutation')}
+            placeholder="Herr, Frau, Dr. …"
+          />
+          <Field label="Abteilung / Funktion" name="contactDepartment"
+            defaultValue={defaults.contactDepartment} error={err('contactDepartment')}
+            placeholder="z.B. Einkauf / Technik"
+          />
+          <Field label="Vorname" name="contactFirstName"
+            defaultValue={defaults.contactFirstName} error={err('contactFirstName')}
+            placeholder="Max"
+          />
+          <Field label="Nachname" name="contactLastName"
+            defaultValue={defaults.contactLastName} error={err('contactLastName')}
+            placeholder="Mustermann"
+          />
         </div>
       </div>
 

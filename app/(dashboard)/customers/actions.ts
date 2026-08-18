@@ -35,6 +35,10 @@ export async function createCustomerAction(
     name:        formData.get('name'),
     legalName:   formData.get('legalName')   || null,
     legalForm:   formData.get('legalForm')   || null,
+    contactSalutation: formData.get('contactSalutation') || null,
+    contactFirstName:  formData.get('contactFirstName')  || null,
+    contactLastName:   formData.get('contactLastName')   || null,
+    contactDepartment: formData.get('contactDepartment') || null,
     vatId:       formData.get('vatId')       || null,
     taxNumber:   formData.get('taxNumber')   || null,
     street:      formData.get('street')      || null,
@@ -57,14 +61,16 @@ export async function createCustomerAction(
     }
   }
 
+  let id: string
   try {
-    const id = await createCustomer(result.data, userId, userEmail)
+    id = await createCustomer(result.data, userId, userEmail)
     revalidatePath('/customers')
-    redirect(`/customers/${id}`)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Unbekannter Fehler'
     return { success: false, error: msg }
   }
+
+  redirect(`/customers/${id}`)
 }
 
 // ── UPDATE ───────────────────────────────────────────────────
@@ -81,6 +87,10 @@ export async function updateCustomerAction(
     name:        formData.get('name'),
     legalName:   formData.get('legalName')   || null,
     legalForm:   formData.get('legalForm')   || null,
+    contactSalutation: formData.get('contactSalutation') || null,
+    contactFirstName:  formData.get('contactFirstName')  || null,
+    contactLastName:   formData.get('contactLastName')   || null,
+    contactDepartment: formData.get('contactDepartment') || null,
     vatId:       formData.get('vatId')       || null,
     taxNumber:   formData.get('taxNumber')   || null,
     street:      formData.get('street')      || null,
@@ -107,11 +117,12 @@ export async function updateCustomerAction(
     await updateCustomer(id, result.data, userId, userEmail)
     revalidatePath('/customers')
     revalidatePath(`/customers/${id}`)
-    redirect(`/customers/${id}`)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Unbekannter Fehler'
     return { success: false, error: msg }
   }
+
+  redirect(`/customers/${id}`)
 }
 
 // ── DELETE ───────────────────────────────────────────────────
