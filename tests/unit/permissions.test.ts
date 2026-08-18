@@ -48,6 +48,10 @@ describe('Rollenmatrix — Vollständigkeitsprüfung', () => {
       expect(roleHasPermission(RoleName.ACCOUNTING, Resource.INVOICE, Action.CANCEL)).toBe(true)
     })
 
+    it('darf Rechnungsentwürfe löschen', () => {
+      expect(roleHasPermission(RoleName.ACCOUNTING, Resource.INVOICE, Action.DELETE)).toBe(true)
+    })
+
     it('darf Zahlungen erfassen', () => {
       expect(roleHasPermission(RoleName.ACCOUNTING, Resource.PAYMENT, Action.CREATE)).toBe(true)
     })
@@ -120,6 +124,10 @@ describe('Rollenmatrix — Vollständigkeitsprüfung', () => {
       expect(roleHasPermission(RoleName.OFFICE, Resource.INVOICE, Action.FINALIZE)).toBe(false)
     })
 
+    it('darf Rechnungsentwürfe löschen', () => {
+      expect(roleHasPermission(RoleName.OFFICE, Resource.INVOICE, Action.DELETE)).toBe(true)
+    })
+
     it('darf KEINE Zahlungen erfassen', () => {
       expect(roleHasPermission(RoleName.OFFICE, Resource.PAYMENT, Action.CREATE)).toBe(false)
     })
@@ -157,6 +165,13 @@ describe('Rollenmatrix — Vollständigkeitsprüfung', () => {
     it.each(NON_ACCOUNTING)('%s darf keine Rechnung stornieren', (role) => {
       expect(roleHasPermission(role, Resource.INVOICE, Action.CANCEL)).toBe(false)
     })
+
+    it.each([RoleName.PROJECT_MANAGER, RoleName.EMPLOYEE])(
+      '%s darf keine Rechnungsentwürfe löschen',
+      (role) => {
+        expect(roleHasPermission(role, Resource.INVOICE, Action.DELETE)).toBe(false)
+      },
+    )
 
     const NON_ADMIN = [
       RoleName.OFFICE,

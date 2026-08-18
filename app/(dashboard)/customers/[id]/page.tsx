@@ -5,6 +5,7 @@ import { notFound }       from 'next/navigation'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { getCustomerById } from '@/lib/services/customer.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { DeleteCustomerButton } from '@/components/customers/DeleteCustomerButton'
 import { format }         from 'date-fns'
 import { de }             from 'date-fns/locale'
@@ -61,7 +62,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
                 Bearbeiten
               </Link>
             )}
-            {canDelete && (
+            {canDelete && isTestDeleteEnabled() && (
               <DeleteCustomerButton customerId={customer.id} />
             )}
           </div>

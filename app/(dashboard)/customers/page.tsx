@@ -5,6 +5,7 @@ import { PageHeader }       from '@/components/shared/PageHeader'
 import { CustomerTable }    from '@/components/customers/CustomerTable'
 import { getCustomers }     from '@/lib/services/customer.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export const metadata: Metadata = { title: 'Kunden' }
 
@@ -64,7 +65,7 @@ export default async function CustomersPage({
             pageSize={result.pageSize}
             totalPages={result.totalPages}
             search={search}
-            canDelete={canDelete}
+            canDelete={canDelete && isTestDeleteEnabled()}
           />
         </div>
       </div>

@@ -4,9 +4,8 @@
 import Link from 'next/link'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { useTransition } from 'react'
-import { ConfirmDialog }        from '@/components/shared/ConfirmDialog'
-import { deleteCustomerAction } from '@/app/(dashboard)/customers/actions'
 import type { CustomerListItem } from '@/lib/services/customer.service'
+import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
 
 interface CustomerTableProps {
   customers:  CustomerListItem[]
@@ -71,7 +70,7 @@ export function CustomerTable({
               <th className="num text-right">AN</th>
               <th className="num text-right">AU</th>
               <th className="num text-right">RE</th>
-              <th className="w-10"></th>
+              <th className="text-right">Aktion</th>
             </tr>
           </thead>
           <tbody>
@@ -220,9 +219,8 @@ function PaginationBtn({
 }
 
 function RowActions({ customerId, canDelete }: { customerId: string; canDelete: boolean }) {
-  const router = useRouter()
   return (
-    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+    <div className="flex items-center justify-end gap-1">
       <Link
         href={`/customers/${customerId}/edit`}
         className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-stone-100 transition-colors"
@@ -234,28 +232,7 @@ function RowActions({ customerId, canDelete }: { customerId: string; canDelete: 
         </svg>
       </Link>
 
-      {canDelete && (
-        <ConfirmDialog
-          title="Kunden löschen?"
-          description="Der Kunde wird deaktiviert und kann nicht mehr verwendet werden. Bestehende Dokumente bleiben erhalten."
-          confirmLabel="Löschen"
-          danger
-          onConfirm={async () => {
-            await deleteCustomerAction(customerId)
-            router.refresh()
-          }}
-          trigger={
-            <button
-              className="p-1.5 rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-colors"
-              title="Löschen"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>
-              </svg>
-            </button>
-          }
-        />
-      )}
+      {canDelete && <RecordDeleteButton id={customerId} type="customer" />}
     </div>
   )
 }

@@ -8,6 +8,8 @@ import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/p
 import { INVOICE_STATUS_LABELS } from '@/types/enums'
 import { format }             from 'date-fns'
 import { de }                 from 'date-fns/locale'
+import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export const metadata: Metadata = { title: 'Rechnungen' }
 
@@ -21,9 +23,10 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
   const search = query.search ?? ''
   const status = query.status ?? ''
 
-  const [result, canCreate] = await Promise.all([
+  const [result, canCreate, canDelete] = await Promise.all([
     getInvoices({ search, status: status || undefined, page }),
     hasPermission(Resource.INVOICE, Action.CREATE),
+    hasPermission(Resource.INVOICE, Action.DELETE),
   ])
 
   const today = new Date(); today.setHours(0,0,0,0)
@@ -76,11 +79,12 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                   <th>Status</th>
                   <th className="num text-right">Gesamt</th>
                   <th className="num text-right">Offen</th>
+                  <th className="text-right">Aktion</th>
                 </tr>
               </thead>
               <tbody>
                 {result.invoices.length === 0 && (
-                  <tr><td colSpan={7} className="text-center py-12 text-sm text-muted-foreground">
+                  <tr><td colSpan={8} className="text-center py-12 text-sm text-muted-foreground">
                     {search || status ? 'Keine Rechnungen für diesen Filter.' : 'Noch keine Rechnungen vorhanden.'}
                   </td></tr>
                 )}
@@ -117,6 +121,11 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                         {inv.remainingAmount > 0
                           ? <span className="mono text-sm font-500 text-amber-700">{fmt(inv.remainingAmount)}</span>
                           : <span className="text-emerald-600 text-xs">✓</span>}
+                      </td>
+                      <td>
+                        {canDelete && isTestDeleteEnabled() && inv.status === 'DRAFT' && (
+                          <RecordDeleteButton id={inv.id} type="invoice" />
+                        )}
                       </td>
                     </tr>
                   )

@@ -9,6 +9,7 @@ import type { OfferListItem } from '@/lib/services/offer.service'
 import { OFFER_STATUS_LABELS } from '@/types/enums'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
+import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
 
 interface OfferTableProps {
   offers:     OfferListItem[]
@@ -17,6 +18,8 @@ interface OfferTableProps {
   totalPages: number
   search:     string
   statusFilter: string
+  canDelete: boolean
+  canDeleteAllStatuses: boolean
 }
 
 const STATUS_OPTIONS = [
@@ -25,7 +28,7 @@ const STATUS_OPTIONS = [
 ]
 
 export function OfferTable({
-  offers, total, page, totalPages, search, statusFilter,
+  offers, total, page, totalPages, search, statusFilter, canDelete, canDeleteAllStatuses,
 }: OfferTableProps) {
   const router     = useRouter()
   const pathname   = usePathname()
@@ -83,12 +86,13 @@ export function OfferTable({
               <th>Gültig bis</th>
               <th>Status</th>
               <SortTh label="Brutto"   field="totalGross"  params={params} nav={nav} className="text-right" />
+              <th className="text-right">Aktion</th>
             </tr>
           </thead>
           <tbody>
             {offers.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center py-12 text-sm text-muted-foreground">
+                <td colSpan={8} className="text-center py-12 text-sm text-muted-foreground">
                   {search || statusFilter
                     ? 'Keine Angebote für den gewählten Filter.'
                     : 'Noch keine Angebote angelegt.'}
@@ -149,6 +153,11 @@ export function OfferTable({
                         currency: 'EUR',
                       })}
                     </span>
+                  </td>
+                  <td onClick={(event) => event.stopPropagation()}>
+                    {canDelete && (canDeleteAllStatuses || o.status === 'DRAFT') && (
+                      <RecordDeleteButton id={o.id} type="offer" />
+                    )}
                   </td>
                 </tr>
               )

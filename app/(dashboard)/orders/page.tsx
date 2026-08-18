@@ -8,6 +8,8 @@ import { hasPermission, Resource, Action } from '@/lib/auth/permissions'
 import { ORDER_STATUS_LABELS } from '@/types/enums'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
+import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export const metadata: Metadata = { title: 'Aufträge' }
 
@@ -18,10 +20,12 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   const page   = parseInt(query.page ?? '1', 10)
   const search = query.search ?? ''
   const status = query.status ?? ''
+  const canDeleteAllStatuses = isTestDeleteEnabled()
 
-  const [result, canCreate] = await Promise.all([
+  const [result, canCreate, canDelete] = await Promise.all([
     getOrders({ search, status: status || undefined, page }),
     hasPermission(Resource.ORDER, Action.CREATE),
+    hasPermission(Resource.ORDER, Action.DELETE),
   ])
 
   const STATUS_OPTS = [
@@ -77,17 +81,18 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                   <th>Status</th>
                   <th className="num text-right">LN</th>
                   <th className="num text-right">Brutto</th>
+                  <th className="text-right">Aktion</th>
                 </tr>
               </thead>
               <tbody>
                 {result.orders.length === 0 && (
-                  <tr><td colSpan={8} className="text-center py-12 text-sm text-muted-foreground">
+                  <tr><td colSpan={9} className="text-center py-12 text-sm text-muted-foreground">
                     {search || status ? 'Keine Aufträge für den gewählten Filter.' : 'Noch keine Aufträge vorhanden.'}
                   </td></tr>
                 )}
                 {result.orders.map((o) => (
                   <tr key={o.id} className="cursor-pointer group">
-                    <td onClick={() => {}}>
+                    <td>
                       <Link href={`/orders/${o.id}`} className="mono text-xs font-500 text-foreground hover:text-blue-700">
                         {o.orderNumber}
                       </Link>
@@ -117,6 +122,14 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                       {o.serviceReportCount > 0
                         ? <span className="mono text-xs">{o.serviceReportCount}</span>
                         : <span className="text-stone-300">–</span>}
+                    </td>
+                    <td>
+                      {canDelete && canDeleteAllStatuses && (
+                        canDeleteAllStatuses ||
+                        (o.status === 'OPEN' && o.serviceReportCount === 0)
+                      ) && (
+                        <RecordDeleteButton id={o.id} type="order" />
+                      )}
                     </td>
                     <td className="num text-right">
                       <span className="mono text-sm font-500">

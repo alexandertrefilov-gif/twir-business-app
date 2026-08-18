@@ -12,6 +12,7 @@ import {
   updateCustomer,
   deleteCustomer,
 } from '@/lib/services/customer.service'
+import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 
 // ── Shared session helper ────────────────────────────────────
 
@@ -117,6 +118,7 @@ export async function updateCustomerAction(
 
 export async function deleteCustomerAction(id: string): Promise<ActionState> {
   await requirePermission(Resource.CUSTOMER, Action.DELETE)
+  requireTestDeleteEnabled()
   const { userId, userEmail } = await getActor()
 
   try {

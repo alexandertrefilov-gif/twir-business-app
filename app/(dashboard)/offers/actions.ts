@@ -15,6 +15,7 @@ import {
   convertOfferToOrder,
 } from '@/lib/services/offer.service'
 import type { OfferStatus } from '@/types/enums'
+import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export interface ActionState {
   success?:     boolean
@@ -164,6 +165,7 @@ export async function convertToOrderAction(offerId: string): Promise<ActionState
 
 export async function deleteOfferAction(offerId: string): Promise<ActionState> {
   await requirePermission(Resource.OFFER, Action.DELETE)
+  requireTestDeleteEnabled()
   const { userId, userEmail } = await getActor()
 
   try {

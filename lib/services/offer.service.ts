@@ -414,7 +414,16 @@ export async function convertOfferToOrder(
   })
 }
 
-// ── DELETE (nur DRAFT und nicht ACCEPTED) ────────────────────
+// ── DELETE ────────────────────────────────────────────────────
+
+export function canDeleteOfferInEnvironment(
+  status: OfferStatus,
+  nodeEnv: string | undefined,
+): boolean {
+  if (nodeEnv === 'development') return true
+  return status !== OfferStatus.ACCEPTED &&
+    status !== OfferStatus.CONVERTED_TO_ORDER
+}
 
 export async function deleteOffer(
   id:        string,
@@ -427,10 +436,7 @@ export async function deleteOffer(
   })
   if (!offer) throw new NotFoundError('Angebot nicht gefunden')
 
-  if (
-    offer.status === OfferStatus.ACCEPTED ||
-    offer.status === OfferStatus.CONVERTED_TO_ORDER
-  ) {
+  if (!canDeleteOfferInEnvironment(offer.status as OfferStatus, process.env.NODE_ENV)) {
     throw new BusinessRuleError(
       'Angenommene oder in Aufträge umgewandelte Angebote können nicht gelöscht werden.',
     )

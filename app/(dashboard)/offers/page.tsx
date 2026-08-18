@@ -5,6 +5,7 @@ import { PageHeader }     from '@/components/shared/PageHeader'
 import { OfferTable }     from '@/components/offers/OfferTable'
 import { getOffers }      from '@/lib/services/offer.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export const metadata: Metadata = { title: 'Angebote' }
 
@@ -30,9 +31,10 @@ export default async function OffersPage({
   const sort   = (query.sort  ?? 'offerDate') as 'offerNumber' | 'offerDate' | 'totalGross' | 'status'
   const order  = (query.order ?? 'desc')      as 'asc' | 'desc'
 
-  const [result, canCreate] = await Promise.all([
+  const [result, canCreate, canDelete] = await Promise.all([
     getOffers({ search, status: status || undefined, page, sort, order }),
     hasPermission(Resource.OFFER, Action.CREATE),
+    hasPermission(Resource.OFFER, Action.DELETE),
   ])
 
   return (
@@ -64,6 +66,8 @@ export default async function OffersPage({
             totalPages={result.totalPages}
             search={search}
             statusFilter={status}
+            canDelete={canDelete && isTestDeleteEnabled()}
+            canDeleteAllStatuses={isTestDeleteEnabled()}
           />
         </div>
       </div>

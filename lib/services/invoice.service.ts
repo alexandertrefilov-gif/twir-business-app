@@ -121,6 +121,41 @@ export async function createInvoiceDraft(
 }
 
 /**
+ * Löscht ausschließlich einen noch nicht finalisierten Rechnungsentwurf.
+ * Rechtlich relevante Rechnungen bleiben unveränderlich und werden storniert.
+ */
+export async function deleteInvoiceDraft(
+  invoiceId: string,
+  userId: string,
+  userEmail: string,
+): Promise<void> {
+  const invoice = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { status: true },
+  })
+
+  if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
+  if (invoice.status !== InvoiceStatus.DRAFT) {
+    throw new BusinessRuleError('Nur Rechnungsentwürfe können gelöscht werden.')
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.invoiceItem.deleteMany({ where: { invoiceId } })
+    await tx.invoice.delete({ where: { id: invoiceId } })
+    await tx.auditLog.create({
+      data: {
+        userId,
+        userEmail,
+        action: AuditAction.DELETE,
+        entityType: 'invoice',
+        entityId: invoiceId,
+        oldValue: { status: InvoiceStatus.DRAFT },
+      },
+    })
+  })
+}
+
+/**
  * Finalisiert eine Rechnung.
  *
  * Diese Funktion:

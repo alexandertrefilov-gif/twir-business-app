@@ -13,6 +13,7 @@ import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { InvoiceDraftSchema } from '@/lib/validators/invoice.schema'
 import {
   createInvoiceDraft,
+  deleteInvoiceDraft,
   finalizeInvoice,
   cancelInvoice,
 } from '@/lib/services/invoice.service'
@@ -21,6 +22,7 @@ import { InvoiceStatus, isInvoiceTransitionAllowed } from '@/types/enums'
 import { BusinessRuleError, NotFoundError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate } from '@/lib/services/audit.service'
 import { AuditAction } from '@/types/enums'
+import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export interface ActionState {
   success?:     boolean
@@ -205,6 +207,25 @@ export async function updateInvoiceDraftAction(
   revalidatePath('/invoices')
   revalidatePath(`/invoices/${invoiceId}`)
   redirect(`/invoices/${invoiceId}`)
+}
+
+// ── DELETE DRAFT ──────────────────────────────────────────────
+
+export async function deleteInvoiceDraftAction(invoiceId: string): Promise<ActionState> {
+  await requirePermission(Resource.INVOICE, Action.DELETE)
+  requireTestDeleteEnabled()
+  const { userId, userEmail } = await getActor()
+
+  try {
+    await deleteInvoiceDraft(invoiceId, userId, userEmail)
+    revalidatePath('/invoices')
+    return { success: true }
+  } catch (e: unknown) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : 'Fehler beim Löschen',
+    }
+  }
 }
 
 // ── FINALIZE ──────────────────────────────────────────────────

@@ -338,7 +338,16 @@ export async function changeOrderStatus(
   })
 }
 
-// ── DELETE (nur OPEN ohne Service Reports) ────────────────────
+// ── DELETE ────────────────────────────────────────────────────
+
+export function canDeleteOrderInEnvironment(
+  status: OrderStatus,
+  serviceReportCount: number,
+  nodeEnv: string | undefined,
+): boolean {
+  if (nodeEnv === 'development') return true
+  return status !== OrderStatus.INVOICED && serviceReportCount === 0
+}
 
 export async function deleteOrder(
   id:        string,
@@ -356,12 +365,13 @@ export async function deleteOrder(
   })
   if (!order) throw new NotFoundError('Auftrag nicht gefunden')
 
-  if (order.status === OrderStatus.INVOICED) {
-    throw new BusinessRuleError('Abgerechnete Aufträge können nicht gelöscht werden.')
-  }
-  if (order._count.serviceReports > 0) {
+  if (!canDeleteOrderInEnvironment(
+    order.status as OrderStatus,
+    order._count.serviceReports,
+    process.env.NODE_ENV,
+  )) {
     throw new BusinessRuleError(
-      'Aufträge mit Leistungsnachweisen können nicht gelöscht werden.',
+      'Abgerechnete Aufträge oder Aufträge mit Leistungsnachweisen können nicht gelöscht werden.',
     )
   }
 

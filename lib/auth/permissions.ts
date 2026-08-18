@@ -89,6 +89,7 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
   'invoice:create':   [RoleName.ADMIN, RoleName.OFFICE, RoleName.ACCOUNTING],
   'invoice:read':     [RoleName.ADMIN, RoleName.OFFICE, RoleName.PROJECT_MANAGER, RoleName.ACCOUNTING],
   'invoice:update':   [RoleName.ADMIN, RoleName.OFFICE, RoleName.ACCOUNTING],  // Nur DRAFT
+  'invoice:delete':   [RoleName.ADMIN, RoleName.OFFICE, RoleName.ACCOUNTING],  // Nur DRAFT
 
   // Rechnungen — kritische Aktionen
   'invoice:finalize': ACCOUNTING_ROLES,  // Nur Buchhaltung + Admin

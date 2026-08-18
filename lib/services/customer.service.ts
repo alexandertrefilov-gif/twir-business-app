@@ -216,6 +216,15 @@ export async function updateCustomer(
 
 // ── SOFT DELETE ──────────────────────────────────────────────
 
+export function canDeleteCustomerInEnvironment(
+  activeInvoiceCount: number,
+  activeOrderCount: number,
+  nodeEnv: string | undefined,
+): boolean {
+  if (nodeEnv === 'development') return true
+  return activeInvoiceCount === 0 && activeOrderCount === 0
+}
+
 export async function deleteCustomer(
   id:        string,
   userId:    string,
@@ -238,7 +247,11 @@ export async function deleteCustomer(
   if (!existing) throw new NotFoundError('Kunde nicht gefunden')
 
   // Blockieren wenn offene Aufträge oder aktive Rechnungen existieren
-  if (existing._count.invoices > 0 || existing._count.orders > 0) {
+  if (!canDeleteCustomerInEnvironment(
+    existing._count.invoices,
+    existing._count.orders,
+    process.env.NODE_ENV,
+  )) {
     throw new BusinessRuleError(
       'Kunde kann nicht gelöscht werden: Es existieren noch aktive Aufträge oder Rechnungen.',
     )

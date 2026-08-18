@@ -14,6 +14,7 @@ import {
   deleteOrder,
 } from '@/lib/services/order.service'
 import type { OrderStatus } from '@/types/enums'
+import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export interface ActionState {
   success?:     boolean
@@ -135,6 +136,7 @@ export async function changeOrderStatusAction(
 
 export async function deleteOrderAction(orderId: string): Promise<ActionState> {
   await requirePermission(Resource.ORDER, Action.DELETE)
+  requireTestDeleteEnabled()
   const { userId, userEmail } = await getActor()
 
   try {

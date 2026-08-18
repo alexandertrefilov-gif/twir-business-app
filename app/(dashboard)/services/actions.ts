@@ -13,6 +13,7 @@ import {
   deleteServiceReport,
 } from '@/lib/services/service-report.service'
 import type { RoleName } from '@/types/enums'
+import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export interface ActionState {
   success?:     boolean
@@ -112,6 +113,7 @@ export async function updateServiceReportAction(
 
 export async function deleteServiceReportAction(reportId: string): Promise<ActionState> {
   await requirePermission(Resource.SERVICE_REPORT, Action.DELETE)
+  requireTestDeleteEnabled()
   const { userId, userEmail, userRole } = await getActor()
 
   try {
