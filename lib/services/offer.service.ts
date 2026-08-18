@@ -20,6 +20,7 @@ import {
 } from '@/lib/auth/permissions'
 import type { OfferCreateInput, OfferUpdateInput } from '@/lib/validators/offer.schema'
 import { calcItemAmounts, calcOfferTotals } from '@/lib/validators/offer.schema'
+import { offerIntroToOrderDescription } from '@/lib/offers/rich-text'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -134,7 +135,15 @@ export async function getOfferById(id: string) {
   const offer = await prisma.offer.findUnique({
     where:   { id, deletedAt: null },
     include: {
-      customer:  true,
+      customer:  {
+        include: {
+          contacts: {
+            where: { deletedAt: null },
+            orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+            take: 1,
+          },
+        },
+      },
       items:     { orderBy: { position: 'asc' } },
       createdBy: { select: { firstName: true, lastName: true, email: true } },
       order:     { select: { id: true, orderNumber: true, status: true } },
@@ -366,6 +375,7 @@ export async function convertOfferToOrder(
         offerId:          offer.id,
         status:           OrderStatus.OPEN,
         title:            offer.title,
+        description:      offerIntroToOrderDescription(offer.introText),
         customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
         totalNet:         offer.totalNet,
         totalTax:         offer.totalTax,

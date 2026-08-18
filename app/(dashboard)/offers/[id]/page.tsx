@@ -5,6 +5,7 @@ import Link                 from 'next/link'
 import { PageHeader }       from '@/components/shared/PageHeader'
 import { OfferStatusBadge } from '@/components/offers/OfferStatusBadge'
 import { OfferStatusActions } from '@/components/offers/OfferStatusActions'
+import { OfferRichText }      from '@/components/offers/OfferRichText'
 import { getOfferById }     from '@/lib/services/offer.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { calcOfferTotals }  from '@/lib/validators/offer.schema'
@@ -35,8 +36,9 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
     notFound()
   }
 
-  const [canEdit, canDelete, canConvert] = await Promise.all([
+  const [canEdit, canCopy, canDelete, canConvert] = await Promise.all([
     hasPermission(Resource.OFFER, Action.UPDATE),
+    hasPermission(Resource.OFFER, Action.CREATE),
     hasPermission(Resource.OFFER, Action.DELETE),
     hasPermission(Resource.ORDER, Action.CREATE),
   ])
@@ -80,6 +82,28 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
         actions={
           <div className="flex items-center gap-2">
             <OfferStatusBadge status={offer.status} />
+            <a
+              href={`/api/offers/${offer.id}/preview`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-blue-200 bg-blue-50 text-sm font-500 text-blue-700 hover:bg-blue-100 transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5A3.375 3.375 0 0010.125 2.25H8.25m0 12.75h7.5m-7.5 3h4.5M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.625a9 9 0 00-9-9z" />
+              </svg>
+              PDF-Vorschau
+            </a>
+            {canCopy && (
+              <Link
+                href={`/offers/new?copy=${offer.id}`}
+                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 7.5V6A2.25 2.25 0 0110.5 3.75h6A2.25 2.25 0 0118.75 6v6A2.25 2.25 0 0116.5 14.25H15M6 8.25h6A2.25 2.25 0 0114.25 10.5v6A2.25 2.25 0 0112 18.75H6A2.25 2.25 0 013.75 16.5v-6A2.25 2.25 0 016 8.25z"/>
+                </svg>
+                Kopieren
+              </Link>
+            )}
             {canEditNow && (
               <Link
                 href={`/offers/${offer.id}/edit`}
@@ -95,7 +119,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
         }
       />
 
-      <div className="p-6">
+      <div className="offer-standard-font p-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
           {/* ── Main content (2/3) ── */}
@@ -144,7 +168,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
             {/* Intro text */}
             {offer.introText && (
               <div className="card-base p-5">
-                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{offer.introText}</p>
+                <OfferRichText value={offer.introText} />
               </div>
             )}
 
@@ -170,7 +194,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
                   <tbody>
                     {items.map((item, idx) => (
                       <tr key={item.id}>
-                        <td className="text-muted-foreground mono text-xs">{idx + 1}</td>
+                        <td className="text-muted-foreground text-xs tabular-nums">{idx + 1}</td>
                         <td>
                           <p className="font-500 text-sm text-foreground">{item.description}</p>
                           {item.notes && <p className="text-xs text-muted-foreground mt-0.5">{item.notes}</p>}
@@ -209,7 +233,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
             {/* Outro text */}
             {offer.outroText && (
               <div className="card-base p-5">
-                <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{offer.outroText}</p>
+                <OfferRichText value={offer.outroText} />
               </div>
             )}
 

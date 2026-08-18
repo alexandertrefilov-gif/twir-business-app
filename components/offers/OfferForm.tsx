@@ -9,6 +9,7 @@
 import { useActionState, useMemo, useState } from 'react'
 import { useRouter }        from 'next/navigation'
 import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
+import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEditor'
 import type { ActionState } from '@/app/(dashboard)/offers/actions'
 
 // ── Types ─────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ const INIT: ActionState = {}
 export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormProps) {
   const [state, formAction] = useActionState(action, INIT)
   const router = useRouter()
+  const [customerId, setCustomerId] = useState(defaults.customerId ?? '')
 
   const [items, setItems] = useState<ItemRow[]>(
     defaults.items?.length ? defaults.items : [newRow()],
@@ -153,7 +155,7 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
   const fe = state.fieldErrors ?? {}
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form action={formAction} className="offer-standard-font space-y-4">
       <input type="hidden" name="itemsJson" value={serializedItems} />
 
       {/* Global error */}
@@ -178,7 +180,8 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
               id="customerId"
               name="customerId"
               required
-              defaultValue={defaults.customerId ?? ''}
+              value={customerId}
+              onChange={(event) => setCustomerId(event.target.value)}
               className={`w-full h-9 px-2.5 rounded-md border bg-white text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent
                 ${fe.customerId ? 'border-red-400' : 'border-stone-200'}`}
             >
@@ -192,13 +195,13 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
             {fe.customerId && <p className="field-error">{fe.customerId[0]}</p>}
           </div>
 
-          {/* Titel */}
+          {/* Betreff */}
           <div className="sm:col-span-2">
-            <label className="field-label" htmlFor="title">Betreff / Titel</label>
+            <label className="field-label" htmlFor="title">Betreff</label>
             <input
               id="title" name="title" type="text"
               defaultValue={defaults.title ?? ''}
-              placeholder="z.B. Angebot Wartungspaket 2025"
+              placeholder="z. B. Wartungspaket 2025"
               className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
             />
           </div>
@@ -229,36 +232,27 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
         </div>
       </div>
 
-      {/* ── Einleitungstext ── */}
+      {/* ── Aufgaben- und zusätzliche Angebotstexte ── */}
       <div className="form-section">
-        <h2 className="form-section-title">Texte</h2>
-        <div className="space-y-4">
-          <div>
-            <label className="field-label" htmlFor="introText">Einleitungstext</label>
-            <textarea
-              id="introText" name="introText" rows={3}
-              defaultValue={defaults.introText ?? ''}
-              placeholder="Sehr geehrte Damen und Herren, hiermit unterbreiten wir Ihnen folgendes Angebot …"
-              className="w-full px-3 py-2 rounded-md border border-stone-200 bg-white text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
-            />
-          </div>
-          <div>
-            <label className="field-label" htmlFor="outroText">Schlusstext</label>
-            <textarea
-              id="outroText" name="outroText" rows={3}
-              defaultValue={defaults.outroText ?? ''}
-              placeholder="Bei Rückfragen stehen wir Ihnen gerne zur Verfügung. Wir freuen uns auf Ihre Auftragserteilung …"
-              className="w-full px-3 py-2 rounded-md border border-stone-200 bg-white text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none"
-            />
-          </div>
-        </div>
+        <h2 className="form-section-title">1. Aufgabenbeschreibung und Angebotstexte</h2>
+        <RichTextSectionsEditor
+          name="introText"
+          label="Erster Textbereich: Aufgabenbeschreibung für Angebot und Auftrag"
+          defaultValue={defaults.introText}
+          placeholder="Beschreiben Sie hier präzise die Aufgabe. Dieser erste Textbereich wird in den Auftrag übernommen …"
+        />
+        {fe.introText && <p className="field-error mt-2">{fe.introText[0]}</p>}
+        <p className="mt-3 text-xs text-muted-foreground">
+          Über „＋ Textbereich“ können beliebig weitere Texte vor dem Positionskalkulator ergänzt werden.
+          Nur der erste Textbereich wird als Auftragsbeschreibung übernommen.
+        </p>
       </div>
 
-      {/* ── Positionen ── */}
+      {/* ── Positionskalkulator ── */}
       <div className="form-section">
         <div className="flex items-center justify-between mb-4 pb-3 border-b border-stone-100">
           <h2 className="text-sm font-600 text-foreground">
-            Positionen
+            2. Positionskalkulator
             {fe.items && <span className="ml-2 text-red-600 text-xs font-400">{fe.items[0]}</span>}
           </h2>
           <button
@@ -305,7 +299,7 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
                 value={item.quantity}
                 onChange={(e) => updateItem(item._key, 'quantity', e.target.value)}
                 min="0.001" step="0.001" placeholder="1"
-                className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm text-right mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+                className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
               />
 
               {/* Unit */}
@@ -324,7 +318,7 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
                   value={item.unitPrice}
                   onChange={(e) => updateItem(item._key, 'unitPrice', e.target.value)}
                   min="0" step="0.01" placeholder="0,00"
-                  className="w-full h-9 pl-3 pr-6 rounded-md border border-stone-200 bg-white text-sm text-right mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+                  className="w-full h-9 pl-3 pr-6 rounded-md border border-stone-200 bg-white text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">€</span>
               </div>
@@ -333,14 +327,14 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
               <select
                 value={item.taxRate}
                 onChange={(e) => updateItem(item._key, 'taxRate', e.target.value)}
-                className="w-full h-9 px-2 rounded-md border border-stone-200 bg-white text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+                className="w-full h-9 px-2 rounded-md border border-stone-200 bg-white text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
               >
                 {TAX_OPTS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
 
               {/* Net (calculated) */}
               <div className="h-9 px-3 rounded-md bg-stone-50 border border-stone-100 flex items-center justify-end">
-                <span className="text-sm mono text-foreground">
+                <span className="text-sm tabular-nums text-foreground">
                   {item.net.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
@@ -409,6 +403,21 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
         </div>
       </div>
 
+      {/* ── Unterschrift und Schlusstext ── */}
+      <div className="form-section">
+        <h2 className="form-section-title">3. Unterschrift und Schlusstext</h2>
+        <RichTextSectionsEditor
+          name="outroText"
+          label="Textbereich nach dem Positionskalkulator"
+          defaultValue={defaults.outroText}
+          placeholder="Schlusstext, Ort, Datum und Unterschriftsbereich …"
+        />
+        {fe.outroText && <p className="field-error mt-2">{fe.outroText[0]}</p>}
+        <p className="mt-3 text-xs text-muted-foreground">
+          Dieser Bereich erscheint im Angebot nach dem Kalkulator und kann für die Unterschrift verwendet werden.
+        </p>
+      </div>
+
       {/* ── Actions ── */}
       <div className="flex items-center justify-end gap-3 pb-6">
         <button
@@ -441,7 +450,7 @@ function TotalRow({
       <span className={`text-sm ${muted ? 'text-muted-foreground' : bold ? 'font-600 text-foreground' : 'text-foreground'}`}>
         {label}
       </span>
-      <span className={`mono text-sm tabular-nums ${bold ? 'font-600' : ''}`}>
+      <span className={`text-sm tabular-nums ${bold ? 'font-600' : ''}`}>
         {fmt} €
       </span>
     </div>

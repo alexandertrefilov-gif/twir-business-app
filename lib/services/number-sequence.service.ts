@@ -26,7 +26,13 @@ export async function nextNumber(
   type: NumberSequenceType,
   tx: Prisma.TransactionClient,
 ): Promise<string> {
-  const year = new Date().getFullYear()
+  const now = new Date()
+  const year = now.getFullYear()
+  // Angebotsnummern laufen monatlich. Das bestehende eindeutige Feld `year`
+  // wird dafür ohne Schemaänderung als YYYYMM-Periodenschlüssel verwendet.
+  const period = type === NumberSequenceType.OFFER
+    ? year * 100 + now.getMonth() + 1
+    : year
 
   // Zeile sperren (FOR UPDATE) — verhindert parallele Vergaben
   const existing = await tx.$queryRaw<
@@ -40,19 +46,19 @@ export async function nextNumber(
     SELECT id, last_number, prefix, format
     FROM number_sequences
     WHERE type = ${type}::"NumberSequenceType"
-      AND year = ${year}
+      AND year = ${period}
     FOR UPDATE
   `
 
   let sequence: { id: string; lastNumber: number; prefix: string; format: string }
 
   if (existing.length === 0) {
-    // Ersten Eintrag für dieses Jahr anlegen
+    // Ersten Eintrag für diesen Nummernzeitraum anlegen
     const settings = await tx.companySetting.findFirst()
     const prefix = getPrefixFromSettings(type, settings)
 
     const created = await tx.numberSequence.create({
-      data: { type, year, prefix, lastNumber: 0 },
+      data: { type, year: period, prefix, lastNumber: 0 },
     })
     sequence = {
       id:         created.id,
@@ -78,7 +84,20 @@ export async function nextNumber(
     data:  { lastNumber: newNumber },
   })
 
-  return formatNumber(sequence.format, sequence.prefix, year, newNumber)
+  return type === NumberSequenceType.OFFER
+    ? formatOfferNumber(now, sequence.prefix, newNumber)
+    : formatNumber(sequence.format, sequence.prefix, year, newNumber)
+}
+
+/**
+ * Angebotsnummer: AN YYMMNN
+ * Beispiel: erster Vorgang im Juli 2026 → AN 260701
+ */
+export function formatOfferNumber(date: Date, prefix: string, number: number): string {
+  const shortYear = String(date.getFullYear()).slice(-2)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const sequence = String(number).padStart(2, '0')
+  return `${prefix} ${shortYear}${month}${sequence}`
 }
 
 /**
@@ -134,9 +153,16 @@ function getPrefixFromSettings(
  * Nur lesen — keine Änderungen.
  */
 export async function getSequenceStatus() {
-  const year = new Date().getFullYear()
+  const now = new Date()
+  const year = now.getFullYear()
+  const offerPeriod = year * 100 + now.getMonth() + 1
   return prisma.numberSequence.findMany({
-    where:   { year },
+    where: {
+      OR: [
+        { year, type: { not: NumberSequenceType.OFFER } },
+        { year: offerPeriod, type: NumberSequenceType.OFFER },
+      ],
+    },
     orderBy: { type: 'asc' },
   })
 }

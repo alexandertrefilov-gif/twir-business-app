@@ -1,5 +1,9 @@
 // lib/validators/offer.schema.ts
 import { z } from 'zod'
+import {
+  canonicalizeOfferTextValue,
+  isValidOfferTextValue,
+} from '@/lib/offers/rich-text'
 
 export const TAX_RATES = [0, 7, 19] as const
 export type TaxRate = (typeof TAX_RATES)[number]
@@ -33,8 +37,14 @@ export type OfferItemInput = z.infer<typeof OfferItemSchema>
 export const OfferCreateSchema = z.object({
   customerId:  z.string().uuid('Bitte Kunde auswählen'),
   title:       z.string().max(200).optional().nullable(),
-  introText:   z.string().max(3000).optional().nullable(),
-  outroText:   z.string().max(3000).optional().nullable(),
+  introText:   z.preprocess(
+    (value) => typeof value === 'string' ? canonicalizeOfferTextValue(value) : value,
+    z.string().max(500_000).refine(isValidOfferTextValue, 'Textformat ist ungültig'),
+  ).optional().nullable(),
+  outroText:   z.preprocess(
+    (value) => typeof value === 'string' ? canonicalizeOfferTextValue(value) : value,
+    z.string().max(500_000).refine(isValidOfferTextValue, 'Textformat ist ungültig'),
+  ).optional().nullable(),
   offerDate:   z.coerce.date({ invalid_type_error: 'Angebotsdatum ungültig' }),
   validUntil:  z.coerce.date().optional().nullable(),
   items:       z

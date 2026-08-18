@@ -22,6 +22,9 @@ export interface ActionState {
   error?:       string
   fieldErrors?: Record<string, string[]>
   redirectTo?:  string
+  values?: {
+    customerId?: string
+  }
 }
 
 // ── Session helper ───────────────────────────────────────────
@@ -69,6 +72,9 @@ export async function createOfferAction(
       success:     false,
       fieldErrors: result.error.flatten().fieldErrors as Record<string, string[]>,
       error:       'Bitte alle Pflichtfelder ausfüllen.',
+      values: {
+        customerId: typeof raw.customerId === 'string' ? raw.customerId : undefined,
+      },
     }
   }
 
@@ -76,7 +82,13 @@ export async function createOfferAction(
   try {
     offerId = await createOffer(result.data, userId, userEmail)
   } catch (e: unknown) {
-    return { success: false, error: e instanceof Error ? e.message : 'Fehler beim Anlegen' }
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : 'Fehler beim Anlegen',
+      values: {
+        customerId: typeof raw.customerId === 'string' ? raw.customerId : undefined,
+      },
+    }
   }
 
   revalidatePath('/offers')
@@ -109,13 +121,22 @@ export async function updateOfferAction(
       success:     false,
       fieldErrors: result.error.flatten().fieldErrors as Record<string, string[]>,
       error:       'Bitte alle Pflichtfelder ausfüllen.',
+      values: {
+        customerId: typeof raw.customerId === 'string' ? raw.customerId : undefined,
+      },
     }
   }
 
   try {
     await updateOffer(offerId, result.data, userId, userEmail)
   } catch (e: unknown) {
-    return { success: false, error: e instanceof Error ? e.message : 'Fehler beim Speichern' }
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : 'Fehler beim Speichern',
+      values: {
+        customerId: typeof raw.customerId === 'string' ? raw.customerId : undefined,
+      },
+    }
   }
 
   revalidatePath('/offers')
