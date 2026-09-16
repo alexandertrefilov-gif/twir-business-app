@@ -185,6 +185,87 @@ async function main() {
   }
   console.log(`     ✓ ${demoUsers.length} Demo-Benutzer`)
 
+  // ── 4a. Expliziter Collaboration-Zugang ──────────────────
+  // Die interne ADMIN-Rolle vermittelt bewusst keinen Collaboration-Zugang.
+  // Der Hauptadministrator erhält ihn ausschließlich über diese persistierte,
+  // projektbezogene Membership.
+  console.log('  → Collaboration-Demozugang...')
+
+  const collaborationProject = await prisma.collaborationProject.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000101' },
+    update: { status: 'ACTIVE', projectNumber: 'GGA-0001' },
+    create: {
+      id: '00000000-0000-0000-0000-000000000101',
+      projectNumber: 'GGA-0001',
+      name: 'GGA Lagerplanung',
+      description: 'Demo-Projekt für die Collaboration-Projektsteuerung',
+      year: 2026,
+      status: 'ACTIVE',
+      active: true,
+    },
+  })
+  const admin = await prisma.user.findUniqueOrThrow({
+    where: { email: 'admin@demo.local' },
+    select: { id: true },
+  })
+  await prisma.collaborationMembership.upsert({
+    where: {
+      userId_projectId: {
+        userId: admin.id,
+        projectId: collaborationProject.id,
+      },
+    },
+    update: {
+      role: 'COLLAB_MANAGER',
+      active: true,
+    },
+    create: {
+      userId: admin.id,
+      projectId: collaborationProject.id,
+      role: 'COLLAB_MANAGER',
+      active: true,
+    },
+  })
+  const planningStage = await prisma.collaborationProjectStage.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000111' },
+    update: {},
+    create: {
+      id: '00000000-0000-0000-0000-000000000111', projectId: collaborationProject.id,
+      code: 'PLANUNG', title: 'Planung', sequence: 1, weight: 40,
+      status: 'READY', isRequired: true,
+    },
+  })
+  const executionStage = await prisma.collaborationProjectStage.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000112' },
+    update: {},
+    create: {
+      id: '00000000-0000-0000-0000-000000000112', projectId: collaborationProject.id,
+      code: 'AUSFUEHRUNG', title: 'Ausführung', sequence: 2, weight: 40,
+      status: 'NOT_STARTED', isRequired: true,
+    },
+  })
+  await prisma.collaborationProjectStage.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000113' },
+    update: {},
+    create: {
+      id: '00000000-0000-0000-0000-000000000113', projectId: collaborationProject.id,
+      code: 'UEBERGABE', title: 'Übergabe', sequence: 3, weight: 20,
+      status: 'NOT_STARTED', isRequired: true,
+    },
+  })
+  await prisma.collaborationProjectStageDependency.upsert({
+    where: { stageId_dependsOnStageId: { stageId: executionStage.id, dependsOnStageId: planningStage.id } },
+    update: { requiredStatus: 'COMPLETED' },
+    create: { stageId: executionStage.id, dependsOnStageId: planningStage.id, requiredStatus: 'COMPLETED' },
+  })
+  const handoverStage = await prisma.collaborationProjectStage.findUniqueOrThrow({ where: { id: '00000000-0000-0000-0000-000000000113' } })
+  await prisma.collaborationProjectStageDependency.upsert({
+    where: { stageId_dependsOnStageId: { stageId: handoverStage.id, dependsOnStageId: executionStage.id } },
+    update: { requiredStatus: 'COMPLETED' },
+    create: { stageId: handoverStage.id, dependsOnStageId: executionStage.id, requiredStatus: 'COMPLETED' },
+  })
+  console.log('     ✓ admin@demo.local → GGA Lagerplanung (COLLAB_MANAGER)')
+
   // ── 5. Firmeneinstellungen ─────────────────────────────────
   console.log('  → Firmeneinstellungen...')
 

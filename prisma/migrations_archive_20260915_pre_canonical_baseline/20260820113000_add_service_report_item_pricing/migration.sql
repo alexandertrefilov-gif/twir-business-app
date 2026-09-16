@@ -1,0 +1,3 @@
+ALTER TABLE "service_report_items"
+ADD COLUMN "discount_rate" DECIMAL(5,2) NOT NULL DEFAULT 0,
+ADD COLUMN "tax_rate" DECIMAL(5,2) NOT NULL DEFAULT 19;

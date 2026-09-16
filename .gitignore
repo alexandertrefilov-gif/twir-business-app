@@ -9,3 +9,5 @@ storage/
 coverage/
 .DS_Store
 *.tsbuildinfo
+# Lokale Backups/Dumps/Rekonziliations-Artefakte (enthalten reale DB-Dumps)
+output/

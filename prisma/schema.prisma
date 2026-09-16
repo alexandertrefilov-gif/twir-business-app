@@ -24,10 +24,86 @@ enum UserStatus {
 
 enum RoleName {
   ADMIN
-  OFFICE         // Büro
+  OFFICE // Büro
   PROJECT_MANAGER
-  EMPLOYEE       // Mitarbeiter
-  ACCOUNTING     // Buchhaltung
+  EMPLOYEE // Mitarbeiter
+  ACCOUNTING // Buchhaltung
+}
+
+enum CollaborationRole {
+  COLLAB_VIEWER
+  COLLAB_MEMBER
+  COLLAB_MANAGER
+  EXTERNAL_PLANNER
+  INTERNAL_PLANNER
+  OPERATOR
+  PARTNER
+}
+
+enum CollaborationProjectStatus {
+  DRAFT
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum CollaborationHealthStatus {
+  GREEN
+  YELLOW
+  RED
+}
+
+enum CollaborationStageStatus {
+  NOT_STARTED
+  READY
+  IN_PROGRESS
+  WAITING_FOR_APPROVAL
+  BLOCKED
+  COMPLETED
+  SKIPPED
+}
+
+enum CollaborationTaskStatus {
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  DONE
+  SKIPPED
+}
+
+enum CollaborationTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum CollaborationBlockerStatus {
+  OPEN
+  RESOLVED
+}
+
+enum CollaborationApprovalStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+enum ProjectStatus {
+  DRAFT
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum ProjectParticipantRole {
+  PROJECT_LEAD
+  PROJECT_MEMBER
+  OBSERVER
 }
 
 enum OfferStatus {
@@ -47,6 +123,14 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum OrderConfirmationType {
+  SIGNED_DOCUMENT
+  EMAIL
+  VERBAL
+  CUSTOMER_PURCHASE_ORDER
+  NOT_REQUIRED
+}
+
 enum InvoiceStatus {
   DRAFT
   FINALIZED
@@ -59,12 +143,12 @@ enum InvoiceStatus {
 }
 
 enum InvoiceType {
-  STANDARD          // Normale Rechnung
-  ADVANCE           // Abschlagsrechnung
-  PARTIAL           // Teilrechnung
-  FINAL             // Schlussrechnung
-  CORRECTION        // Korrekturrechnung
-  CANCELLATION      // Stornorechnung
+  STANDARD // Normale Rechnung
+  ADVANCE // Abschlagsrechnung
+  PARTIAL // Teilrechnung
+  FINAL // Schlussrechnung
+  CORRECTION // Korrekturrechnung
+  CANCELLATION // Stornorechnung
 }
 
 enum DocumentType {
@@ -72,10 +156,36 @@ enum DocumentType {
   ORDER_PDF
   INVOICE_PDF
   SERVICE_REPORT_PDF
+  ORDER_CONFIRMATION
+  SERVICE_REPORT_CONFIRMATION
   CORRECTION_PDF
   CANCELLATION_PDF
-  UPLOAD             // Manueller Upload
+  UPLOAD // Manueller Upload
   OTHER
+}
+
+enum DocumentFormat {
+  PDF
+  DOCX
+  JSON
+  OTHER
+}
+
+enum DocumentLifecycle {
+  DRAFT
+  FINAL
+  UPLOAD
+}
+
+enum ArchiveStatus {
+  PENDING
+  ARCHIVED
+  FAILED
+}
+
+enum ServiceReportStatus {
+  DRAFT
+  FINALIZED
 }
 
 enum NumberSequenceType {
@@ -88,7 +198,8 @@ enum NumberSequenceType {
 enum AuditAction {
   CREATE
   UPDATE
-  DELETE           // Soft delete
+  OFFER_NUMBER_CHANGE
+  DELETE // Soft delete
   STATUS_CHANGE
   FINALIZE
   CANCEL
@@ -101,6 +212,15 @@ enum AuditAction {
   LOGOUT
   PERMISSION_CHANGED
   SETTINGS_CHANGED
+  ARCHIVE_SUCCEEDED
+  ARCHIVE_FAILED
+  ARCHIVE_RETRIED
+  ARCHIVE_TESTED
+}
+
+enum CustomerAddressType {
+  BILLING
+  SHIPPING
 }
 
 // ============================================================
@@ -115,21 +235,31 @@ model User {
   lastName     String     @map("last_name")
   status       UserStatus @default(ACTIVE)
 
-  roleId       String     @map("role_id")
-  role         Role       @relation(fields: [roleId], references: [id])
+  roleId String? @map("role_id")
+  role   Role?   @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   // Timestamps
-  createdAt    DateTime   @default(now()) @map("created_at")
-  updatedAt    DateTime   @updatedAt @map("updated_at")
-  deletedAt    DateTime?  @map("deleted_at")
-  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+  lastLoginAt DateTime? @map("last_login_at")
 
   // Relations
-  createdOffers         Offer[]         @relation("OfferCreatedBy")
-  createdOrders         Order[]         @relation("OrderCreatedBy")
-  createdInvoices       Invoice[]       @relation("InvoiceCreatedBy")
-  createdServiceReports ServiceReport[] @relation("ServiceReportCreatedBy")
-  auditLogs             AuditLog[]
+  createdOffers          Offer[]                 @relation("OfferCreatedBy")
+  createdOrders          Order[]                 @relation("OrderCreatedBy")
+  createdInvoices        Invoice[]               @relation("InvoiceCreatedBy")
+  createdServiceReports  ServiceReport[]         @relation("ServiceReportCreatedBy")
+  auditLogs              AuditLog[]
+  customerPurchaseOrders CustomerPurchaseOrder[]
+  collaborationMemberships CollaborationMembership[]
+  collaborationApprovalRequests CollaborationApproval[] @relation("ApprovalRequestedBy")
+  collaborationApprovalDecisions CollaborationApproval[] @relation("ApprovalDecidedBy")
+  collaborationBlockersCreated CollaborationBlocker[] @relation("BlockerCreatedBy")
+  collaborationBlockersResolved CollaborationBlocker[] @relation("BlockerResolvedBy")
+  ggaCabinetsCreated      GgaCabinet[] @relation("GgaCabinetCreatedBy")
+  collaborationDocumentsUploaded CollaborationDocument[] @relation("CollaborationDocumentUploadedBy")
+  ledProjects            Project[] @relation("ProjectLead")
+  projectParticipations  ProjectParticipant[]
 
   @@index([email])
   @@index([roleId])
@@ -137,14 +267,443 @@ model User {
   @@map("users")
 }
 
+model CollaborationProject {
+  id            String @id @default(uuid())
+  projectNumber String? @unique @map("project_number")
+  name          String
+  description   String?
+  year          Int?
+  status        CollaborationProjectStatus @default(DRAFT)
+  healthStatus  CollaborationHealthStatus @default(GREEN) @map("health_status")
+  location      String?
+  building      String?
+  floor         String?
+  area          String?
+  plannedStart  DateTime? @map("planned_start")
+  plannedEnd    DateTime? @map("planned_end")
+  actualStart   DateTime? @map("actual_start")
+  actualEnd     DateTime? @map("actual_end")
+  active        Boolean @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+  internalProjectId String? @unique @map("internal_project_id")
+  internalProject   Project? @relation(fields: [internalProjectId], references: [id], onDelete: SetNull)
+  memberships   CollaborationMembership[]
+  stages        CollaborationProjectStage[]
+  tasks         CollaborationTask[]
+  checklistItems CollaborationChecklistItem[]
+  blockers      CollaborationBlocker[]
+  approvals     CollaborationApproval[]
+  ggaCabinets   GgaCabinet[]
+  documents     CollaborationDocument[]
+
+  @@index([active, deletedAt])
+  @@index([status, deletedAt])
+  @@index([healthStatus, deletedAt])
+  @@map("collaboration_projects")
+}
+
+/// Kanonischer interner Projektkontext. Kaufmännische Dokumente bleiben eigene Fachobjekte.
+model Project {
+  id            String        @id @default(uuid())
+  projectNumber String        @unique @map("project_number")
+  name          String
+  description   String?
+  customerId    String        @map("customer_id")
+  leadUserId    String?       @map("lead_user_id")
+  status        ProjectStatus @default(DRAFT)
+  location      String?
+  building      String?
+  floor         String?
+  area          String?
+  plannedStart  DateTime?     @map("planned_start")
+  plannedEnd    DateTime?     @map("planned_end")
+  actualStart   DateTime?     @map("actual_start")
+  actualEnd     DateTime?     @map("actual_end")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  deletedAt     DateTime?     @map("deleted_at")
+
+  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  leadUser       User?                 @relation("ProjectLead", fields: [leadUserId], references: [id], onDelete: SetNull)
+  participants   ProjectParticipant[]
+  offers         Offer[]
+  orders         Order[]
+  invoices       Invoice[]
+  documents      Document[]
+  collaborationProject CollaborationProject?
+
+  @@index([customerId, deletedAt])
+  @@index([leadUserId])
+  @@index([status, deletedAt])
+  @@map("projects")
+}
+
+model ProjectParticipant {
+  id        String                 @id @default(uuid())
+  projectId String                 @map("project_id")
+  userId    String                 @map("user_id")
+  role      ProjectParticipantRole @default(PROJECT_MEMBER)
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @updatedAt @map("updated_at")
+  project   Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_participants")
+}
+
+model CollaborationMembership {
+  id        String @id @default(uuid())
+  userId    String @map("user_id")
+  projectId String @map("project_id")
+  role      CollaborationRole
+  active    Boolean @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project   CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  responsibleStages CollaborationProjectStage[] @relation("StageResponsibleMembership")
+  responsibleTasks CollaborationTask[]
+  responsibleChecklistItems CollaborationChecklistItem[] @relation("ChecklistResponsible")
+  completedChecklistItems CollaborationChecklistItem[] @relation("ChecklistCompletedBy")
+  responsibleBlockers CollaborationBlocker[]
+  responsibleGgaCabinets GgaCabinet[]
+
+  @@unique([userId, projectId])
+  @@index([userId, active])
+  @@index([projectId, active])
+  @@map("collaboration_memberships")
+}
+
+model CollaborationProjectStage {
+  id                       String @id @default(uuid())
+  projectId                String @map("project_id")
+  code                     String
+  title                    String
+  sequence                 Int
+  status                   CollaborationStageStatus @default(NOT_STARTED)
+  weight                   Decimal @default(0) @db.Decimal(5, 2)
+  isRequired               Boolean @default(true) @map("is_required")
+  requiresApproval         Boolean @default(false) @map("requires_approval")
+  responsibleMembershipId  String? @map("responsible_membership_id")
+  plannedStart             DateTime? @map("planned_start")
+  plannedEnd               DateTime? @map("planned_end")
+  actualStart              DateTime? @map("actual_start")
+  actualEnd                DateTime? @map("actual_end")
+  completedAt              DateTime? @map("completed_at")
+  blockedReason            String? @map("blocked_reason")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  responsibleMembership   CollaborationMembership? @relation("StageResponsibleMembership", fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  dependencies            CollaborationProjectStageDependency[] @relation("StageDependencies")
+  dependents              CollaborationProjectStageDependency[] @relation("StageDependents")
+  tasks                   CollaborationTask[]
+  checklistItems          CollaborationChecklistItem[]
+  blockers                CollaborationBlocker[]
+  approvals               CollaborationApproval[]
+
+  @@unique([projectId, code])
+  @@unique([projectId, sequence])
+  @@index([projectId, status])
+  @@index([responsibleMembershipId])
+  @@map("collaboration_project_stages")
+}
+
+model CollaborationTask {
+  id                       String @id @default(uuid())
+  projectId                String @map("project_id")
+  stageId                  String @map("stage_id")
+  title                    String
+  description              String?
+  status                   CollaborationTaskStatus @default(TODO)
+  priority                 CollaborationTaskPriority @default(MEDIUM)
+  responsibleMembershipId  String? @map("responsible_membership_id")
+  dueDate                  DateTime? @map("due_date")
+  sequence                 Int @default(0)
+  isRequired               Boolean @default(true) @map("is_required")
+  completedAt              DateTime? @map("completed_at")
+  cabinetId                String? @map("cabinet_id")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage                   CollaborationProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  responsibleMembership   CollaborationMembership? @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  cabinet                 GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  blockers                CollaborationBlocker[]
+  @@index([projectId, status])
+  @@index([stageId, sequence])
+  @@index([responsibleMembershipId])
+  @@index([cabinetId])
+  @@map("collaboration_tasks")
+}
+
+model CollaborationChecklistItem {
+  id                       String @id @default(uuid())
+  projectId                String @map("project_id")
+  stageId                  String @map("stage_id")
+  title                    String
+  sequence                 Int @default(0)
+  isRequired               Boolean @default(true) @map("is_required")
+  completed                Boolean @default(false)
+  completedAt              DateTime? @map("completed_at")
+  responsibleMembershipId  String? @map("responsible_membership_id")
+  completedByMembershipId  String? @map("completed_by_membership_id")
+  cabinetId                String? @map("cabinet_id")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage                   CollaborationProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  responsibleMembership   CollaborationMembership? @relation("ChecklistResponsible", fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  completedByMembership   CollaborationMembership? @relation("ChecklistCompletedBy", fields: [completedByMembershipId], references: [id], onDelete: SetNull)
+  cabinet                 GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  @@index([projectId, completed])
+  @@index([stageId, sequence])
+  @@index([cabinetId])
+  @@map("collaboration_checklist_items")
+}
+
+model CollaborationBlocker {
+  id                       String @id @default(uuid())
+  projectId                String @map("project_id")
+  stageId                  String? @map("stage_id")
+  taskId                   String? @map("task_id")
+  title                    String
+  description              String?
+  status                   CollaborationBlockerStatus @default(OPEN)
+  responsibleMembershipId  String? @map("responsible_membership_id")
+  cause                    String?
+  resolution               String?
+  resolvedAt               DateTime? @map("resolved_at")
+  resolvedById             String? @map("resolved_by_id")
+  createdById              String? @map("created_by_id")
+  cabinetId                String? @map("cabinet_id")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage                   CollaborationProjectStage? @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  task                    CollaborationTask? @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  responsibleMembership   CollaborationMembership? @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  createdBy               User? @relation("BlockerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  resolvedBy              User? @relation("BlockerResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  cabinet                 GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  @@index([projectId, status])
+  @@index([stageId, status])
+  @@index([taskId, status])
+  @@index([cabinetId])
+  @@map("collaboration_blockers")
+}
+
+model CollaborationApproval {
+  id              String @id @default(uuid())
+  projectId       String @map("project_id")
+  stageId         String @map("stage_id")
+  status          CollaborationApprovalStatus @default(REQUESTED)
+  requestedById   String @map("requested_by_id")
+  decidedById     String? @map("decided_by_id")
+  requestedAt     DateTime @default(now()) @map("requested_at")
+  decidedAt       DateTime? @map("decided_at")
+  decisionNote    String? @map("decision_note")
+  cabinetId       String? @map("cabinet_id")
+  // Eindeutige fachliche Typisierung der Freigabe — niemals aus decidedBy.role
+  // oder stageId erschlossen. Default INTERNAL: bestehende Zeilen bleiben
+  // automatisch INTERNAL, nie rückwirkend als Betreiberfreigabe klassifiziert.
+  approvalType    CollaborationApprovalType @default(INTERNAL) @map("approval_type")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  project         CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage           CollaborationProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  requestedBy     User @relation("ApprovalRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  decidedBy       User? @relation("ApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  cabinet         GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  @@index([projectId, status])
+  @@index([stageId, status])
+  @@index([cabinetId])
+  @@index([cabinetId, approvalType, requestedAt])
+  // Zusätzlich per Hand-SQL in der Migration: ein PARTIELLER Unique-Index
+  // (cabinet_id, approval_type) WHERE status = 'REQUESTED' — verhindert auf
+  // DB-Ebene, dass zwei offene Betreiberfreigaben für dasselbe Cabinet
+  // gleichzeitig entstehen (Doppelklick-/Race-Schutz). Prismas Schema-DSL
+  // kennt keine partiellen Indizes; die Constraint existiert real in der DB,
+  // wird hier nur dokumentiert, damit sie bei künftigen Änderungen nicht
+  // versehentlich für "Drift" gehalten wird.
+  @@map("collaboration_approvals")
+}
+
+model CollaborationProjectStageDependency {
+  id               String @id @default(uuid())
+  stageId          String @map("stage_id")
+  dependsOnStageId String @map("depends_on_stage_id")
+  requiredStatus   CollaborationStageStatus @map("required_status")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  stage          CollaborationProjectStage @relation("StageDependencies", fields: [stageId], references: [id], onDelete: Cascade)
+  dependsOnStage CollaborationProjectStage @relation("StageDependents", fields: [dependsOnStageId], references: [id], onDelete: Cascade)
+
+  @@unique([stageId, dependsOnStageId])
+  @@index([dependsOnStageId])
+  @@map("collaboration_project_stage_dependencies")
+}
+
+/// Ex-Schutz-Bewertung eines GGA-Schranks. Sicherheitsrelevant: der Default ist
+/// bewusst NOT_ASSESSED, damit eine fehlende Bewertung niemals stillschweigend
+/// als "nicht erforderlich" interpretiert wird.
+enum GgaExAssessmentStatus {
+  NOT_ASSESSED
+  REQUIRED
+  NOT_REQUIRED
+}
+
+/// Sichtbarkeit eines Collaboration-Dokuments für externe Portal-Nutzer
+/// (Betreiber). Default INTERNAL — eine externe Freigabe ist immer eine
+/// bewusste interne Aktion, niemals aus documentKind/Status abgeleitet.
+enum CollaborationDocumentVisibility {
+  INTERNAL
+  EXTERNAL
+}
+
+/// Eindeutige fachliche Typisierung einer Freigabe. OPERATOR_ACCEPTANCE
+/// markiert ausschließlich echte, extern erteilte Betreiberfreigaben —
+/// niemals aus decidedBy.role oder stageId erschlossen.
+enum CollaborationApprovalType {
+  INTERNAL
+  OPERATOR_ACCEPTANCE
+}
+
+/// Fachobjekt für einen realen GGA-/Gefahrstoffschrank. Gehört ausschließlich
+/// zur Collaboration-Domäne (kein direkter Bezug zum internen Project) — folgt
+/// damit demselben Muster wie CollaborationTask/ChecklistItem/Blocker/Approval.
+/// Enthält bewusst keinen gespeicherten Planungs-/Montage-/Prüfstatus: diese
+/// werden aus verknüpften Tasks/Checklistenpunkten/Approvals abgeleitet
+/// (siehe lib/collaboration/cabinet-workflow.ts).
+model GgaCabinet {
+  id        String @id @default(uuid())
+  projectId String @map("project_id")
+  project   CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  // Identität
+  kennung        String
+  bezeichnung    String
+  herstellerName String? @map("hersteller_name")
+  herstellerTyp  String? @map("hersteller_typ")
+  seriennummer   String?
+  baujahr        Int?
+
+  // Standort
+  gebaeude             String?
+  ebene                String?
+  raumbezeichnung      String? @map("raumbezeichnung")
+  standortBeschreibung String? @map("standort_beschreibung")
+
+  // Nutzung (Stammdaten der Auslegung — kein Prozess-/Prüfstatus)
+  nutzungsart     String?
+  lagerklasse     String?
+  maxLagermengeKg Decimal? @map("max_lagermenge_kg") @db.Decimal(10, 2)
+
+  // Technische Bestandsdaten — was beim Aufmaß vorgefunden wurde (einmalige
+  // Erhebung vor der Planung, unterscheidet sich fachlich von Soll/Ist-Werten)
+  bestandsBeschreibung String?   @map("bestands_beschreibung")
+  bestandsaufnahmeAm   DateTime? @map("bestandsaufnahme_am")
+
+  // Abluft — Planungs-/Sollwerte (Ergebnis der Planungsphase)
+  abluftVorhanden                  Boolean  @default(false) @map("abluft_vorhanden")
+  abluftAnschlussdurchmesserSollMm Int?     @map("abluft_anschlussdurchmesser_soll_mm")
+  abluftVolumenstromSollM3h        Decimal? @map("abluft_volumenstrom_soll_m3h") @db.Decimal(8, 2)
+  abluftUeberwachung                Boolean  @default(false) @map("abluft_ueberwachung")
+
+  // Abluft — aktuellster bekannter Messwert (Ist), fortgeschrieben bei jeder
+  // entschiedenen Prüfung (CollaborationApproval). Volle Historie lebt in den
+  // Approval-Datensätzen selbst (requestedAt/decidedAt/decisionNote) — kein
+  // zweiter, redundanter Statusspeicher.
+  abluftVolumenstromIstM3h Decimal? @map("abluft_volumenstrom_ist_m3h") @db.Decimal(8, 2)
+
+  // Elektro
+  elektrischAusgestattet Boolean  @default(false) @map("elektrisch_ausgestattet")
+  spannungVolt           Decimal? @map("spannung_volt") @db.Decimal(6, 1)
+  potentialausgleich     Boolean  @default(false)
+
+  // Ex-Schutz — Tri-State (siehe GgaExAssessmentStatus), niemals default "Nein"
+  exAssessmentStatus    GgaExAssessmentStatus @default(NOT_ASSESSED) @map("ex_assessment_status")
+  exZoneKlassifikation  String?               @map("ex_zone_klassifikation")
+
+  // Prüfung — Fristen/Normbezug. Der aktuelle Prüfstatus (fällig/bestanden/
+  // überfällig) wird abgeleitet, nicht gespeichert.
+  pruefintervallMonate Int?      @map("pruefintervall_monate")
+  letztePruefungAm     DateTime? @map("letzte_pruefung_am")
+  pruefpflichtNorm     String?   @map("pruefpflicht_norm")
+
+  // Verantwortlichkeit — bestehendes Membership-Muster (wie CollaborationTask)
+  responsibleMembershipId String? @map("responsible_membership_id")
+  responsibleMembership   CollaborationMembership? @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+  createdById String?   @map("created_by_id")
+  createdBy   User?     @relation("GgaCabinetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  tasks          CollaborationTask[]
+  checklistItems CollaborationChecklistItem[]
+  blockers       CollaborationBlocker[]
+  approvals      CollaborationApproval[]
+  documents      CollaborationDocument[]
+
+  @@unique([projectId, kennung])
+  @@index([projectId, deletedAt])
+  @@index([responsibleMembershipId])
+  @@map("gga_cabinets")
+}
+
+/// Eigenständige Collaboration-Dokumentdomäne (Fotos, Protokolle, Prüfberichte,
+/// Planzeichnungen). Bewusst getrennt vom internen Document-Modell, das
+/// ausschließlich kaufmännisch-interne Objekte referenziert und unter interner
+/// Session-Autorisierung läuft — eine Wiederverwendung würde entweder jede
+/// bestehende Document-Query um eine Collaboration-Sichtbarkeitsprüfung
+/// erweitern müssen oder riskieren, interne Dokumente extern sichtbar zu
+/// machen. Die physische Storage-Schicht (Validator, Ablage-Abstraktion) wird
+/// dagegen vollständig wiederverwendet — siehe lib/services/collaboration-document.service.ts.
+model CollaborationDocument {
+  id        String @id @default(uuid())
+  projectId String @map("project_id")
+  project   CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cabinetId String? @map("cabinet_id")
+  cabinet   GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+
+  documentKind String  @map("document_kind") // Foto, Protokoll, Pruefbericht, Planzeichnung, Sonstiges
+  filename     String
+  originalName String  @map("original_name")
+  mimeType     String  @map("mime_type")
+  fileSize     Int     @map("file_size")
+  storagePath  String  @map("storage_path")
+  checksum     String?
+
+  uploadedById String   @map("uploaded_by_id")
+  uploadedBy   User     @relation("CollaborationDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime @default(now()) @map("created_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  // Default INTERNAL — niemals automatisch extern sichtbar. EXTERNAL heißt
+  // "sichtbar für Projektmitglieder mit Cabinet-Zugriff", nicht öffentlich.
+  visibility   CollaborationDocumentVisibility @default(INTERNAL) @map("visibility")
+
+  @@index([projectId, deletedAt])
+  @@index([cabinetId])
+  @@index([cabinetId, visibility])
+  @@map("collaboration_documents")
+}
+
 model Role {
-  id          String     @id @default(uuid())
-  name        RoleName   @unique
-  displayName String     @map("display_name")
+  id          String   @id @default(uuid())
+  name        RoleName @unique
+  displayName String   @map("display_name")
   description String?
 
-  createdAt   DateTime   @default(now()) @map("created_at")
-  updatedAt   DateTime   @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   users       User[]
   permissions RolePermission[]
@@ -153,14 +712,14 @@ model Role {
 }
 
 model Permission {
-  id          String   @id @default(uuid())
-  resource    String   // "invoice" | "customer" | "offer" | "order" | "payment" | ...
-  action      String   // "create" | "read" | "update" | "delete" | "finalize" | "cancel" | "export"
+  id          String  @id @default(uuid())
+  resource    String // "invoice" | "customer" | "offer" | "order" | "payment" | ...
+  action      String // "create" | "read" | "update" | "delete" | "finalize" | "cancel" | "export"
   description String?
 
-  createdAt   DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
-  roles       RolePermission[]
+  roles RolePermission[]
 
   @@unique([resource, action])
   @@index([resource])
@@ -168,14 +727,14 @@ model Permission {
 }
 
 model RolePermission {
-  id           String     @id @default(uuid())
-  roleId       String     @map("role_id")
-  permissionId String     @map("permission_id")
+  id           String @id @default(uuid())
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
 
-  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
-  createdAt    DateTime   @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@unique([roleId, permissionId])
   @@map("role_permissions")
@@ -186,46 +745,59 @@ model RolePermission {
 // ============================================================
 
 model Customer {
-  id           String    @id @default(uuid())
-  number       String    @unique                  // Kundennummer, z.B. "KD-0001"
+  id     String @id @default(uuid())
+  number String @unique // Kundennummer, z.B. "KD-0001"
 
   // Stammdaten
-  name         String                             // Anzeigename / Kurzname
-  legalName    String?   @map("legal_name")       // Vollständiger Firmenname §14 UStG
-  legalForm    String?   @map("legal_form")        // "GmbH", "AG", "e.K.", ...
+  name      String // Anzeigename / Kurzname
+  legalName String? @map("legal_name") // Vollständiger Firmenname §14 UStG
+  legalForm String? @map("legal_form") // "GmbH", "AG", "e.K.", ...
 
   // Steuer
-  vatId        String?   @map("vat_id")           // USt-IdNr. §14 Abs.1 S.1 Nr.3 UStG
-  taxNumber    String?   @map("tax_number")        // Steuernummer
+  vatId     String? @map("vat_id") // USt-IdNr. §14 Abs.1 S.1 Nr.3 UStG
+  taxNumber String? @map("tax_number") // Steuernummer
 
   // Adresse (flach für Snapshot-Kompatibilität)
-  street       String?
-  houseNumber  String?   @map("house_number")
-  postalCode   String?   @map("postal_code")
-  city         String?
-  country      String    @default("DE")
+  street      String?
+  houseNumber String? @map("house_number")
+  postalCode  String? @map("postal_code")
+  city        String?
+  country     String  @default("DE")
+
+  // Optionale, vom Kundenstamm getrennte Rechnungsstelle
+  hasBillingAddress  Boolean @default(false) @map("has_billing_address")
+  billingName        String? @map("billing_name")
+  billingAdditional  String? @map("billing_additional")
+  billingStreet      String? @map("billing_street")
+  billingHouseNumber String? @map("billing_house_number")
+  billingPostalCode  String? @map("billing_postal_code")
+  billingCity        String? @map("billing_city")
+  billingCountry     String? @map("billing_country")
 
   // Kontakt
-  email        String?
-  phone        String?
-  fax          String?
-  website      String?
+  email   String?
+  phone   String?
+  fax     String?
+  website String?
 
   // Intern
-  notes        String?
-  isActive     Boolean   @default(true) @map("is_active")
+  notes    String?
+  isActive Boolean @default(true) @map("is_active")
 
   // Timestamps
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  deletedAt    DateTime? @map("deleted_at")       // Soft delete — nie hart löschen
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at") // Soft delete — nie hart löschen
 
   // Relations
-  contacts     Contact[]
-  offers       Offer[]
-  orders       Order[]
-  invoices     Invoice[]
-  documents    Document[]
+  addresses              CustomerAddress[]
+  contacts               Contact[]
+  offers                 Offer[]
+  orders                 Order[]
+  invoices               Invoice[]
+  documents              Document[]
+  customerPurchaseOrders CustomerPurchaseOrder[]
+  projects                Project[]
 
   @@index([name])
   @@index([number])
@@ -233,24 +805,69 @@ model Customer {
   @@map("customers")
 }
 
+model Address {
+  id            String  @id @default(uuid())
+  normalizedKey String  @unique @map("normalized_key")
+  companyName   String  @map("company_name")
+  additional    String?
+  street        String
+  houseNumber   String? @map("house_number")
+  postalCode    String  @map("postal_code")
+  city          String
+  country       String  @default("DE")
+  contactName   String? @map("contact_name")
+  email         String?
+  phone         String?
+
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+  customerAddresses CustomerAddress[]
+
+  @@index([companyName])
+  @@index([street, postalCode, city, country])
+  @@map("addresses")
+}
+
+model CustomerAddress {
+  id         String              @id @default(uuid())
+  customerId String              @map("customer_id")
+  customer   Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  addressId  String              @map("address_id")
+  address    Address             @relation(fields: [addressId], references: [id], onDelete: Restrict)
+  type       CustomerAddressType
+  label      String
+
+  isActive  Boolean   @default(true) @map("is_active")
+  isDefault Boolean   @default(false) @map("is_default")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([customerId, addressId, type])
+  @@index([customerId, type, isActive])
+  @@index([addressId])
+  @@index([deletedAt])
+  @@map("customer_addresses")
+}
+
 model Contact {
-  id          String    @id @default(uuid())
-  customerId  String    @map("customer_id")
-  customer    Customer  @relation(fields: [customerId], references: [id])
+  id         String   @id @default(uuid())
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id])
 
-  salutation  String?                              // "Herr" | "Frau" | ...
-  firstName   String    @map("first_name")
-  lastName    String    @map("last_name")
-  position    String?                              // Abteilung / Funktion
-  email       String?
-  phone       String?
-  mobile      String?
-  isPrimary   Boolean   @default(false) @map("is_primary")
-  notes       String?
+  salutation String? // "Herr" | "Frau" | ...
+  firstName  String  @map("first_name")
+  lastName   String  @map("last_name")
+  position   String? // Abteilung / Funktion
+  email      String?
+  phone      String?
+  mobile     String?
+  isPrimary  Boolean @default(false) @map("is_primary")
+  notes      String?
 
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  deletedAt   DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([customerId])
   @@index([deletedAt])
@@ -262,52 +879,59 @@ model Contact {
 // ============================================================
 
 model Offer {
-  id           String      @id @default(uuid())
-  offerNumber  String      @unique @map("offer_number")   // AN-2024-0001
-  customerId   String      @map("customer_id")
-  customer     Customer    @relation(fields: [customerId], references: [id])
-  status       OfferStatus @default(DRAFT)
+  id          String      @id @default(uuid())
+  // Eindeutig nur für aktive Angebote; PostgreSQL-Partial-Index siehe Migration.
+  offerNumber String      @map("offer_number") // AN-2024-0001
+  customerId  String      @map("customer_id")
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  projectId   String?     @map("project_id")
+  project     Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  status      OfferStatus @default(DRAFT)
 
   // Snapshot beim Versenden — Kundendaten eingefroren
-  customerSnapshot Json?   @map("customer_snapshot")
+  customerSnapshot Json? @map("customer_snapshot")
+  companySnapshot  Json? @map("company_snapshot")
 
   // Inhalt
-  title        String?
-  introText    String?     @map("intro_text")
-  outroText    String?     @map("outro_text")
+  areaName  String? @map("area_name")
+  title     String?
+  introText String? @map("intro_text")
+  outroText String? @map("outro_text")
 
   // Termine
-  offerDate    DateTime    @default(now()) @map("offer_date")
-  validUntil   DateTime?   @map("valid_until")
-  sentAt       DateTime?   @map("sent_at")
-  acceptedAt   DateTime?   @map("accepted_at")
-  rejectedAt   DateTime?   @map("rejected_at")
-  expiredAt    DateTime?   @map("expired_at")
+  offerDate  DateTime  @default(now()) @map("offer_date")
+  validUntil DateTime? @map("valid_until")
+  sentAt     DateTime? @map("sent_at")
+  acceptedAt DateTime? @map("accepted_at")
+  rejectedAt DateTime? @map("rejected_at")
+  expiredAt  DateTime? @map("expired_at")
 
   // Beträge (cached, bei jeder Positionsänderung neu berechnet)
-  totalNet     Decimal     @default(0) @map("total_net")   @db.Decimal(12, 2)
-  totalTax     Decimal     @default(0) @map("total_tax")   @db.Decimal(12, 2)
-  totalGross   Decimal     @default(0) @map("total_gross") @db.Decimal(12, 2)
+  totalNet   Decimal @default(0) @map("total_net") @db.Decimal(12, 2)
+  totalTax   Decimal @default(0) @map("total_tax") @db.Decimal(12, 2)
+  totalGross Decimal @default(0) @map("total_gross") @db.Decimal(12, 2)
 
   // PDF
-  pdfPath      String?     @map("pdf_path")
-  pdfVersion   Int         @default(0) @map("pdf_version")
+  pdfPath    String? @map("pdf_path")
+  pdfVersion Int     @default(0) @map("pdf_version")
 
   // Ersteller
-  createdById  String      @map("created_by_id")
-  createdBy    User        @relation("OfferCreatedBy", fields: [createdById], references: [id])
+  createdById String @map("created_by_id")
+  createdBy   User   @relation("OfferCreatedBy", fields: [createdById], references: [id])
 
   // Timestamps
-  createdAt    DateTime    @default(now()) @map("created_at")
-  updatedAt    DateTime    @updatedAt @map("updated_at")
-  deletedAt    DateTime?   @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  items        OfferItem[]
-  order        Order?                               // Resultierender Auftrag
-  documents    Document[]
+  items                 OfferItem[]
+  order                 Order? // Resultierender Auftrag
+  documents             Document[]
+  customerPurchaseOrder CustomerPurchaseOrder?
 
   @@index([customerId])
+  @@index([projectId])
   @@index([status])
   @@index([offerDate])
   @@index([deletedAt])
@@ -315,16 +939,16 @@ model Offer {
 }
 
 model OfferItem {
-  id          String  @id @default(uuid())
-  offerId     String  @map("offer_id")
-  offer       Offer   @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  id      String @id @default(uuid())
+  offerId String @map("offer_id")
+  offer   Offer  @relation(fields: [offerId], references: [id], onDelete: Cascade)
 
-  position    Int                                   // Reihenfolge
+  position    Int // Reihenfolge
   description String
   quantity    Decimal @db.Decimal(10, 3)
   unit        String  @default("Stk.")
   unitPrice   Decimal @map("unit_price") @db.Decimal(12, 2)
-  taxRate     Decimal @map("tax_rate")   @db.Decimal(5, 2)  // z.B. 19.00
+  taxRate     Decimal @map("tax_rate") @db.Decimal(5, 2) // z.B. 19.00
   netAmount   Decimal @map("net_amount") @db.Decimal(12, 2)
   taxAmount   Decimal @map("tax_amount") @db.Decimal(12, 2)
   grossAmount Decimal @map("gross_amount") @db.Decimal(12, 2)
@@ -340,47 +964,56 @@ model OfferItem {
 
 model Order {
   id          String      @id @default(uuid())
-  orderNumber String      @unique @map("order_number")     // AU-2024-0001
+  orderNumber String      @unique @map("order_number") // AU-2024-0001
   customerId  String      @map("customer_id")
   customer    Customer    @relation(fields: [customerId], references: [id])
-  offerId     String?     @unique @map("offer_id")         // Quellangebot
+  projectId   String?     @map("project_id")
+  project     Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  offerId     String?     @unique @map("offer_id") // Quellangebot
   offer       Offer?      @relation(fields: [offerId], references: [id])
   status      OrderStatus @default(OPEN)
 
   // Snapshot beim Anlegen
-  customerSnapshot Json?  @map("customer_snapshot")
+  customerSnapshot Json? @map("customer_snapshot")
+  companySnapshot  Json? @map("company_snapshot")
 
   // Inhalt
-  title        String?
-  description  String?
+  title       String?
+  description String?
 
   // Termine
-  orderDate    DateTime    @default(now()) @map("order_date")
-  startDate    DateTime?   @map("start_date")
-  endDate      DateTime?   @map("end_date")
-  completedAt  DateTime?   @map("completed_at")
+  orderDate        DateTime               @default(now()) @map("order_date")
+  startDate        DateTime?              @map("start_date")
+  endDate          DateTime?              @map("end_date")
+  sentAt           DateTime?              @map("sent_at")
+  confirmedAt      DateTime?              @map("confirmed_at")
+  confirmationType OrderConfirmationType? @map("confirmation_type")
+  confirmationNote String?                @map("confirmation_note")
+  completedAt      DateTime?              @map("completed_at")
 
   // Beträge (cached)
-  totalNet     Decimal     @default(0) @map("total_net")   @db.Decimal(12, 2)
-  totalTax     Decimal     @default(0) @map("total_tax")   @db.Decimal(12, 2)
-  totalGross   Decimal     @default(0) @map("total_gross") @db.Decimal(12, 2)
+  totalNet   Decimal @default(0) @map("total_net") @db.Decimal(12, 2)
+  totalTax   Decimal @default(0) @map("total_tax") @db.Decimal(12, 2)
+  totalGross Decimal @default(0) @map("total_gross") @db.Decimal(12, 2)
 
   // Ersteller
-  createdById  String      @map("created_by_id")
-  createdBy    User        @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  createdById String @map("created_by_id")
+  createdBy   User   @relation("OrderCreatedBy", fields: [createdById], references: [id])
 
   // Timestamps
-  createdAt    DateTime    @default(now()) @map("created_at")
-  updatedAt    DateTime    @updatedAt @map("updated_at")
-  deletedAt    DateTime?   @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  items          OrderItem[]
-  serviceReports ServiceReport[]
-  invoices       Invoice[]
-  documents      Document[]
+  items                 OrderItem[]
+  serviceReports        ServiceReport[]
+  invoices              Invoice[]
+  documents             Document[]
+  customerPurchaseOrder CustomerPurchaseOrder?
 
   @@index([customerId])
+  @@index([projectId])
   @@index([status])
   @@index([orderDate])
   @@index([deletedAt])
@@ -388,16 +1021,16 @@ model Order {
 }
 
 model OrderItem {
-  id          String  @id @default(uuid())
-  orderId     String  @map("order_id")
-  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id      String @id @default(uuid())
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   position    Int
   description String
   quantity    Decimal @db.Decimal(10, 3)
   unit        String  @default("Stk.")
   unitPrice   Decimal @map("unit_price") @db.Decimal(12, 2)
-  taxRate     Decimal @map("tax_rate")   @db.Decimal(5, 2)
+  taxRate     Decimal @map("tax_rate") @db.Decimal(5, 2)
   netAmount   Decimal @map("net_amount") @db.Decimal(12, 2)
   taxAmount   Decimal @map("tax_amount") @db.Decimal(12, 2)
   grossAmount Decimal @map("gross_amount") @db.Decimal(12, 2)
@@ -412,33 +1045,39 @@ model OrderItem {
 // ============================================================
 
 model ServiceReport {
-  id           String    @id @default(uuid())
-  reportNumber String    @unique @map("report_number")     // LN-2024-0001
-  orderId      String    @map("order_id")
-  order        Order     @relation(fields: [orderId], references: [id])
+  id           String @id @default(uuid())
+  reportNumber String @unique @map("report_number") // LN-2024-0001
+  orderId      String @map("order_id")
+  order        Order  @relation(fields: [orderId], references: [id])
 
-  title        String?
-  description  String?
-  reportDate   DateTime  @map("report_date")
+  title            String?
+  description      String?
+  reportDate       DateTime            @map("report_date")
+  status           ServiceReportStatus @default(DRAFT)
+  finalizedAt      DateTime?           @map("finalized_at")
+  sentAt           DateTime?           @map("sent_at")
+  confirmedAt      DateTime?           @map("confirmed_at")
+  customerSnapshot Json?               @map("customer_snapshot")
+  companySnapshot  Json?               @map("company_snapshot")
 
   // Beträge netto (Leistungsnachweise haben oft kein MwSt.)
-  totalNet     Decimal   @default(0) @map("total_net") @db.Decimal(12, 2)
+  totalNet Decimal @default(0) @map("total_net") @db.Decimal(12, 2)
 
   // PDF
-  pdfPath      String?   @map("pdf_path")
+  pdfPath String? @map("pdf_path")
 
   // Ersteller
-  createdById  String    @map("created_by_id")
-  createdBy    User      @relation("ServiceReportCreatedBy", fields: [createdById], references: [id])
+  createdById String @map("created_by_id")
+  createdBy   User   @relation("ServiceReportCreatedBy", fields: [createdById], references: [id])
 
   // Timestamps
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  items        ServiceReportItem[]
-  documents    Document[]
+  items     ServiceReportItem[]
+  documents Document[]
 
-  @@index([orderId])
+  @@unique([orderId])
   @@index([reportDate])
   @@map("service_reports")
 }
@@ -448,14 +1087,16 @@ model ServiceReportItem {
   serviceReportId String        @map("service_report_id")
   serviceReport   ServiceReport @relation(fields: [serviceReportId], references: [id], onDelete: Cascade)
 
-  position    Int
-  type        String            // "hours" | "material" | "flat"
-  description String
-  quantity    Decimal           @db.Decimal(10, 3)
-  unit        String            @default("Std.")
-  unitPrice   Decimal           @map("unit_price") @db.Decimal(12, 2)
-  netAmount   Decimal           @map("net_amount") @db.Decimal(12, 2)
-  notes       String?
+  position     Int
+  type         String // "hours" | "material" | "flat"
+  description  String
+  quantity     Decimal @db.Decimal(10, 3)
+  unit         String  @default("Std.")
+  unitPrice    Decimal @map("unit_price") @db.Decimal(12, 2)
+  discountRate Decimal @default(0) @map("discount_rate") @db.Decimal(5, 2)
+  taxRate      Decimal @default(19) @map("tax_rate") @db.Decimal(5, 2)
+  netAmount    Decimal @map("net_amount") @db.Decimal(12, 2)
+  notes        String?
 
   @@index([serviceReportId])
   @@map("service_report_items")
@@ -466,21 +1107,23 @@ model ServiceReportItem {
 // ============================================================
 
 model Invoice {
-  id             String        @id @default(uuid())
+  id String @id @default(uuid())
 
   // Rechnungsnummer: NULL bis Finalisierung — danach UNIQUE und unveränderlich
-  invoiceNumber  String?       @unique @map("invoice_number")
+  invoiceNumber String? @unique @map("invoice_number")
 
-  customerId     String        @map("customer_id")
-  customer       Customer      @relation(fields: [customerId], references: [id])
-  orderId        String?       @map("order_id")
-  order          Order?        @relation(fields: [orderId], references: [id])
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id])
+  orderId    String?  @map("order_id")
+  order      Order?   @relation(fields: [orderId], references: [id])
+  projectId  String?  @map("project_id")
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
-  status         InvoiceStatus @default(DRAFT)
-  type           InvoiceType   @default(STANDARD)
+  status InvoiceStatus @default(DRAFT)
+  type   InvoiceType   @default(STANDARD)
 
   // Storno / Korrektur-Verknüpfungen
-  originalInvoiceId    String? @map("original_invoice_id")   // Diese RE korrigiert/storniert welche?
+  originalInvoiceId    String? @map("original_invoice_id") // Diese RE korrigiert/storniert welche?
   cancelledByInvoiceId String? @map("cancelled_by_invoice_id") // Welche RE storniert diese?
 
   // ─────────────────────────────────────────────────────────
@@ -488,50 +1131,50 @@ model Invoice {
   // Müssen bei Finalisierung befüllt sein — NICHT nullable nach Finalisierung
   // Typ: Json (nicht nullable in Service-Layer erzwungen)
   // ─────────────────────────────────────────────────────────
-  customerSnapshot Json?       @map("customer_snapshot")     // Name, Adresse, USt-ID des Kunden
-  companySnapshot  Json?       @map("company_snapshot")      // Eigene Firma: Name, Adresse, USt-ID, Steuernummer
+  customerSnapshot Json? @map("customer_snapshot") // Name, Adresse, USt-ID des Kunden
+  companySnapshot  Json? @map("company_snapshot") // Eigene Firma: Name, Adresse, USt-ID, Steuernummer
 
   // Pflichtdaten §14 UStG
-  invoiceDate    DateTime      @map("invoice_date")           // Rechnungsdatum
-  deliveryDate   DateTime?     @map("delivery_date")          // Leistungsdatum (Einzeltag)
+  invoiceDate         DateTime  @map("invoice_date") // Rechnungsdatum
+  deliveryDate        DateTime? @map("delivery_date") // Leistungsdatum (Einzeltag)
   deliveryPeriodStart DateTime? @map("delivery_period_start") // Leistungszeitraum von
-  deliveryPeriodEnd   DateTime? @map("delivery_period_end")   // Leistungszeitraum bis
-  dueDate        DateTime?     @map("due_date")               // Zahlungsziel
+  deliveryPeriodEnd   DateTime? @map("delivery_period_end") // Leistungszeitraum bis
+  dueDate             DateTime? @map("due_date") // Zahlungsziel
 
   // Status-Zeitstempel
-  finalizedAt    DateTime?     @map("finalized_at")
-  sentAt         DateTime?     @map("sent_at")
+  finalizedAt DateTime? @map("finalized_at")
+  sentAt      DateTime? @map("sent_at")
 
   // Beträge (Snapshot bei Finalisierung — cached)
-  totalNet       Decimal       @default(0) @map("total_net")   @db.Decimal(12, 2)
-  totalTax       Decimal       @default(0) @map("total_tax")   @db.Decimal(12, 2)
-  totalGross     Decimal       @default(0) @map("total_gross") @db.Decimal(12, 2)
-  paidAmount     Decimal       @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  totalNet   Decimal @default(0) @map("total_net") @db.Decimal(12, 2)
+  totalTax   Decimal @default(0) @map("total_tax") @db.Decimal(12, 2)
+  totalGross Decimal @default(0) @map("total_gross") @db.Decimal(12, 2)
+  paidAmount Decimal @default(0) @map("paid_amount") @db.Decimal(12, 2)
 
   // Zahlungsdetails
-  paymentTermDays Int?          @map("payment_term_days")
-  paymentNote    String?        @map("payment_note")          // z.B. IBAN, Verwendungszweck-Hinweis
+  paymentTermDays Int?    @map("payment_term_days")
+  paymentNote     String? @map("payment_note") // z.B. IBAN, Verwendungszweck-Hinweis
 
   // Texte
-  introText      String?        @map("intro_text")
-  outroText      String?        @map("outro_text")
+  introText String? @map("intro_text")
+  outroText String? @map("outro_text")
 
   // PDF — nach Finalisierung immutable archiviert
-  pdfPath        String?        @map("pdf_path")
-  pdfVersion     Int            @default(0) @map("pdf_version")
-  pdfGeneratedAt DateTime?      @map("pdf_generated_at")
+  pdfPath        String?   @map("pdf_path")
+  pdfVersion     Int       @default(0) @map("pdf_version")
+  pdfGeneratedAt DateTime? @map("pdf_generated_at")
 
   // E-Rechnung Vorbereitung (Phase 8 — Felder existieren, bleiben leer)
-  xrechnungXml   String?        @map("xrechnung_xml")
-  zugferdData    Json?          @map("zugferd_data")
+  xrechnungXml String? @map("xrechnung_xml")
+  zugferdData  Json?   @map("zugferd_data")
 
   // Ersteller
-  createdById    String         @map("created_by_id")
-  createdBy      User           @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+  createdById String @map("created_by_id")
+  createdBy   User   @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
 
   // Timestamps
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
   items          InvoiceItem[]
@@ -541,6 +1184,7 @@ model Invoice {
 
   @@index([customerId])
   @@index([orderId])
+  @@index([projectId])
   @@index([status])
   @@index([invoiceDate])
   @@index([dueDate])
@@ -550,9 +1194,9 @@ model Invoice {
 
 // Rechnungspositionen — Preis-Snapshot bei Finalisierung eingefroren
 model InvoiceItem {
-  id          String  @id @default(uuid())
-  invoiceId   String  @map("invoice_id")
-  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  id        String  @id @default(uuid())
+  invoiceId String  @map("invoice_id")
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   position    Int
   description String
@@ -563,10 +1207,10 @@ model InvoiceItem {
   // ─────────────────────────────────────────────────────────
   quantity    Decimal @db.Decimal(10, 3)
   unit        String  @default("Stk.")
-  unitPrice   Decimal @map("unit_price")  @db.Decimal(12, 2)
-  taxRate     Decimal @map("tax_rate")    @db.Decimal(5, 2)   // Steuersatz-Snapshot
-  netAmount   Decimal @map("net_amount")  @db.Decimal(12, 2)
-  taxAmount   Decimal @map("tax_amount")  @db.Decimal(12, 2)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(12, 2)
+  taxRate     Decimal @map("tax_rate") @db.Decimal(5, 2) // Steuersatz-Snapshot
+  netAmount   Decimal @map("net_amount") @db.Decimal(12, 2)
+  taxAmount   Decimal @map("tax_amount") @db.Decimal(12, 2)
   grossAmount Decimal @map("gross_amount") @db.Decimal(12, 2)
   notes       String?
 
@@ -579,20 +1223,20 @@ model InvoiceItem {
 // ============================================================
 
 model Payment {
-  id          String    @id @default(uuid())
-  invoiceId   String    @map("invoice_id")
-  invoice     Invoice   @relation(fields: [invoiceId], references: [id])
+  id        String  @id @default(uuid())
+  invoiceId String  @map("invoice_id")
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
 
-  amount      Decimal   @db.Decimal(12, 2)
-  paymentDate DateTime  @map("payment_date")
-  method      String?                           // "bank_transfer" | "cash" | "sepa_direct"
-  reference   String?                           // Verwendungszweck / Buchungsreferenz
+  amount      Decimal  @db.Decimal(12, 2)
+  paymentDate DateTime @map("payment_date")
+  method      String? // "bank_transfer" | "cash" | "sepa_direct"
+  reference   String? // Verwendungszweck / Buchungsreferenz
 
-  notes       String?
+  notes String?
 
   // Soft delete — Zahlung nie hart löschen, Audit-Log Pflicht
-  createdAt   DateTime  @default(now()) @map("created_at")
-  deletedAt   DateTime? @map("deleted_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
 
   @@index([invoiceId])
   @@index([paymentDate])
@@ -604,46 +1248,84 @@ model Payment {
 // ============================================================
 
 model Document {
-  id          String       @id @default(uuid())
-  type        DocumentType
+  id                   String            @id @default(uuid())
+  type                 DocumentType
+  format               DocumentFormat    @default(OTHER)
+  lifecycle            DocumentLifecycle @default(UPLOAD)
+  archiveStatus        ArchiveStatus     @default(ARCHIVED) @map("archive_status")
+  archiveError         String?           @map("archive_error")
+  archiveAttempts      Int               @default(0) @map("archive_attempts")
+  lastArchiveAttemptAt DateTime?         @map("last_archive_attempt_at")
+  archivedAt           DateTime?         @map("archived_at")
 
   // Polymorphe Verknüpfungen (optional — Dokument kann zu mehreren Entities gehören)
-  customerId      String?  @map("customer_id")
-  customer        Customer? @relation(fields: [customerId], references: [id])
-  offerId         String?  @map("offer_id")
-  offer           Offer?   @relation(fields: [offerId], references: [id])
-  orderId         String?  @map("order_id")
-  order           Order?   @relation(fields: [orderId], references: [id])
-  serviceReportId String?  @map("service_report_id")
-  serviceReport   ServiceReport? @relation(fields: [serviceReportId], references: [id])
-  invoiceId       String?  @map("invoice_id")
-  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+  customerId              String?                @map("customer_id")
+  customer                Customer?              @relation(fields: [customerId], references: [id])
+  offerId                 String?                @map("offer_id")
+  offer                   Offer?                 @relation(fields: [offerId], references: [id])
+  orderId                 String?                @map("order_id")
+  order                   Order?                 @relation(fields: [orderId], references: [id])
+  serviceReportId         String?                @map("service_report_id")
+  serviceReport           ServiceReport?         @relation(fields: [serviceReportId], references: [id])
+  invoiceId               String?                @map("invoice_id")
+  invoice                 Invoice?               @relation(fields: [invoiceId], references: [id])
+  customerPurchaseOrderId String?                @map("customer_purchase_order_id")
+  customerPurchaseOrder   CustomerPurchaseOrder? @relation(fields: [customerPurchaseOrderId], references: [id])
+  projectId               String?                @map("project_id")
+  project                 Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
   // Dateiinfo
-  filename        String                        // Generierter Dateiname (eindeutig)
-  originalName    String   @map("original_name") // Originaler Upload-Name
-  mimeType        String   @map("mime_type")
-  fileSize        Int      @map("file_size")    // Bytes
-  storagePath     String   @map("storage_path") // Interner Pfad / S3-Key
-  checksum        String?                       // SHA-256 für Integritätsprüfung
+  filename     String // Generierter Dateiname (eindeutig)
+  originalName String  @map("original_name") // Originaler Upload-Name
+  mimeType     String  @map("mime_type")
+  fileSize     Int     @map("file_size") // Bytes
+  storagePath  String  @map("storage_path") // Interner Pfad / S3-Key
+  checksum     String? // SHA-256 für Integritätsprüfung
 
   // Versionierung
-  version         Int      @default(1)
-  isArchived      Boolean  @default(false) @map("is_archived")
+  version    Int     @default(1)
+  isArchived Boolean @default(false) @map("is_archived")
 
-  uploadedById    String   @map("uploaded_by_id")  // userId
+  uploadedById String @map("uploaded_by_id") // userId
 
   // Timestamps
-  createdAt       DateTime @default(now()) @map("created_at")
-  deletedAt       DateTime? @map("deleted_at")    // Soft delete
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at") // Soft delete
 
   @@index([customerId])
   @@index([offerId])
   @@index([orderId])
   @@index([invoiceId])
+  @@index([customerPurchaseOrderId])
+  @@index([projectId])
   @@index([type])
+  @@index([archiveStatus])
+  @@index([lifecycle])
   @@index([deletedAt])
   @@map("documents")
+}
+
+/// Fachlicher Kopfsatz einer extern eingegangenen Kundenbestellung.
+/// Die unveränderten Originaldateien liegen als mehrere verknüpfte Document-Datensätze vor.
+model CustomerPurchaseOrder {
+  id          String     @id @default(uuid())
+  offerId     String     @unique @map("offer_id")
+  offer       Offer      @relation(fields: [offerId], references: [id], onDelete: Restrict)
+  customerId  String     @map("customer_id")
+  customer    Customer   @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  orderId     String?    @unique @map("order_id")
+  order       Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  orderNumber String?    @map("order_number")
+  orderDate   DateTime?  @map("order_date")
+  createdById String     @map("created_by_id")
+  createdBy   User       @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  documents   Document[]
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([createdById])
+  @@map("customer_purchase_orders")
 }
 
 // ============================================================
@@ -651,15 +1333,15 @@ model Document {
 // ============================================================
 
 model NumberSequence {
-  id          String             @id @default(uuid())
-  type        NumberSequenceType
-  year        Int                                  // z.B. 2024
+  id   String             @id @default(uuid())
+  type NumberSequenceType
+  year Int // z.B. 2024
 
-  prefix      String             @default("")      // z.B. "RE", "AN", "AU"
-  lastNumber  Int                @default(0) @map("last_number")
-  format      String             @default("{prefix}{year}-{number:04}")
+  prefix     String @default("") // z.B. "RE", "AN", "AU"
+  lastNumber Int    @default(0) @map("last_number")
+  format     String @default("{prefix}{year}-{number:04}")
 
-  updatedAt   DateTime           @updatedAt @map("updated_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Kritisch: Unique constraint verhindert doppelte Sequenzen
   @@unique([type, year])
@@ -671,27 +1353,27 @@ model NumberSequence {
 // ============================================================
 
 model AuditLog {
-  id          String      @id @default(uuid())
+  id String @id @default(uuid())
 
   // Wer — nullable für System-Aktionen
-  userId      String?     @map("user_id")
-  user        User?       @relation(fields: [userId], references: [id])
-  userEmail   String?     @map("user_email")    // Snapshot des E-Mail zum Zeitpunkt
+  userId    String? @map("user_id")
+  user      User?   @relation(fields: [userId], references: [id])
+  userEmail String? @map("user_email") // Snapshot des E-Mail zum Zeitpunkt
 
   // Was
-  action      AuditAction
-  entityType  String      @map("entity_type")   // "invoice" | "customer" | "offer" | ...
-  entityId    String      @map("entity_id")
+  action     AuditAction
+  entityType String      @map("entity_type") // "invoice" | "customer" | "offer" | ...
+  entityId   String      @map("entity_id")
 
   // Zustand vor und nach der Änderung
-  oldValue    Json?       @map("old_value")
-  newValue    Json?       @map("new_value")
+  oldValue Json? @map("old_value")
+  newValue Json? @map("new_value")
 
   // Kontext
-  metadata    Json?       // { ip, userAgent, reason, ... }
+  metadata Json? // { ip, userAgent, reason, ... }
 
   // Timestamp — kein updatedAt, kein deletedAt — IMMUTABLE
-  createdAt   DateTime    @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([entityType, entityId])
   @@index([userId])
@@ -705,79 +1387,88 @@ model AuditLog {
 // ============================================================
 
 model CompanySetting {
-  id           String   @id @default(uuid())
+  id String @id @default(uuid())
 
   // Firmendaten — erscheinen auf allen Dokumenten
-  companyName  String   @map("company_name")
-  legalForm    String?  @map("legal_form")       // "GmbH", "AG", "e.K.", ...
+  companyName      String  @map("company_name")
+  legalForm        String? @map("legal_form") // "GmbH", "AG", "e.K.", ...
   businessActivity String? @map("business_activity") // z.B. Fachbauleitung, Fremdfirmenkoordination
-  street       String?
-  houseNumber  String?  @map("house_number")
-  postalCode   String?  @map("postal_code")
-  city         String?
-  country      String   @default("DE")
+  street           String?
+  houseNumber      String? @map("house_number")
+  postalCode       String? @map("postal_code")
+  city             String?
+  country          String  @default("DE")
 
   // Steuer — Pflicht auf Rechnungen §14 UStG
-  vatId        String?  @map("vat_id")           // USt-IdNr.
-  taxNumber    String?  @map("tax_number")        // Steuernummer
-  taxOffice    String?  @map("tax_office")        // Finanzamt
+  vatId     String? @map("vat_id") // USt-IdNr.
+  taxNumber String? @map("tax_number") // Steuernummer
+  taxOffice String? @map("tax_office") // Finanzamt
 
   // Bankverbindung — Pflicht auf Rechnungen
-  bankName     String?  @map("bank_name")
-  iban         String?
-  bic          String?
+  bankName String? @map("bank_name")
+  iban     String?
+  bic      String?
 
   // Kontakt
-  email        String?
-  phone        String?
-  fax          String?
-  website      String?
+  email   String?
+  phone   String?
+  fax     String?
+  website String?
 
   // Register (optional)
-  registerCourt   String? @map("register_court")    // Amtsgericht
-  registerNumber  String? @map("register_number")   // HRB-Nummer
+  registerCourt    String? @map("register_court") // Amtsgericht
+  registerNumber   String? @map("register_number") // HRB-Nummer
   managingDirector String? @map("managing_director") // Geschäftsführer
-  supplierNumber   String? @map("supplier_number")   // Eigene Lieferantennummer beim Kunden
+  supplierNumber   String? @map("supplier_number") // Eigene Lieferantennummer beim Kunden
 
   // Rechnungs-Defaults
-  invoicePrefix        String  @default("RE")  @map("invoice_prefix")
-  offerPrefix          String  @default("AN")  @map("offer_prefix")
-  orderPrefix          String  @default("AU")  @map("order_prefix")
-  serviceReportPrefix  String  @default("LN")  @map("service_report_prefix")
-  defaultPaymentTermDays Int   @default(14)    @map("default_payment_term_days")
-  defaultTaxRate       Decimal @default(19.00) @map("default_tax_rate") @db.Decimal(5, 2)
+  invoicePrefix          String  @default("RE") @map("invoice_prefix")
+  offerPrefix            String  @default("AN") @map("offer_prefix")
+  orderPrefix            String  @default("AU") @map("order_prefix")
+  serviceReportPrefix    String  @default("LN") @map("service_report_prefix")
+  defaultPaymentTermDays Int     @default(14) @map("default_payment_term_days")
+  defaultTaxRate         Decimal @default(19.00) @map("default_tax_rate") @db.Decimal(5, 2)
 
   // Standard-Texte
-  defaultInvoiceIntro  String? @map("default_invoice_intro")
-  defaultInvoiceOutro  String? @map("default_invoice_outro")
-  defaultOfferIntro    String? @map("default_offer_intro")
-  defaultOfferOutro    String? @map("default_offer_outro")
+  defaultInvoiceIntro String? @map("default_invoice_intro")
+  defaultInvoiceOutro String? @map("default_invoice_outro")
+  defaultOfferIntro   String? @map("default_offer_intro")
+  defaultOfferOutro   String? @map("default_offer_outro")
 
   // Logo
-  logoPath     String?  @map("logo_path")
+  logoPath       String? @map("logo_path")
   logoStorageKey String? @map("logo_storage_key")
+  logoScale      Int     @default(140) @map("logo_scale")
+  logoWidth      Int?    @map("logo_width")
+  logoHeight     Int?    @map("logo_height")
+
+  // Externes Notfallarchiv (lokaler Serverpfad; später durch Storage-Adapter erweiterbar)
+  documentArchiveEnabled     Boolean @default(false) @map("document_archive_enabled")
+  documentArchivePath        String? @map("document_archive_path")
+  documentArchiveJsonEnabled Boolean @default(true) @map("document_archive_json_enabled")
 
   // Timestamps
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("company_settings")
 }
 
 // ─── Phase 7: DunningNotice ─────────────────────────────────
 model DunningNotice {
-  id           String    @id @default(uuid())
-  invoiceId    String    @map("invoice_id")
-  invoice      Invoice   @relation(fields: [invoiceId], references: [id])
-  level        Int
-  levelLabel   String    @map("level_label")
-  sentAt       DateTime? @map("sent_at")
-  dueDate      DateTime  @map("due_date")
-  fee          Decimal?  @db.Decimal(10, 2) @map("fee")
-  pdfPath      String?   @map("pdf_path")
-  createdById  String    @map("created_by_id")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  deletedAt    DateTime? @map("deleted_at")
+  id          String    @id @default(uuid())
+  invoiceId   String    @map("invoice_id")
+  invoice     Invoice   @relation(fields: [invoiceId], references: [id])
+  level       Int
+  levelLabel  String    @map("level_label")
+  sentAt      DateTime? @map("sent_at")
+  dueDate     DateTime  @map("due_date")
+  fee         Decimal?  @map("fee") @db.Decimal(10, 2)
+  pdfPath     String?   @map("pdf_path")
+  createdById String    @map("created_by_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  deletedAt   DateTime? @map("deleted_at")
+
   @@index([invoiceId])
   @@map("dunning_notices")
 }

@@ -1,0 +1,3 @@
+-- Intentionally empty.
+-- The ServiceReport confirmation note was not retained in the final schema.
+-- This preserves the already allocated migration order without introducing drift.

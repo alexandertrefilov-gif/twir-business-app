@@ -6,7 +6,6 @@
 
 import { type NextAuthOptions } from 'next-auth'
 import CredentialsProvider       from 'next-auth/providers/credentials'
-import { type NextRequest }      from 'next/server'
 import bcrypt                    from 'bcryptjs'
 import { prisma }                from '@/lib/db/prisma'
 import { RoleName }              from '@/types/enums'
@@ -17,6 +16,9 @@ import {
   recordFailedAttempt,
   resetRateLimit,
 } from '@/lib/security/rate-limiter'
+import { authCookies } from '@/lib/auth/session-cookies'
+import { getRequestHeader } from '@/lib/auth/request-headers'
+import { DUMMY_PASSWORD_HASH } from '@/lib/auth/password-timing'
 
 // Einheitliche Fehlermeldung — verhindert User-Enumeration
 // (identisch ob E-Mail unbekannt oder Passwort falsch)
@@ -29,13 +31,16 @@ export const authOptions: NextAuthOptions = {
   },
 
   pages: {
-    signIn: '/login',
-    error:  '/login',
+    signIn: '/intern/login',
+    error:  '/intern/login',
   },
+
+  cookies: authCookies('internal'),
 
   providers: [
     CredentialsProvider({
-      name:        'credentials',
+      id:          'internal-credentials',
+      name:        'internal-credentials',
       credentials: {
         email:    { label: 'E-Mail',   type: 'email'    },
         password: { label: 'Passwort', type: 'password' },
@@ -49,9 +54,8 @@ export const authOptions: NextAuthOptions = {
         // ── Rate-Limit-Check ────────────────────────────────
         // Key: kombiniert IP + E-Mail um sowohl distributed als auch
         // targeted Brute-Force zu erkennen.
-        const request = req as unknown as NextRequest
-        const ip      = request?.headers?.get?.('x-forwarded-for')?.split(',')[0]?.trim()
-               ?? request?.headers?.get?.('x-real-ip')
+        const ip      = getRequestHeader(req, 'x-forwarded-for')?.split(',')[0]?.trim()
+               ?? getRequestHeader(req, 'x-real-ip')
                ?? 'unknown'
         const rlKey   = `login:${ip}:${email}`
 
@@ -69,9 +73,9 @@ export const authOptions: NextAuthOptions = {
         })
 
         // Timing-Attack-Schutz: bcrypt auch bei unbekanntem User berechnen
-        if (!user || user.deletedAt || user.status !== 'ACTIVE') {
+        if (!user || !user.role || user.deletedAt || user.status !== 'ACTIVE') {
           // Dummy-Hash damit Antwortzeit nicht verrät ob User existiert
-          await bcrypt.compare(credentials.password, '$2b$12$placeholder.hash.for.timing.protection.only')
+          await bcrypt.compare(credentials.password, DUMMY_PASSWORD_HASH)
           await recordFailedAttempt(rlKey)
           return null
         }
@@ -105,6 +109,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name:  `${user.firstName} ${user.lastName}`,
           role:  user.role.name as RoleName,
+          authScope: 'INTERNAL' as const,
         }
       },
     }),
@@ -115,6 +120,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id   = user.id
         token.role = (user as typeof user & { role: RoleName }).role
+        token.authScope = 'INTERNAL'
       }
       return token
     },
@@ -124,19 +130,22 @@ export const authOptions: NextAuthOptions = {
         const u = session.user as typeof session.user & { id: string; role: RoleName }
         u.id   = token.id   as string
         u.role = token.role as RoleName
+        u.authScope = 'INTERNAL'
       }
       return session
     },
   },
 }
 
+export const internalAuthOptions = authOptions
+
 // ── Typ-Erweiterungen ─────────────────────────────────────────
 declare module 'next-auth' {
-  interface User { role: RoleName }
+  interface User { role?: RoleName; authScope?: 'INTERNAL' | 'COLLABORATION' }
   interface Session {
-    user: { id: string; email: string; name: string; role: RoleName }
+    user: { id: string; email: string; name: string; role?: RoleName; authScope?: 'INTERNAL' | 'COLLABORATION' }
   }
 }
 declare module 'next-auth/jwt' {
-  interface JWT { id: string; role: RoleName }
+  interface JWT { id: string; role?: RoleName; authScope?: 'INTERNAL' | 'COLLABORATION' }
 }
