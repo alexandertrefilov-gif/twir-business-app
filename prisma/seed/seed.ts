@@ -322,14 +322,7 @@ async function main() {
   console.log('     ✓ Demo-Kundendaten')
 
   console.log('\n✅ Seed erfolgreich abgeschlossen\n')
-  console.log('Demo-Zugangsdaten:')
-  console.log('┌─────────────────────────────────┬──────────────┐')
-  console.log('│ E-Mail                          │ Passwort     │')
-  console.log('├─────────────────────────────────┼──────────────┤')
-  demoUsers.forEach((u) => {
-    console.log(`│ ${u.email.padEnd(31)} │ ${u.password.padEnd(12)} │`)
-  })
-  console.log('└─────────────────────────────────┴──────────────┘')
+  console.log('Demo-Benutzer wurden idempotent geprüft; Passwörter werden nicht protokolliert.')
 }
 
 main()
