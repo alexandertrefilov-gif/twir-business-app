@@ -22,8 +22,10 @@ describe('Deaktivierter Next.js Image Optimizer', () => {
     expect(matchesMiddleware('/_next/static/chunks/app.js')).toBe(false)
   })
 
-  it('lässt die Loginroute unverändert außerhalb der Middleware', () => {
-    expect(matchesMiddleware('/login')).toBe(false)
+  it('führt öffentliche Routen durch die Scope-Middleware', () => {
+    expect(matchesMiddleware('/')).toBe(true)
+    expect(matchesMiddleware('/intern/login')).toBe(true)
+    expect(matchesMiddleware('/collaboration/login')).toBe(true)
   })
 
   it('behält den bestehenden Middleware-Schutz für Fachrouten bei', () => {
@@ -36,6 +38,6 @@ describe('Deaktivierter Next.js Image Optimizer', () => {
     const imports = [...source.matchAll(/from ['"]([^'"]+)['"]/g)]
       .map((match) => match[1])
 
-    expect(imports).toEqual(['next-auth/middleware', 'next/server'])
+    expect(imports).toEqual(['next-auth/jwt', 'next/server', '@/lib/auth/session-cookies'])
   })
 })
