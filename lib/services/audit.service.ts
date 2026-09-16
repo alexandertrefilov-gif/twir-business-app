@@ -3,6 +3,7 @@
 // Alle kritischen Aktionen MÜSSEN hier geloggt werden
 
 import { prisma } from '@/lib/db/prisma'
+import type { Prisma } from '@prisma/client'
 import { AuditAction } from '@/types/enums'
 
 export interface AuditLogParams {
@@ -63,8 +64,11 @@ export async function writeAuditLog(params: AuditLogParams): Promise<void> {
  * Verwenden wenn der Log-Eintrag Teil einer Transaktion sein muss
  * (z.B. Rechnung finalisieren — Log und Finalisierung atomar).
  */
-export function buildAuditLogCreate(params: AuditLogParams) {
-  return prisma.auditLog.create({
+export function buildAuditLogCreate(
+  tx: Pick<Prisma.TransactionClient, 'auditLog'>,
+  params: AuditLogParams,
+) {
+  return tx.auditLog.create({
     data: {
       userId:     params.userId ?? null,
       userEmail:  params.userEmail ?? null,

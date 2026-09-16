@@ -14,6 +14,85 @@ export const RoleName = {
 } as const
 export type RoleName = (typeof RoleName)[keyof typeof RoleName]
 
+export const CollaborationRole = {
+  COLLAB_VIEWER: 'COLLAB_VIEWER',
+  COLLAB_MEMBER: 'COLLAB_MEMBER',
+  COLLAB_MANAGER: 'COLLAB_MANAGER',
+  EXTERNAL_PLANNER: 'EXTERNAL_PLANNER',
+  INTERNAL_PLANNER: 'INTERNAL_PLANNER',
+  OPERATOR: 'OPERATOR',
+  PARTNER: 'PARTNER',
+} as const
+export type CollaborationRole = (typeof CollaborationRole)[keyof typeof CollaborationRole]
+
+export const CollaborationProjectStatus = {
+  DRAFT: 'DRAFT',
+  PLANNED: 'PLANNED',
+  ACTIVE: 'ACTIVE',
+  ON_HOLD: 'ON_HOLD',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
+} as const
+export type CollaborationProjectStatus = (typeof CollaborationProjectStatus)[keyof typeof CollaborationProjectStatus]
+
+export const CollaborationHealthStatus = {
+  GREEN: 'GREEN',
+  YELLOW: 'YELLOW',
+  RED: 'RED',
+} as const
+export type CollaborationHealthStatus = (typeof CollaborationHealthStatus)[keyof typeof CollaborationHealthStatus]
+
+export const CollaborationStageStatus = {
+  NOT_STARTED: 'NOT_STARTED',
+  READY: 'READY',
+  IN_PROGRESS: 'IN_PROGRESS',
+  WAITING_FOR_APPROVAL: 'WAITING_FOR_APPROVAL',
+  BLOCKED: 'BLOCKED',
+  COMPLETED: 'COMPLETED',
+  SKIPPED: 'SKIPPED',
+} as const
+export type CollaborationStageStatus = (typeof CollaborationStageStatus)[keyof typeof CollaborationStageStatus]
+
+export const COLLABORATION_TASK_STATUS_LABELS = { TODO: 'Offen', IN_PROGRESS: 'In Bearbeitung', BLOCKED: 'Blockiert', DONE: 'Erledigt', SKIPPED: 'Übersprungen' } as const
+export const COLLABORATION_TASK_PRIORITY_LABELS = { LOW: 'Niedrig', MEDIUM: 'Mittel', HIGH: 'Hoch', URGENT: 'Dringend' } as const
+export const COLLABORATION_BLOCKER_STATUS_LABELS = { OPEN: 'Offen', RESOLVED: 'Gelöst' } as const
+export const COLLABORATION_APPROVAL_STATUS_LABELS = { REQUESTED: 'Ausstehend', APPROVED: 'Freigegeben', REJECTED: 'Abgelehnt' } as const
+
+export const COLLABORATION_PROJECT_STATUS_LABELS: Record<CollaborationProjectStatus, string> = {
+  DRAFT: 'Entwurf',
+  PLANNED: 'Geplant',
+  ACTIVE: 'Aktiv',
+  ON_HOLD: 'Pausiert',
+  COMPLETED: 'Abgeschlossen',
+  CANCELLED: 'Abgebrochen',
+}
+
+export const COLLABORATION_STAGE_STATUS_LABELS: Record<CollaborationStageStatus, string> = {
+  NOT_STARTED: 'Nicht begonnen',
+  READY: 'Bereit',
+  IN_PROGRESS: 'In Bearbeitung',
+  WAITING_FOR_APPROVAL: 'Wartet auf Freigabe',
+  BLOCKED: 'Blockiert',
+  COMPLETED: 'Abgeschlossen',
+  SKIPPED: 'Übersprungen',
+}
+
+export const COLLABORATION_ROLE_LABELS: Record<CollaborationRole, string> = {
+  COLLAB_MANAGER: 'TWIR Projektleitung / Management',
+  INTERNAL_PLANNER: 'TWIR interne Planung',
+  EXTERNAL_PLANNER: 'Externe GGA-Planung',
+  OPERATOR: 'Betreiber / Mercedes-Benz',
+  PARTNER: 'Montage-/Fachpartner',
+  COLLAB_MEMBER: 'Weitere Beteiligte',
+  COLLAB_VIEWER: 'Nur Lesezugriff',
+}
+
+export const COLLABORATION_HEALTH_STATUS_LABELS: Record<CollaborationHealthStatus, string> = {
+  GREEN: 'Stabil',
+  YELLOW: 'Beobachten',
+  RED: 'Kritisch',
+}
+
 export const ROLE_DISPLAY_NAMES: Record<RoleName, string> = {
   ADMIN:           'Administrator',
   OFFICE:          'Büro',

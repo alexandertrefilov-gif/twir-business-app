@@ -9,11 +9,12 @@ import type { Session } from 'next-auth'
 interface Props {
   children: React.ReactNode
   session:  Session | null
+  basePath?: string
 }
 
-export function SessionProvider({ children, session }: Props) {
+export function SessionProvider({ children, session, basePath }: Props) {
   return (
-    <NextAuthSessionProvider session={session}>
+    <NextAuthSessionProvider session={session} basePath={basePath}>
       {children}
     </NextAuthSessionProvider>
   )
