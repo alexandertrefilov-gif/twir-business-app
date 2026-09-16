@@ -39,6 +39,38 @@ const sharedConfig = {
           { key: 'Permissions-Policy',       value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },
+      {
+        // Die authentifizierte Angebotsvorschau wird ausschließlich innerhalb
+        // derselben TWIR-Origin im Workflow-Dialog eingebettet.
+        source: '/api/offers/:id/preview',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        ],
+      },
+      {
+        // Die konfigurierbare Auftragsvorschau wird ausschließlich innerhalb
+        // derselben TWIR-Origin im Workflow-Dialog eingebettet.
+        source: '/api/orders/:id/pdf',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        ],
+      },
+      {
+        // Archiv-PDFs bleiben authentifiziert und dürfen nur in der
+        // Explorer-Vorschau derselben TWIR-Origin eingebettet werden.
+        source: '/api/document-archive/file',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        ],
+      },
+      {
+        // Eingegangene Kundenbestellungen werden ausschließlich nach
+        // Session- und Dokumentberechtigungsprüfung inline ausgeliefert.
+        source: '/api/documents/:id/download',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+        ],
+      },
     ]
   },
 
