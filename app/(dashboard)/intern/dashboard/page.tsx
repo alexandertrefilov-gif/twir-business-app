@@ -94,31 +94,6 @@ export default async function DashboardPage() {
               </div>
             </div>
 
-            {/* ── Quick actions ── */}
-            <div className="card-base p-5">
-              <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground mb-3">
-                Schnellzugriff
-              </p>
-              <div className="space-y-1.5">
-                {[
-                  { label: 'Neues Angebot',    href: '/offers/new'   },
-                  { label: 'Neuer Auftrag',     href: '/orders/new'   },
-                  { label: 'Neuer Kunde',       href: '/customers/new'},
-                  { label: 'Leistung erfassen', href: '/services/new' },
-                ].map((a) => (
-                  <Link
-                    key={a.href}
-                    href={a.href}
-                    className="flex items-center gap-2 px-3 py-2 rounded-md text-sm text-foreground hover:bg-stone-50 border border-stone-200 transition-colors w-full"
-                  >
-                    <svg className="w-3.5 h-3.5 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-                    </svg>
-                    {a.label}
-                  </Link>
-                ))}
-              </div>
-            </div>
           </div>
 
           {/* ── Recent activity ── */}

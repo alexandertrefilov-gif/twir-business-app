@@ -35,7 +35,7 @@ function IconLog()       { return <svg className="icon" viewBox="0 0 20 20" fill
 const NAV_GROUPS: NavGroup[] = [
   {
     items: [
-      { label: 'Dashboard',    href: '/',            icon: <IconGrid /> },
+      { label: 'Dashboard',    href: '/intern/dashboard', icon: <IconGrid /> },
     ],
   },
   {
@@ -82,7 +82,7 @@ export function Sidebar({ userEmail, userName, userRole, onClose }: SidebarProps
   const pathname = usePathname()
 
   function isActive(href: string) {
-    if (href === '/') return pathname === '/'
+    if (href === '/intern/dashboard') return pathname === href
     return pathname === href || pathname.startsWith(href + '/')
   }
 
@@ -178,7 +178,7 @@ export function Sidebar({ userEmail, userName, userRole, onClose }: SidebarProps
           </div>
         </div>
         <button
-          onClick={() => signOut({ callbackUrl: '/login' })}
+          onClick={() => signOut({ callbackUrl: '/intern/login' })}
           className="w-full sidebar-item text-xs justify-center mt-1"
           style={{ color: 'hsl(220 10% 42%)' }}
         >

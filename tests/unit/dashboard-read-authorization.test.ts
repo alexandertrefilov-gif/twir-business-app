@@ -49,7 +49,7 @@ import {
   roleHasPermission,
 } from '@/lib/auth/permissions'
 import { getDashboardStats } from '@/lib/services/dashboard.service'
-import DashboardPage from '@/app/(dashboard)/page'
+import DashboardPage from '@/app/(dashboard)/intern/dashboard/page'
 
 const resources = [
   Resource.OFFER,
