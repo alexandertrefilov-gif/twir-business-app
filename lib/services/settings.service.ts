@@ -93,7 +93,7 @@ export async function updateSettings(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.SETTINGS_CHANGED,
       entityType: 'settings',

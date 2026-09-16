@@ -192,7 +192,7 @@ export async function createCustomer(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId,
       userEmail,
       action:     AuditAction.CREATE,
@@ -272,7 +272,7 @@ export async function updateCustomer(
       })
     }
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId,
       userEmail,
       action:     AuditAction.UPDATE,
@@ -333,7 +333,7 @@ export async function deleteCustomer(
       data:  { deletedAt: new Date(), isActive: false },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId,
       userEmail,
       action:     AuditAction.DELETE,

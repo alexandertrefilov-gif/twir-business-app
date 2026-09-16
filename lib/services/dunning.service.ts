@@ -142,7 +142,7 @@ export async function createDunningNotice(
       })
     }
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CREATE,
       entityType: 'dunning_notice',
@@ -181,7 +181,7 @@ export async function markDunningNoticeSent(
       data:  { sentAt: new Date(), pdfPath: pdfPath ?? null },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.STATUS_CHANGE,
       entityType: 'dunning_notice',

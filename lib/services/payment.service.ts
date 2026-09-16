@@ -182,7 +182,7 @@ export async function addPayment(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.PAYMENT_ADDED,
       entityType: 'invoice',
@@ -251,7 +251,7 @@ export async function removePayment(
       data:  { paidAmount: newPaidAmount, status: newStatus },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.PAYMENT_REMOVED,
       entityType: 'invoice',

@@ -106,7 +106,7 @@ export async function createInvoiceDraft(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CREATE,
       entityType: 'invoice',
@@ -219,7 +219,7 @@ export async function finalizeInvoice(
     })
 
     // 7. Audit-Log innerhalb der Transaktion
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.FINALIZE,
       entityType: 'invoice',
@@ -304,7 +304,7 @@ export async function cancelInvoice(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CANCEL,
       entityType: 'invoice',

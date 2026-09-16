@@ -192,7 +192,7 @@ export async function updateInvoiceDraftAction(
         },
       })
 
-      await buildAuditLogCreate({
+      await buildAuditLogCreate(tx, {
         userId, userEmail,
         action:     AuditAction.UPDATE,
         entityType: 'invoice',
@@ -292,7 +292,7 @@ export async function changeInvoiceStatusAction(
           ...(toStatus === InvoiceStatus.SENT ? { sentAt: new Date() } : {}),
         },
       })
-      await buildAuditLogCreate({
+      await buildAuditLogCreate(tx, {
         userId, userEmail,
         action:     AuditAction.STATUS_CHANGE,
         entityType: 'invoice',

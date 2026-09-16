@@ -213,7 +213,7 @@ export async function createServiceReport(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CREATE,
       entityType: 'service_report',
@@ -272,7 +272,7 @@ export async function updateServiceReport(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.UPDATE,
       entityType: 'service_report',
@@ -304,7 +304,7 @@ export async function deleteServiceReport(
     await tx.serviceReportItem.deleteMany({ where: { serviceReportId: id } })
     await tx.serviceReport.delete({ where: { id } })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.DELETE,
       entityType: 'service_report',

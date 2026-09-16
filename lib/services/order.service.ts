@@ -213,7 +213,7 @@ export async function createOrder(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CREATE,
       entityType: 'order',
@@ -286,7 +286,7 @@ export async function updateOrder(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.UPDATE,
       entityType: 'order',
@@ -327,7 +327,7 @@ export async function changeOrderStatus(
       data:  { status: toStatus, ...timestamps },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.STATUS_CHANGE,
       entityType: 'order',
@@ -378,7 +378,7 @@ export async function deleteOrder(
   await prisma.$transaction(async (tx) => {
     await tx.order.update({ where: { id }, data: { deletedAt: new Date() } })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.DELETE,
       entityType: 'order',

@@ -204,7 +204,7 @@ export async function createOffer(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CREATE,
       entityType: 'offer',
@@ -274,7 +274,7 @@ export async function updateOffer(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.UPDATE,
       entityType: 'offer',
@@ -334,7 +334,7 @@ export async function changeOfferStatus(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.STATUS_CHANGE,
       entityType: 'offer',
@@ -403,7 +403,7 @@ export async function convertOfferToOrder(
       data:  { status: OfferStatus.CONVERTED_TO_ORDER },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.STATUS_CHANGE,
       entityType: 'offer',
@@ -412,7 +412,7 @@ export async function convertOfferToOrder(
       newValue:   { status: OfferStatus.CONVERTED_TO_ORDER, orderId: order.id, orderNumber },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CREATE,
       entityType: 'order',
@@ -458,7 +458,7 @@ export async function deleteOffer(
       data:  { deletedAt: new Date() },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.DELETE,
       entityType: 'offer',

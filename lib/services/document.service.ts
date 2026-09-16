@@ -84,7 +84,7 @@ export async function registerDocument(
       },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.DOCUMENT_UPLOADED,
       entityType: 'document',
@@ -216,7 +216,7 @@ export async function deleteDocument(
       data:  { deletedAt: new Date() },
     })
 
-    await buildAuditLogCreate({
+    await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.DOCUMENT_DELETED,
       entityType: 'document',
