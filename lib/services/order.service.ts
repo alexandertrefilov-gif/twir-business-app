@@ -410,7 +410,8 @@ export async function markOrderSent(
     }
     if (order.sentAt) return
     const sentAt = new Date()
-    await tx.order.update({ where: { id }, data: { sentAt } })
+    const updated = await tx.order.updateMany({ where: { id, sentAt: null }, data: { sentAt } })
+    if (updated.count === 0) return
     await tx.auditLog.create({ data: {
       userId, userEmail, action: AuditAction.STATUS_CHANGE,
       entityType: 'order', entityId: id,
