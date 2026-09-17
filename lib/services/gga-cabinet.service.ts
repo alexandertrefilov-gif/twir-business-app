@@ -17,7 +17,7 @@ import {
   requireCollaborationProjectAccess,
   requireCollaborationSession,
 } from '@/lib/auth/collaboration-guards'
-import { BusinessRuleError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
+import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
 import { editorRoles, setCollaborationChecklistCompleted } from '@/lib/services/collaboration-phase2.service'
 import { deriveCabinetStatus, type GgaCabinetSnapshot } from '@/lib/collaboration/cabinet-workflow'
@@ -480,7 +480,16 @@ export async function decideGgaCabinetOperatorApproval(approvalId: string, input
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const value = await tx.collaborationApproval.update({ where: { id: approvalId }, data: { status: input.decision, decisionNote: input.decisionNote?.trim() || null, decidedAt: new Date(), decidedById: userId } })
+    // Optimistische Bedingung auf den Ausgangsstatus: verhindert, dass zwei
+    // parallele Entscheidungen (z.B. Doppelklick oder zwei Tabs) dieselbe
+    // sicherheitsrelevante Betreiberfreigabe beide "erfolgreich" entscheiden
+    // und sich dabei gegenseitig überschreiben.
+    const result = await tx.collaborationApproval.updateMany({
+      where: { id: approvalId, status: 'REQUESTED' },
+      data: { status: input.decision, decisionNote: input.decisionNote?.trim() || null, decidedAt: new Date(), decidedById: userId },
+    })
+    if (result.count === 0) throw new ConflictError('Diese Freigabe wurde zwischenzeitlich bereits entschieden.')
+    const value = await tx.collaborationApproval.findUniqueOrThrow({ where: { id: approvalId } })
     await syncBetreiberfreigabeChecklistItem(tx, approval.projectId, approval.cabinetId!, input.decision === 'APPROVED')
     await buildAuditLogCreate(tx, {
       userId, userEmail,

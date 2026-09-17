@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/db/prisma'
 import { requireCollaborationManager, requireCollaborationProjectAccess, requireCollaborationSession, requireCollaborationStageAccess } from '@/lib/auth/collaboration-guards'
-import { BusinessRuleError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
+import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
 import { calculateProjectHealth, calculateProjectProgress, deriveNextAction, deriveStageStatuses, getStageCompletionBlocker, isCollaborationStageTransitionAllowed } from '@/lib/collaboration/project-workflow'
 
@@ -115,7 +115,11 @@ export async function setCollaborationTaskStatus(taskId: string, status: string)
   const access = await requireCollaborationStageAccess(userId, task.stageId, editorRoles)
   if (access.projectId !== task.projectId) throw new NotFoundError('Aufgabe nicht gefunden')
   const next = taskStatus.parse(status)
-  const updated = await prisma.collaborationTask.update({ where: { id: taskId }, data: { status: next, completedAt: ['DONE', 'SKIPPED'].includes(next) ? new Date() : null } })
+  // Optimistische Bedingung auf den Ausgangsstatus: verhindert doppelte
+  // Statuswechsel bei parallelen Requests (gleiches Muster wie bei Freigaben).
+  const result = await prisma.collaborationTask.updateMany({ where: { id: taskId, status: task.status }, data: { status: next, completedAt: ['DONE', 'SKIPPED'].includes(next) ? new Date() : null } })
+  if (result.count === 0) throw new ConflictError('Der Status wurde zwischenzeitlich bereits geändert.')
+  const updated = await prisma.collaborationTask.findUniqueOrThrow({ where: { id: taskId } })
   await writeAuditLog({ userId, userEmail, action: 'STATUS_CHANGE', entityType: 'collaboration_task', entityId: taskId, oldValue: { status: task.status }, newValue: { status: next } })
   return updated
 }
@@ -146,7 +150,12 @@ export async function setCollaborationChecklistCompleted(itemId: string, complet
   }
   const access = await requireCollaborationStageAccess(userId, item.stageId, editorRoles)
   if (access.projectId !== item.projectId) throw new NotFoundError('Checklistenpunkt nicht gefunden')
-  const updated = await prisma.collaborationChecklistItem.update({ where: { id: itemId }, data: { completed, completedAt: completed ? new Date() : null, completedByMembershipId: completed ? access.membership.id : null } })
+  // Optimistische Bedingung auf den Ausgangswert: verhindert, dass zwei
+  // parallele Requests sich beim Setzen von completedByMembershipId
+  // gegenseitig widersprüchlich überschreiben.
+  const result = await prisma.collaborationChecklistItem.updateMany({ where: { id: itemId, completed: item.completed }, data: { completed, completedAt: completed ? new Date() : null, completedByMembershipId: completed ? access.membership.id : null } })
+  if (result.count === 0) throw new ConflictError('Dieser Punkt wurde zwischenzeitlich bereits geändert.')
+  const updated = await prisma.collaborationChecklistItem.findUniqueOrThrow({ where: { id: itemId } })
   await writeAuditLog({ userId, userEmail, action: 'UPDATE', entityType: 'collaboration_checklist_item', entityId: itemId, oldValue: { completed: item.completed }, newValue: { completed } })
   return updated
 }
@@ -159,7 +168,11 @@ export async function resolveCollaborationBlocker(blockerId: string, resolution:
     const access = await requireCollaborationStageAccess(userId, blocker.stageId, editorRoles)
     if (access.projectId !== blocker.projectId) throw new NotFoundError('Blocker nicht gefunden')
   }
-  const updated = await prisma.collaborationBlocker.update({ where: { id: blockerId }, data: { status: 'RESOLVED', resolution, resolvedAt: new Date(), resolvedById: userId } })
+  // Optimistische Bedingung auf den Ausgangsstatus: verhindert, dass zwei
+  // parallele Auflösungen desselben Blockers sich gegenseitig überschreiben.
+  const result = await prisma.collaborationBlocker.updateMany({ where: { id: blockerId, status: blocker.status }, data: { status: 'RESOLVED', resolution, resolvedAt: new Date(), resolvedById: userId } })
+  if (result.count === 0) throw new ConflictError('Dieser Blocker wurde zwischenzeitlich bereits bearbeitet.')
+  const updated = await prisma.collaborationBlocker.findUniqueOrThrow({ where: { id: blockerId } })
   await writeAuditLog({ userId, userEmail, action: 'UPDATE', entityType: 'collaboration_blocker', entityId: blockerId, oldValue: { status: blocker.status }, newValue: { status: 'RESOLVED', resolution } })
   return updated
 }
@@ -185,7 +198,11 @@ export async function decideCollaborationApproval(approvalId: string, decision: 
   if (approval.status !== 'REQUESTED') throw new ValidationError('Diese Freigabe ist bereits entschieden')
   if (decision === 'REJECTED' && !decisionNote?.trim()) throw new ValidationError('Eine Ablehnung erfordert eine Begründung')
   const updated = await prisma.$transaction(async (tx) => {
-    const value = await tx.collaborationApproval.update({ where: { id: approvalId }, data: { status: decision, decisionNote, decidedAt: new Date(), decidedById: userId } })
+    // Optimistische Bedingung auf den Ausgangsstatus: verhindert, dass zwei
+    // parallele Entscheidungen dieselbe Freigabe beide "erfolgreich" entscheiden.
+    const result = await tx.collaborationApproval.updateMany({ where: { id: approvalId, status: 'REQUESTED' }, data: { status: decision, decisionNote, decidedAt: new Date(), decidedById: userId } })
+    if (result.count === 0) throw new ConflictError('Diese Freigabe wurde zwischenzeitlich bereits entschieden.')
+    const value = await tx.collaborationApproval.findUniqueOrThrow({ where: { id: approvalId } })
     await buildAuditLogCreate(tx, { userId, userEmail, action: 'STATUS_CHANGE', entityType: 'collaboration_approval', entityId: approvalId, oldValue: { status: approval.status }, newValue: { status: decision } })
     return value
   })
@@ -228,7 +245,11 @@ export async function transitionCollaborationStage(stageId: string, target: stri
     if (blocker) throw new ValidationError(blocker)
   }
   const updated = await prisma.$transaction(async (tx) => {
-    const value = await tx.collaborationProjectStage.update({ where: { id: stageId }, data: { status: target as never, ...(target === 'COMPLETED' ? { completedAt: new Date() } : {}) } })
+    // Optimistische Bedingung auf den Ausgangsstatus: verhindert doppelte
+    // Phasenübergänge bei parallelen Requests.
+    const result = await tx.collaborationProjectStage.updateMany({ where: { id: stageId, status: stage.status }, data: { status: target as never, ...(target === 'COMPLETED' ? { completedAt: new Date() } : {}) } })
+    if (result.count === 0) throw new ConflictError('Die Projektstufe wurde zwischenzeitlich bereits geändert.')
+    const value = await tx.collaborationProjectStage.findUniqueOrThrow({ where: { id: stageId } })
     await buildAuditLogCreate(tx, { userId, userEmail, action: 'STATUS_CHANGE', entityType: 'collaboration_project_stage', entityId: stageId, oldValue: { status: stage.status }, newValue: { status: target } })
     return value
   })

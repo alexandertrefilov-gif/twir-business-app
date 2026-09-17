@@ -9,10 +9,22 @@
 //
 // ANNAHME: Die Test-DB ist bereits migriert (npx prisma migrate deploy)
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 
 // Überspringe Integration-Tests wenn keine Test-DB konfiguriert
 const RUN_INTEGRATION = !!process.env.TEST_DATABASE_URL
+
+// Für den GGA-Betreiberfreigabe-Race-Test unten: next-auth-Session mocken,
+// damit requireCollaborationSession() innerhalb des echten Service-Layers
+// gegen die echte Test-DB läuft (gleiches Muster wie
+// tests/integration/gga-operator-portal-db.test.ts).
+const collaborationAuth = vi.hoisted(() => ({ getServerSession: vi.fn() }))
+vi.mock('next-auth', () => ({ getServerSession: collaborationAuth.getServerSession }))
+// Der GGA-Race-Test unten geht über den echten Service-Layer (gga-cabinet.service.ts),
+// der intern die App-Singleton-Prisma-Instanz nutzt — diese ist per tests/setup.ts
+// global gemockt und muss hier auf die echte Test-DB zurückgesetzt werden.
+vi.unmock('@/lib/db/prisma')
+vi.unmock('@/lib/services/audit.service')
 
 describe.skipIf(!RUN_INTEGRATION)(
   'Race Condition — Rechnungsnummer-Vergabe (Integration)',
@@ -169,6 +181,75 @@ describe.skipIf(!RUN_INTEGRATION)(
       expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1)
       await expect(testPrisma.serviceReport.count({ where: { orderId } })).resolves.toBe(1)
     })
+  },
+)
+
+describe.skipIf(!RUN_INTEGRATION)(
+  'Race Condition — GGA-Betreiberfreigabe-Entscheidung (Integration)',
+  () => {
+    let testPrisma: any
+    let cabinetService: typeof import('@/lib/services/gga-cabinet.service')
+    let managerUserId = ''
+    let managerEmail = ''
+    let operatorUserId = ''
+    let operatorEmail = ''
+    let projectId = ''
+    let cabinetId = ''
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+    function asUser(id: string, email: string) {
+      collaborationAuth.getServerSession.mockResolvedValue({ user: { id, email, authScope: 'COLLABORATION' } })
+    }
+
+    beforeAll(async () => {
+      const { PrismaClient } = await import('@prisma/client')
+      testPrisma = new PrismaClient({ datasources: { db: { url: process.env.TEST_DATABASE_URL } } })
+      const role = await testPrisma.role.upsert({ where: { name: 'ADMIN' }, update: {}, create: { name: 'ADMIN', displayName: 'Admin' } })
+      const mk = (label: string) => testPrisma.user.create({ data: { email: `gga-race-${suffix}-${label}@example.invalid`, passwordHash: 'not-used', firstName: label, lastName: 'Test', roleId: role.id, status: 'ACTIVE' } })
+      const manager = await mk('manager'); managerUserId = manager.id; managerEmail = manager.email
+      const operator = await mk('operator'); operatorUserId = operator.id; operatorEmail = operator.email
+
+      const project = await testPrisma.collaborationProject.create({ data: { projectNumber: `GGA-RACE-${suffix}`, name: 'GGA Race Test', active: true } })
+      projectId = project.id
+      await testPrisma.collaborationMembership.create({ data: { userId: managerUserId, projectId, role: 'COLLAB_MANAGER', active: true } })
+      await testPrisma.collaborationMembership.create({ data: { userId: operatorUserId, projectId, role: 'OPERATOR', active: true } })
+      await testPrisma.collaborationProjectStage.create({ data: { projectId, code: 'ABNAHME', title: 'Abnahme', sequence: 1, weight: 100 } })
+
+      cabinetService = await import('@/lib/services/gga-cabinet.service')
+      await asUser(managerUserId, managerEmail)
+      const cabinet = await cabinetService.createGgaCabinet(projectId, { kennung: `GGA-RACE-${suffix}`, bezeichnung: 'Race Test Schrank' })
+      cabinetId = cabinet.id
+    })
+
+    afterAll(async () => {
+      if (!testPrisma) return
+      await testPrisma.auditLog.deleteMany({ where: { OR: [{ userId: managerUserId }, { userId: operatorUserId }] } })
+      await testPrisma.collaborationApproval.deleteMany({ where: { cabinetId } })
+      await testPrisma.collaborationChecklistItem.deleteMany({ where: { cabinetId } })
+      await testPrisma.ggaCabinet.deleteMany({ where: { id: cabinetId } })
+      await testPrisma.collaborationProjectStage.deleteMany({ where: { projectId } })
+      await testPrisma.collaborationMembership.deleteMany({ where: { projectId } })
+      await testPrisma.collaborationProject.deleteMany({ where: { id: projectId } })
+      await testPrisma.user.deleteMany({ where: { id: { in: [managerUserId, operatorUserId] } } })
+      await testPrisma.$disconnect()
+    })
+
+    it('zwei parallele Entscheidungen derselben Betreiberfreigabe: genau eine gewinnt, genau ein Audit-Eintrag', async () => {
+      await asUser(managerUserId, managerEmail)
+      const approval = await cabinetService.requestGgaCabinetOperatorApproval(cabinetId)
+
+      await asUser(operatorUserId, operatorEmail)
+      const results = await Promise.allSettled([
+        cabinetService.decideGgaCabinetOperatorApproval(approval.id, { decision: 'APPROVED', unterlagenGeprueft: true }),
+        cabinetService.decideGgaCabinetOperatorApproval(approval.id, { decision: 'REJECTED', decisionNote: 'Race' }),
+      ])
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+
+      const finalApproval = await testPrisma.collaborationApproval.findUniqueOrThrow({ where: { id: approval.id }, select: { status: true } })
+      expect(['APPROVED', 'REJECTED']).toContain(finalApproval.status)
+      const auditCount = await testPrisma.auditLog.count({ where: { entityType: 'collaboration_approval', entityId: approval.id, action: 'STATUS_CHANGE' } })
+      expect(auditCount).toBe(1)
+    }, 15_000)
   },
 )
 

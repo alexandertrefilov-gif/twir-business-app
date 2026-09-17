@@ -16,12 +16,13 @@ describe('Collaboration-Phase-3-Mutationen', () => {
   it('verhindert IDOR bei Task-Statusänderung', async () => {
     vi.mocked(prisma.collaborationTask.findUnique).mockResolvedValue({ id: 't1', stageId: 's1', projectId: 'p2', status: 'TODO' } as never)
     await expect(setCollaborationTaskStatus('t1', 'DONE')).rejects.toBeInstanceOf(NotFoundError)
-    expect(prisma.collaborationTask.update).not.toHaveBeenCalled()
+    expect(prisma.collaborationTask.updateMany).not.toHaveBeenCalled()
   })
 
   it('setzt Checklistenpunkte nachvollziehbar und erlaubt Wiederöffnen', async () => {
     vi.mocked(prisma.collaborationChecklistItem.findUnique).mockResolvedValue({ id: 'c1', stageId: 's1', projectId: 'p1', completed: false } as never)
-    vi.mocked(prisma.collaborationChecklistItem.update).mockResolvedValueOnce({ id: 'c1', completed: true } as never).mockResolvedValueOnce({ id: 'c1', completed: false } as never)
+    vi.mocked(prisma.collaborationChecklistItem.updateMany).mockResolvedValue({ count: 1 } as never)
+    vi.mocked(prisma.collaborationChecklistItem.findUniqueOrThrow).mockResolvedValueOnce({ id: 'c1', completed: true } as never).mockResolvedValueOnce({ id: 'c1', completed: false } as never)
     await expect(setCollaborationChecklistCompleted('c1', true)).resolves.toMatchObject({ completed: true })
     await expect(setCollaborationChecklistCompleted('c1', false)).resolves.toMatchObject({ completed: false })
   })
@@ -35,6 +36,6 @@ describe('Collaboration-Phase-3-Mutationen', () => {
   it('verhindert Stage-Abschluss bei offenen Pflichtaufgaben', async () => {
     vi.mocked(prisma.collaborationProjectStage.findUnique).mockResolvedValue({ id: 's1', projectId: 'p1', status: 'IN_PROGRESS', requiresApproval: false, dependencies: [], tasks: [{ status: 'TODO', isRequired: true }], checklistItems: [], blockers: [], approvals: [] } as never)
     await expect(transitionCollaborationStage('s1', 'COMPLETED')).rejects.toBeInstanceOf(ValidationError)
-    expect(prisma.collaborationProjectStage.update).not.toHaveBeenCalled()
+    expect(prisma.collaborationProjectStage.updateMany).not.toHaveBeenCalled()
   })
 })
