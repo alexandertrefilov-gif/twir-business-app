@@ -4,6 +4,7 @@ import { writeAuditLog, buildAuditLogCreate } from '@/lib/services/audit.service
 import { AuditAction }  from '@/types/enums'
 import type { CustomerCreateInput, CustomerUpdateInput } from '@/lib/validators/customer.schema'
 import { NotFoundError, BusinessRuleError } from '@/lib/auth/permissions'
+import { ensureCustomerArchiveDirectory } from '@/lib/documents/customer-archive.service'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -213,6 +214,11 @@ export async function createCustomer(
 
     return c
   })
+
+  // Das Archiv bleibt eine nachgelagerte Notfallkopie: Ein temporär nicht
+  // erreichbares OneDrive darf die bereits erfolgreiche Kundenanlage nicht
+  // zurückrollen oder beim erneuten Absenden einen doppelten Kunden erzeugen.
+  await ensureCustomerArchiveDirectory(customer)
 
   return customer.id
 }

@@ -43,6 +43,10 @@ export interface DocumentListItem {
   storagePath:  string
   version:      number
   isArchived:   boolean
+  format:       string
+  lifecycle:    string
+  archiveStatus: string
+  archiveError: string | null
   createdAt:    Date
   entityLabel:  string   // "RE-2024-0001" / "Mustermann GmbH" etc.
 }
@@ -147,6 +151,10 @@ export async function getDocuments(
         storagePath:  true,
         version:      true,
         isArchived:   true,
+        format:       true,
+        lifecycle:    true,
+        archiveStatus: true,
+        archiveError: true,
         createdAt:    true,
         customer:     { select: { name: true } },
         offer:        { select: { offerNumber: true } },
@@ -168,6 +176,10 @@ export async function getDocuments(
       storagePath:  d.storagePath,
       version:      d.version,
       isArchived:   d.isArchived,
+      format:       d.format,
+      lifecycle:    d.lifecycle,
+      archiveStatus: d.archiveStatus,
+      archiveError: d.archiveError,
       createdAt:    d.createdAt,
       entityLabel:
         d.invoice?.invoiceNumber

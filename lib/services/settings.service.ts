@@ -170,6 +170,18 @@ export function hasValidCompanyLogoSignature(
   contents: Uint8Array,
   mimeType: string,
 ): boolean {
+  return getCompanyLogoMetadata(contents, mimeType) !== null
+}
+
+export interface CompanyLogoMetadata {
+  width: number
+  height: number
+}
+
+export function getCompanyLogoMetadata(
+  contents: Uint8Array,
+  mimeType: string,
+): CompanyLogoMetadata | null {
   if (mimeType === 'image/png') {
     const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
     const hasSignature = signature.every((byte, index) => contents[index] === byte)
@@ -181,26 +193,30 @@ export function hasValidCompanyLogoSignature(
       contents[contents.length - 7] === 0x45 &&
       contents[contents.length - 6] === 0x4e &&
       contents[contents.length - 5] === 0x44
-    return hasSignature && hasHeader && hasEnd && hasSafePngDimensions(contents)
+    if (!hasSignature || !hasHeader || !hasEnd) return null
+    return getSafePngDimensions(contents)
   }
   if (mimeType === 'image/jpeg') {
     const hasStart = contents.length >= 4 &&
       contents[0] === 0xff && contents[1] === 0xd8 && contents[2] === 0xff
     const hasEnd = contents.length >= 2 &&
       contents[contents.length - 2] === 0xff && contents[contents.length - 1] === 0xd9
-    return hasStart && hasEnd && hasSafeJpegDimensions(contents)
+    if (!hasStart || !hasEnd) return null
+    return getSafeJpegDimensions(contents)
   }
-  return false
+  return null
 }
 
-function hasSafePngDimensions(contents: Uint8Array): boolean {
+function getSafePngDimensions(contents: Uint8Array): CompanyLogoMetadata | null {
   const view = new DataView(contents.buffer, contents.byteOffset, contents.byteLength)
   const width = view.getUint32(16)
   const height = view.getUint32(20)
   return width >= 1 && height >= 1 && width <= 10_000 && height <= 10_000
+    ? { width, height }
+    : null
 }
 
-function hasSafeJpegDimensions(contents: Uint8Array): boolean {
+function getSafeJpegDimensions(contents: Uint8Array): CompanyLogoMetadata | null {
   let offset = 2
   while (offset + 8 < contents.length) {
     if (contents[offset] !== 0xff) {
@@ -212,9 +228,9 @@ function hasSafeJpegDimensions(contents: Uint8Array): boolean {
       offset += 2
       continue
     }
-    if (marker === 0xda) return false
+    if (marker === 0xda) return null
     const segmentLength = (contents[offset + 2] << 8) | contents[offset + 3]
-    if (segmentLength < 2 || offset + 2 + segmentLength > contents.length) return false
+    if (segmentLength < 2 || offset + 2 + segmentLength > contents.length) return null
     if (
       marker >= 0xc0 && marker <= 0xcf &&
       marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc
@@ -222,10 +238,12 @@ function hasSafeJpegDimensions(contents: Uint8Array): boolean {
       const height = (contents[offset + 5] << 8) | contents[offset + 6]
       const width = (contents[offset + 7] << 8) | contents[offset + 8]
       return width >= 1 && height >= 1 && width <= 10_000 && height <= 10_000
+        ? { width, height }
+        : null
     }
     offset += 2 + segmentLength
   }
-  return false
+  return null
 }
 
 export async function saveCompanyLogo(file: File, contents: Uint8Array): Promise<void> {

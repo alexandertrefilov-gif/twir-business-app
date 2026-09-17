@@ -12,6 +12,7 @@ import { CustomerDeliveryAddressActions } from '@/components/customers/CustomerD
 import { CustomerAddressPicker } from '@/components/customers/CustomerAddressPicker'
 import { format }         from 'date-fns'
 import { de }             from 'date-fns/locale'
+import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -73,10 +74,10 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
       />
 
       <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <BusinessDocumentLayout>
 
           {/* ── Main info ── */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="min-w-0 space-y-4">
 
             {/* Stammdaten */}
             <InfoCard title="Stammdaten">
@@ -188,7 +189,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
           </div>
 
           {/* ── Sidebar: stats + meta ── */}
-          <div className="space-y-4">
+          <BusinessDocumentSidebar>
 
             {/* Aktivität */}
             <InfoCard title="Aktivität">
@@ -230,8 +231,8 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
               />
             </div>
 
-          </div>
-        </div>
+          </BusinessDocumentSidebar>
+        </BusinessDocumentLayout>
       </div>
     </div>
   )

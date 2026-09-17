@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { hasValidCompanyLogoSignature } from '@/lib/services/settings.service'
+import {
+  getCompanyLogoMetadata,
+  hasValidCompanyLogoSignature,
+} from '@/lib/services/settings.service'
 
 describe('Firmenlogo', () => {
   it('akzeptiert strukturell plausible PNG- und JPEG-Bilddaten', () => {
@@ -25,6 +28,8 @@ describe('Firmenlogo', () => {
       jpeg,
       'image/jpeg',
     )).toBe(true)
+    expect(getCompanyLogoMetadata(png, 'image/png')).toEqual({ width: 1, height: 1 })
+    expect(getCompanyLogoMetadata(jpeg, 'image/jpeg')).toEqual({ width: 1, height: 1 })
   })
 
   it('weist umbenannte oder nicht unterstützte Dateien zurück', () => {
