@@ -326,7 +326,7 @@ describe('einheitlicher Geschäftsvorgang-Navigator', () => {
     for (const file of ['offers/[id]/page.tsx', 'orders/[id]/page.tsx', 'services/[id]/page.tsx', 'invoices/[id]/page.tsx']) {
       const source = readFileSync(resolve(process.cwd(), 'app/(dashboard)', file), 'utf8')
       const pageStart = source.indexOf('export default')
-      const permissionCheck = source.indexOf('await requirePermission(', pageStart)
+      const permissionCheck = source.indexOf('await requirePagePermission(', pageStart)
       const processCall = source.indexOf('getBusinessProcessFor', pageStart)
       expect(permissionCheck).toBeGreaterThan(pageStart)
       expect(permissionCheck).toBeLessThan(processCall)

@@ -4,7 +4,7 @@ import Link                   from 'next/link'
 import { PageHeader }         from '@/components/shared/PageHeader'
 import { InvoiceStatusBadge } from '@/components/invoices/InvoiceStatusBadge'
 import { getInvoices }        from '@/lib/services/invoice-query.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { INVOICE_STATUS_LABELS } from '@/types/enums'
 import { format }             from 'date-fns'
 import { de }                 from 'date-fns/locale'
@@ -17,7 +17,7 @@ interface SearchParams { search?: string; status?: string; page?: string }
 
 export default async function InvoicesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const query = await searchParams
-  await requirePermission(Resource.INVOICE, Action.READ)
+  await requirePagePermission(Resource.INVOICE, Action.READ)
 
   const page   = parseInt(query.page ?? '1', 10)
   const search = query.search ?? ''

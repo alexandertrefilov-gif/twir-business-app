@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma } from '@/lib/db/prisma'
 import { getProject } from '@/lib/services/project.service'
 import { ProjectForm } from '@/components/projects/ProjectForm'
@@ -12,7 +12,7 @@ function dateInput(value: Date | null | undefined) {
 }
 
 export default async function EditProjectPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission(Resource.PROJECT, Action.UPDATE)
+  await requirePagePermission(Resource.PROJECT, Action.UPDATE)
   const { id } = await params
   const project = await getProject(id)
   const [customers, users] = await Promise.all([

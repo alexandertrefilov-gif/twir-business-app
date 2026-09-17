@@ -3,7 +3,7 @@ import type { Metadata }  from 'next'
 import { notFound }       from 'next/navigation'
 import Link               from 'next/link'
 import { getServiceReportById } from '@/lib/services/service-report.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
@@ -20,7 +20,7 @@ export const metadata: Metadata = { title: 'Leistungsnachweis' }
 
 export default async function ServiceReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.SERVICE_REPORT, Action.READ)
+  const user = await requirePagePermission(Resource.SERVICE_REPORT, Action.READ)
 
   let report
   try { report = await getServiceReportById(id, user.userId, user.role) }

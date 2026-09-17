@@ -1,11 +1,11 @@
 import Link from 'next/link'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { getProject, listLinkableCollaborationProjects } from '@/lib/services/project.service'
 import { PROJECT_STATUS_LABELS, PROJECT_PARTICIPANT_ROLE_LABELS, COLLABORATION_PROJECT_STATUS_LABELS } from '@/types/enums'
 import { activateProjectCollaborationAction } from '../actions'
 import { LinkCollaborationProjectDialog } from '@/components/projects/LinkCollaborationProjectDialog'
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission(Resource.PROJECT, Action.READ)
+  await requirePagePermission(Resource.PROJECT, Action.READ)
   const project = await getProject((await params).id)
   const services = project.orders.flatMap(o => o.serviceReports)
   const canManageCollaboration = await hasPermission(Resource.PROJECT, Action.UPDATE)

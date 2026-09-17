@@ -22,10 +22,10 @@ describe('Buchhaltungszugriff', () => {
 
   it('schützt das Accounting-Layout vor dem Laden der Seite', async () => {
     vi.resetModules()
-    const requirePermission = vi.fn().mockRejectedValue(new Error('Keine Berechtigung'))
-    vi.doMock('@/lib/auth/permissions', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/auth/permissions')>()), requirePermission }))
+    const requirePagePermission = vi.fn().mockRejectedValue(new Error('Keine Berechtigung'))
+    vi.doMock('@/lib/auth/permissions', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/auth/permissions')>()), requirePagePermission }))
     const { default: AccountingLayout } = await import('@/app/(dashboard)/accounting/layout')
     await expect(AccountingLayout({ children: null })).rejects.toThrow('Keine Berechtigung')
-    expect(requirePermission).toHaveBeenCalledWith('accounting', 'read')
+    expect(requirePagePermission).toHaveBeenCalledWith('accounting', 'read')
   })
 })

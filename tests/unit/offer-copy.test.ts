@@ -4,14 +4,14 @@ import React from 'react'
 vi.stubGlobal('React', React)
 
 const mocks = vi.hoisted(() => ({
-  requirePermission: vi.fn(),
+  requirePagePermission: vi.fn(),
   getOfferById: vi.fn(),
   findCustomers: vi.fn(),
 }))
 
 vi.mock('@/lib/auth/permissions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/permissions')>()
-  return { ...actual, requirePermission: mocks.requirePermission }
+  return { ...actual, requirePagePermission: mocks.requirePagePermission }
 })
 
 vi.mock('@/lib/services/offer.service', () => ({
@@ -84,7 +84,7 @@ function getFormDefaults(page: ElementWithChildren) {
 describe('Angebot kopieren', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.requirePermission.mockResolvedValue({
+    mocks.requirePagePermission.mockResolvedValue({
       userId: 'user-1',
       userEmail: 'user@example.test',
       role: 'OFFICE',
@@ -95,7 +95,7 @@ describe('Angebot kopieren', () => {
   it('lädt ohne Kopierquelle kein bestehendes Angebot', async () => {
     const page = await NewOfferPage({ searchParams: Promise.resolve({}) })
 
-    expect(mocks.requirePermission).toHaveBeenCalledWith(Resource.OFFER, Action.CREATE)
+    expect(mocks.requirePagePermission).toHaveBeenCalledWith(Resource.OFFER, Action.CREATE)
     expect(mocks.getOfferById).not.toHaveBeenCalled()
     expect(getFormDefaults(page).items).toBeUndefined()
   })
@@ -128,17 +128,17 @@ describe('Angebot kopieren', () => {
       searchParams: Promise.resolve({ copy: 'offer-1' }),
     })
 
-    expect(mocks.requirePermission).toHaveBeenNthCalledWith(
+    expect(mocks.requirePagePermission).toHaveBeenNthCalledWith(
       1,
       Resource.OFFER,
       Action.CREATE,
     )
-    expect(mocks.requirePermission).toHaveBeenNthCalledWith(
+    expect(mocks.requirePagePermission).toHaveBeenNthCalledWith(
       2,
       Resource.OFFER,
       Action.READ,
     )
-    expect(mocks.requirePermission.mock.invocationCallOrder[1])
+    expect(mocks.requirePagePermission.mock.invocationCallOrder[1])
       .toBeLessThan(mocks.getOfferById.mock.invocationCallOrder[0])
 
     expect(getFormDefaults(page)).toEqual({
@@ -164,7 +164,7 @@ describe('Angebot kopieren', () => {
   })
 
   it('fragt ohne erfolgreiche READ-Prüfung keine Angebotsdaten ab', async () => {
-    mocks.requirePermission
+    mocks.requirePagePermission
       .mockResolvedValueOnce({
         userId: 'user-1',
         userEmail: 'user@example.test',

@@ -4,7 +4,7 @@ import { notFound, redirect } from 'next/navigation'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { OrderForm }      from '@/components/orders/OrderForm'
 import { getOrderById }   from '@/lib/services/order.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }         from '@/lib/db/prisma'
 import { updateOrderAction } from '../../actions'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function EditOrderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.ORDER, Action.UPDATE)
+  const user = await requirePagePermission(Resource.ORDER, Action.UPDATE)
 
   let order
   try { order = await getOrderById(id) }

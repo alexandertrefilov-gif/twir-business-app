@@ -3,7 +3,7 @@ import type { Metadata }  from 'next'
 import { redirect }       from 'next/navigation'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { ServiceReportForm } from '@/components/service-reports/ServiceReportForm'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }         from '@/lib/db/prisma'
 import { createServiceReportAction } from '../actions'
 import { getServiceReportTemplate } from '@/lib/services/service-report-template.service'
@@ -20,7 +20,7 @@ export default async function NewServiceReportPage({
   searchParams: Promise<{ order?: string; orderId?: string }>
 }) {
   const query = await searchParams
-  const user = await requirePermission(Resource.SERVICE_REPORT, Action.CREATE)
+  const user = await requirePagePermission(Resource.SERVICE_REPORT, Action.CREATE)
   const requestedOrderId = query.order ?? query.orderId
 
   if (requestedOrderId) {

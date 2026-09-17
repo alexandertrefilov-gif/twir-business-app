@@ -4,7 +4,7 @@ import { notFound, redirect } from 'next/navigation'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { OfferForm }       from '@/components/offers/OfferForm'
 import { getOfferById }    from '@/lib/services/offer.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }          from '@/lib/db/prisma'
 import { changeOfferNumberAction, updateOfferAction } from '../../actions'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
@@ -15,7 +15,7 @@ import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  await requirePermission(Resource.OFFER, Action.READ)
+  await requirePagePermission(Resource.OFFER, Action.READ)
 
   try {
     const o = await getOfferById(id)
@@ -27,7 +27,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function EditOfferPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.OFFER, Action.UPDATE)
+  const user = await requirePagePermission(Resource.OFFER, Action.UPDATE)
 
   let offer
   try {

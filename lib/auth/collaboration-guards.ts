@@ -1,7 +1,23 @@
 import { getServerSession } from 'next-auth'
+import { forbidden, notFound, unauthorized } from 'next/navigation'
 import { collaborationAuthOptions } from '@/lib/auth/collaboration-options'
 import { prisma } from '@/lib/db/prisma'
 import { ForbiddenError, NotFoundError, UnauthorizedError } from '@/lib/auth/permissions'
+
+/**
+ * Zentrale Fehlerbehandlung für Collaboration-Seiten: ein aus einem
+ * try/catch um einen Service-Aufruf durchgereichter Fehler wird auf den
+ * jeweils richtigen Next.js-Interrupt abgebildet (404/403/401), statt als
+ * generischer 500-Fehler zu enden. Ersetzt die zuvor pro Seite verstreuten
+ * `if (error instanceof NotFoundError) notFound()`-Einzelfälle, die
+ * ForbiddenError/UnauthorizedError nicht abdeckten.
+ */
+export function handleCollaborationPageError(error: unknown): never {
+  if (error instanceof NotFoundError) notFound()
+  if (error instanceof ForbiddenError) forbidden()
+  if (error instanceof UnauthorizedError) unauthorized()
+  throw error
+}
 
 export async function requireCollaborationSession() {
   const session = await getServerSession(collaborationAuthOptions)

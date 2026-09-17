@@ -1,9 +1,9 @@
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma } from '@/lib/db/prisma'
 import { ProjectForm } from '@/components/projects/ProjectForm'
 import { createProjectAction } from '../actions'
 export default async function NewProjectPage({ searchParams }: { searchParams: Promise<{ customer?: string; offer?: string; order?: string; invoice?: string; name?: string }> }) {
-  await requirePermission(Resource.PROJECT, Action.CREATE)
+  await requirePagePermission(Resource.PROJECT, Action.CREATE)
   const sp = await searchParams
   const [customers, users] = await Promise.all([
     prisma.customer.findMany({ where: { deletedAt: null }, select: { id: true, number: true, name: true }, orderBy: { name: 'asc' } }),

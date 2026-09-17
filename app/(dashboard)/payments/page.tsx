@@ -3,7 +3,7 @@ import type { Metadata }   from 'next'
 import Link                from 'next/link'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { getPaymentJournal } from '@/lib/services/payment.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { PAYMENT_METHODS } from '@/lib/validators/payment.schema'
 import { format }          from 'date-fns'
 import { de }              from 'date-fns/locale'
@@ -19,7 +19,7 @@ interface SearchParams {
 
 export default async function PaymentsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const query = await searchParams
-  await requirePermission(Resource.PAYMENT, Action.READ)
+  await requirePagePermission(Resource.PAYMENT, Action.READ)
 
   const page   = parseInt(query.page ?? '1', 10)
   const search = query.search ?? ''

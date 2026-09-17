@@ -4,7 +4,7 @@ import { notFound }        from 'next/navigation'
 import Link                from 'next/link'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { getAuditLogById } from '@/lib/services/audit-query.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { format }          from 'date-fns'
 import { de }              from 'date-fns/locale'
 
@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: 'Audit-Eintrag' }
 
 export default async function AuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await requirePermission(Resource.AUDIT_LOG, Action.READ)
+  await requirePagePermission(Resource.AUDIT_LOG, Action.READ)
 
   const entry = await getAuditLogById(id)
   if (!entry) notFound()

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { DocumentExplorer } from '@/components/documents/DocumentExplorer'
-import { Action, requirePermission, Resource } from '@/lib/auth/permissions'
+import { Action, requirePagePermission, Resource } from '@/lib/auth/permissions'
 import { getArchiveExplorer } from '@/lib/documents/archive-explorer.service'
 import { formatFileSize } from '@/lib/services/document.service'
 
@@ -15,7 +15,7 @@ interface SearchParams {
 }
 
 export default async function DocumentsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  await requirePermission(Resource.DOCUMENT, Action.READ)
+  await requirePagePermission(Resource.DOCUMENT, Action.READ)
   const query = await searchParams
   const result = await getArchiveExplorer({ currentPath: query.path, search: query.search, sort: query.sort, direction: query.direction })
 

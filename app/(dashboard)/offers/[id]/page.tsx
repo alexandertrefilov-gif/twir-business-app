@@ -5,7 +5,7 @@ import Link                 from 'next/link'
 import { OfferConvertAction, OfferStatusActions } from '@/components/offers/OfferStatusActions'
 import { OfferRichText }      from '@/components/offers/OfferRichText'
 import { getOfferById }     from '@/lib/services/offer.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { calcOfferTotals }  from '@/lib/validators/offer.schema'
 import { format }           from 'date-fns'
 import { de }               from 'date-fns/locale'
@@ -25,7 +25,7 @@ import { listProjectsForCustomer } from '@/lib/services/project.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  await requirePermission(Resource.OFFER, Action.READ)
+  await requirePagePermission(Resource.OFFER, Action.READ)
 
   try {
     const o = await getOfferById(id)
@@ -37,7 +37,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function OfferDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.OFFER, Action.READ)
+  const user = await requirePagePermission(Resource.OFFER, Action.READ)
 
   let offer
   try {

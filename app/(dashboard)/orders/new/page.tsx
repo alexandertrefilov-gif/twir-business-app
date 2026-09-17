@@ -2,7 +2,7 @@
 import type { Metadata }  from 'next'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { OrderForm }      from '@/components/orders/OrderForm'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }         from '@/lib/db/prisma'
 import { createOrderAction } from '../actions'
 import { BusinessDocumentLayout, BusinessDocumentSidebar, BusinessWorkflowPlaceholder } from '@/components/documents/BusinessDocumentLayout'
@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: 'Neuer Auftrag' }
 
 export default async function NewOrderPage({ searchParams }: { searchParams: Promise<{ customer?: string }> }) {
   const query = await searchParams
-  await requirePermission(Resource.ORDER, Action.CREATE)
+  await requirePagePermission(Resource.ORDER, Action.CREATE)
 
   const customers = await prisma.customer.findMany({
     where: { deletedAt: null, isActive: true },

@@ -1,8 +1,7 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
 import { getGgaCabinetDetail, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'
 import { GgaCabinetIntakeWizard } from '@/components/collaboration/GgaCabinetIntakeWizard'
-import { NotFoundError } from '@/lib/auth/permissions'
+import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
 
 function toDecimalString(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value)
@@ -17,8 +16,7 @@ export default async function GgaCabinetIntakePage({ params }: { params: Promise
   try {
     cabinet = await getGgaCabinetDetail(id)
   } catch (error) {
-    if (error instanceof NotFoundError) notFound()
-    throw error
+    handleCollaborationPageError(error)
   }
   const canEdit = (cabinetEditorRoles as readonly string[]).includes(cabinet.role)
 

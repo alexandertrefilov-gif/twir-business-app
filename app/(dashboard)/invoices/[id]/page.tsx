@@ -16,7 +16,7 @@ import {
   getInvoicePayments,
 } from '@/lib/services/invoice-query.service'
 import { getDunningNoticesForInvoice } from '@/lib/services/dunning.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { InvoiceStatus, INVOICE_TYPE_LABELS } from '@/types/enums'
 import { addPaymentAction }   from '@/app/(dashboard)/payments/actions'
 import { format }             from 'date-fns'
@@ -35,7 +35,7 @@ import { listProjectsForCustomer } from '@/lib/services/project.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  await requirePermission(Resource.INVOICE, Action.READ)
+  await requirePagePermission(Resource.INVOICE, Action.READ)
 
   try {
     const inv = await getInvoiceById(id)
@@ -45,7 +45,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.INVOICE, Action.READ)
+  const user = await requirePagePermission(Resource.INVOICE, Action.READ)
 
   let invoice
   try { invoice = await getInvoiceById(id) }

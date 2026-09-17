@@ -3,7 +3,7 @@ import type { Metadata }   from 'next'
 import Link                from 'next/link'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { getServiceReports } from '@/lib/services/service-report.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
@@ -15,7 +15,7 @@ interface SearchParams { search?: string; page?: string }
 
 export default async function ServicesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const query      = await searchParams
-  const user       = await requirePermission(Resource.SERVICE_REPORT, Action.READ)
+  const user       = await requirePagePermission(Resource.SERVICE_REPORT, Action.READ)
   const page       = parseInt(query.page ?? '1', 10)
   const search     = query.search ?? ''
 

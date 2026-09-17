@@ -7,7 +7,7 @@ vi.stubGlobal('React', React)
 
 const authState = vi.hoisted(() => ({
   role: null as RoleNameType | null,
-  requirePermission: vi.fn(),
+  requirePagePermission: vi.fn(),
   hasPermission: vi.fn(),
   getServerSession: vi.fn(),
 }))
@@ -30,7 +30,7 @@ vi.mock('next-auth', () => ({
 vi.mock('@/lib/auth/permissions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/permissions')>()
 
-  authState.requirePermission.mockImplementation(
+  authState.requirePagePermission.mockImplementation(
     async (resource: typeof actual.Resource[keyof typeof actual.Resource], action: typeof actual.Action[keyof typeof actual.Action]) => {
       if (!authState.role) throw new actual.UnauthorizedError()
       if (!actual.roleHasPermission(authState.role, resource, action)) {
@@ -46,7 +46,7 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 
   return {
     ...actual,
-    requirePermission: authState.requirePermission,
+    requirePagePermission: authState.requirePagePermission,
     hasPermission: authState.hasPermission,
   }
 })
@@ -224,7 +224,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
 
     await expect(entry.invoke()).rejects.toBeInstanceOf(ForbiddenError)
 
-    expect(authState.requirePermission).toHaveBeenCalledWith(entry.resource, Action.READ)
+    expect(authState.requirePagePermission).toHaveBeenCalledWith(entry.resource, Action.READ)
     expect(entry.query).not.toHaveBeenCalled()
   })
 
@@ -233,14 +233,14 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
 
     await expect(entry.invoke()).rejects.toBeInstanceOf(ForbiddenError)
 
-    expect(authState.requirePermission).toHaveBeenCalledWith(entry.resource, Action.READ)
+    expect(authState.requirePagePermission).toHaveBeenCalledWith(entry.resource, Action.READ)
     expect(entry.query).not.toHaveBeenCalled()
   })
 
   it.each(protectedPages)('blockiert unangemeldete Zugriffe vor der Abfrage: $name', async (entry) => {
     await expect(entry.invoke()).rejects.toBeInstanceOf(UnauthorizedError)
 
-    expect(authState.requirePermission).toHaveBeenCalledWith(entry.resource, Action.READ)
+    expect(authState.requirePagePermission).toHaveBeenCalledWith(entry.resource, Action.READ)
     expect(entry.query).not.toHaveBeenCalled()
   })
 
@@ -251,7 +251,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
     await expect(entry.invoke()).rejects.toBeDefined()
 
     expect(entry.query).toHaveBeenCalledTimes(1)
-    expect(authState.requirePermission.mock.invocationCallOrder[0])
+    expect(authState.requirePagePermission.mock.invocationCallOrder[0])
       .toBeLessThan(entry.query.mock.invocationCallOrder[0])
   })
 

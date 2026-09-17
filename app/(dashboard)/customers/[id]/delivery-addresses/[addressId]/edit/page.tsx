@@ -1,6 +1,6 @@
 import { PageHeader } from '@/components/shared/PageHeader'
 import { CustomerDeliveryAddressForm } from '@/components/customers/CustomerDeliveryAddressForm'
-import { Action, requirePermission, Resource } from '@/lib/auth/permissions'
+import { Action, requirePagePermission, Resource } from '@/lib/auth/permissions'
 import { getCustomerById } from '@/lib/services/customer.service'
 import { getCustomerDeliveryAddress } from '@/lib/services/customer-delivery-address.service'
 import { getAddressCoUsers } from '@/lib/services/customer-address.service'
@@ -8,7 +8,7 @@ import { updateDeliveryAddressAction } from '../../actions'
 
 export default async function EditDeliveryAddressPage({ params }: { params: Promise<{ id: string; addressId: string }> }) {
   const { id, addressId } = await params
-  await requirePermission(Resource.CUSTOMER, Action.UPDATE)
+  await requirePagePermission(Resource.CUSTOMER, Action.UPDATE)
   const [customer, address] = await Promise.all([getCustomerById(id), getCustomerDeliveryAddress(id, addressId)])
   const sharedWith = await getAddressCoUsers(address.addressId, id)
   const defaults = {

@@ -4,7 +4,7 @@ import Link               from 'next/link'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { OfferTable }     from '@/components/offers/OfferTable'
 import { getOffers }      from '@/lib/services/offer.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export const metadata: Metadata = { title: 'Angebote' }
@@ -23,7 +23,7 @@ export default async function OffersPage({
   searchParams: Promise<SearchParams>
 }) {
   const query = await searchParams
-  await requirePermission(Resource.OFFER, Action.READ)
+  await requirePagePermission(Resource.OFFER, Action.READ)
 
   const page   = parseInt(query.page ?? '1', 10)
   const search = query.search ?? ''

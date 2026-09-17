@@ -4,7 +4,7 @@ import Link                 from 'next/link'
 import { PageHeader }       from '@/components/shared/PageHeader'
 import { CustomerTable }    from '@/components/customers/CustomerTable'
 import { getCustomers }     from '@/lib/services/customer.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export const metadata: Metadata = { title: 'Kunden' }
@@ -22,7 +22,7 @@ export default async function CustomersPage({
   searchParams: Promise<SearchParams>
 }) {
   const query = await searchParams
-  await requirePermission(Resource.CUSTOMER, Action.READ)
+  await requirePagePermission(Resource.CUSTOMER, Action.READ)
 
   const page    = parseInt(query.page  ?? '1', 10)
   const search  = query.search ?? ''

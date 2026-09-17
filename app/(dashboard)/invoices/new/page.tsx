@@ -2,7 +2,7 @@
 import type { Metadata }   from 'next'
 import { InvoiceForm }     from '@/components/invoices/InvoiceForm'
 import { InvoiceDocumentHeader } from '@/components/invoices/InvoiceDocumentHeader'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }          from '@/lib/db/prisma'
 import { createInvoiceDraftAction } from '../actions'
 import { getSettings }     from '@/lib/services/settings.service'
@@ -22,7 +22,7 @@ export default async function NewInvoicePage({
   searchParams: Promise<{ order?: string; customer?: string }>
 }) {
   const query = await searchParams
-  const user = await requirePermission(Resource.INVOICE, Action.CREATE)
+  const user = await requirePagePermission(Resource.INVOICE, Action.CREATE)
 
   const [customers, orders, settings] = await Promise.all([
     prisma.customer.findMany({

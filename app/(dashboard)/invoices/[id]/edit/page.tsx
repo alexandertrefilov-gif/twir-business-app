@@ -7,7 +7,7 @@ import { notFound, redirect } from 'next/navigation'
 import { InvoiceForm }       from '@/components/invoices/InvoiceForm'
 import { InvoiceDocumentHeader } from '@/components/invoices/InvoiceDocumentHeader'
 import { getInvoiceById }    from '@/lib/services/invoice-query.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { InvoiceStatus }     from '@/types/enums'
 import { prisma }            from '@/lib/db/prisma'
 import { updateInvoiceDraftAction } from '../../actions'
@@ -18,7 +18,7 @@ import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-p
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  await requirePermission(Resource.INVOICE, Action.READ)
+  await requirePagePermission(Resource.INVOICE, Action.READ)
 
   try {
     const inv = await getInvoiceById(id)
@@ -28,7 +28,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function EditInvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.INVOICE, Action.UPDATE)
+  const user = await requirePagePermission(Resource.INVOICE, Action.UPDATE)
 
   let invoice
   try { invoice = await getInvoiceById(id) }

@@ -8,7 +8,7 @@ import {
   AUDIT_ENTITY_LABELS,
   AUDIT_ENTITY_TYPES,
 } from '@/lib/services/audit-query.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { AuditAction, type AuditAction as AuditActionType } from '@/types/enums'
 import { format }          from 'date-fns'
 import { de }              from 'date-fns/locale'
@@ -53,7 +53,7 @@ function getAuditActionColor(action: string): string {
 
 export default async function AuditLogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const query = await searchParams
-  await requirePermission(Resource.AUDIT_LOG, Action.READ)
+  await requirePagePermission(Resource.AUDIT_LOG, Action.READ)
 
   const page       = parseInt(query.page ?? '1', 10)
   const entityType = query.entityType ?? ''

@@ -3,6 +3,7 @@
 // KEINE Rechteprüfung darf ausschließlich im Frontend stattfinden
 
 import { getServerSession } from 'next-auth'
+import { forbidden, unauthorized } from 'next/navigation'
 import { authOptions } from '@/lib/auth/options'
 import { RoleName } from '@/types/enums'
 import { prisma } from '@/lib/db/prisma'
@@ -175,6 +176,33 @@ export async function requirePermission(
   }
 
   return { userId: user.id, userEmail: user.email, role: user.role }
+}
+
+/**
+ * Wie requirePermission, aber für Server-Component-Seiten/Layouts gedacht:
+ * ein uncaught UnauthorizedError/ForbiddenError aus einer Seite würde von
+ * Next.js sonst als generischer, nicht abgefangener Renderfehler behandelt
+ * und mit HTTP 500 statt 401/403 beantwortet. Nutzt Next.js' eingebaute
+ * unauthorized()/forbidden()-Interrupts (benötigt experimental.authInterrupts
+ * in next.config sowie unauthorized.tsx/forbidden.tsx im jeweiligen
+ * Routensegment), damit der korrekte Statuscode ausgeliefert wird — zentral
+ * hier, keine verstreuten try/catch-Blöcke pro Seite.
+ *
+ * In Server Actions und API Routes weiterhin requirePermission() direkt
+ * verwenden (dort ist der bestehende {error}-Rückgabewert bzw.
+ * toHttpError()-Pfad bereits korrekt).
+ */
+export async function requirePagePermission(
+  resource: Resource,
+  action: Action,
+): Promise<{ userId: string; userEmail: string; role: RoleName }> {
+  try {
+    return await requirePermission(resource, action)
+  } catch (error) {
+    if (error instanceof UnauthorizedError) unauthorized()
+    if (error instanceof ForbiddenError) forbidden()
+    throw error
+  }
 }
 
 /**

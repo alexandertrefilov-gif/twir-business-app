@@ -23,6 +23,12 @@ const sharedConfig = {
     // Kundenbestellungen (lib/security/upload-validator.ts) würde dann mit
     // einem kaputten multipart-Body statt einer sauberen 413-Antwort scheitern.
     middlewareClientMaxBodySize: '25mb',
+    // Aktiviert next/navigation forbidden()/unauthorized(): eine in einer
+    // Server-Component-Seite geworfene ForbiddenError/UnauthorizedError wird
+    // dadurch korrekt als 403/401 beantwortet statt als generischer 500-Fehler
+    // (siehe requirePagePermission in lib/auth/permissions.ts sowie
+    // forbidden.tsx/unauthorized.tsx in den jeweiligen Routengruppen).
+    authInterrupts: true,
   },
 
   async rewrites() {

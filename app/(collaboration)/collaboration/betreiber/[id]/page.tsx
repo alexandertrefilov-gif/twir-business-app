@@ -4,13 +4,12 @@
 // Eckdaten, tatsächlich dokumentierter Prüfstatus, freigegebene Dokumente,
 // Freigabehistorie und — falls zuständig — der Freigabe-/Beanstandungsdialog.
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
 import { getGgaCabinetDetail } from '@/lib/services/gga-cabinet.service'
 import { listCollaborationDocuments } from '@/lib/services/collaboration-document.service'
 import { GGA_EX_ASSESSMENT_LABELS, GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS, formatGgaBetriebsstatusLabel, GGA_BETRIEBSSTATUS_BADGE_CLASS } from '@/lib/collaboration/cabinet-workflow'
 import { GgaCabinetFreigabehistorie } from '@/components/collaboration/GgaCabinetFreigabehistorie'
 import { GgaCabinetOperatorDecisionPanel } from '@/components/collaboration/GgaCabinetOperatorDecisionPanel'
-import { NotFoundError } from '@/lib/auth/permissions'
 
 function decimalToStr(value: unknown, unit: string): string {
   return value === null || value === undefined ? '–' : `${value} ${unit}`
@@ -29,8 +28,7 @@ export default async function GgaBetreiberCabinetPage({ params }: { params: Prom
   try {
     cabinet = await getGgaCabinetDetail(id)
   } catch (error) {
-    if (error instanceof NotFoundError) notFound()
-    throw error
+    handleCollaborationPageError(error)
   }
 
   const documents = await listCollaborationDocuments({ projectId: cabinet.projectId, cabinetId: cabinet.id })

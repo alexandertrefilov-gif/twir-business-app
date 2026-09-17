@@ -2,7 +2,7 @@
 import type { Metadata }   from 'next'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { OfferForm }       from '@/components/offers/OfferForm'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }          from '@/lib/db/prisma'
 import { getOfferById }    from '@/lib/services/offer.service'
 import { createOfferAction } from '../actions'
@@ -17,11 +17,11 @@ export default async function NewOfferPage({
   searchParams: Promise<{ customer?: string; copy?: string }>
 }) {
   const query = await searchParams
-  await requirePermission(Resource.OFFER, Action.CREATE)
+  await requirePagePermission(Resource.OFFER, Action.CREATE)
 
   let sourceOffer: Awaited<ReturnType<typeof getOfferById>> | null = null
   if (query.copy) {
-    await requirePermission(Resource.OFFER, Action.READ)
+    await requirePagePermission(Resource.OFFER, Action.READ)
     sourceOffer = await getOfferById(query.copy)
   }
 

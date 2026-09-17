@@ -4,7 +4,7 @@ import { notFound }       from 'next/navigation'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { ServiceReportForm } from '@/components/service-reports/ServiceReportForm'
 import { getServiceReportById } from '@/lib/services/service-report.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }         from '@/lib/db/prisma'
 import { updateServiceReportAction } from '../../actions'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: 'Leistungsnachweis bearbeiten' }
 
 export default async function EditServiceReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.SERVICE_REPORT, Action.UPDATE)
+  const user = await requirePagePermission(Resource.SERVICE_REPORT, Action.UPDATE)
 
   let report
   try { report = await getServiceReportById(id, user.userId, user.role) }

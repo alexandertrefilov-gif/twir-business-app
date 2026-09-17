@@ -4,12 +4,12 @@ import { PageHeader }     from '@/components/shared/PageHeader'
 import { SettingsForm }   from '@/components/settings/SettingsForm'
 import { getSettings } from '@/lib/services/settings.service'
 import { getSequenceStatus } from '@/lib/services/number-sequence.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 
 export const metadata: Metadata = { title: 'Einstellungen' }
 
 export default async function SettingsPage() {
-  await requirePermission(Resource.SETTINGS, Action.READ)
+  await requirePagePermission(Resource.SETTINGS, Action.READ)
 
   const [settings, sequences] = await Promise.all([
     getSettings(),

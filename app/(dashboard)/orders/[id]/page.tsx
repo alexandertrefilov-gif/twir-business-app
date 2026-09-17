@@ -13,7 +13,7 @@ import { OfferRichText } from '@/components/offers/OfferRichText'
 import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
 import { getBusinessProcessForOrder } from '@/lib/services/business-process.service'
 import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
-import { requirePermission } from '@/lib/auth/permissions'
+import { requirePagePermission } from '@/lib/auth/permissions'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
@@ -24,14 +24,14 @@ import { listProjectsForCustomer } from '@/lib/services/project.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  await requirePermission(Resource.ORDER, Action.READ)
+  await requirePagePermission(Resource.ORDER, Action.READ)
   try { const o = await getOrderById(id); return { title: o.orderNumber } }
   catch { return { title: 'Auftrag' } }
 }
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const user = await requirePermission(Resource.ORDER, Action.READ)
+  const user = await requirePagePermission(Resource.ORDER, Action.READ)
   let order
   try { order = await getOrderById(id) }
   catch { notFound() }

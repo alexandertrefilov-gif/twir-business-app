@@ -4,12 +4,12 @@ import { notFound }        from 'next/navigation'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { CustomerForm }    from '@/components/customers/CustomerForm'
 import { getCustomerById } from '@/lib/services/customer.service'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { updateCustomerAction } from '../../actions'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  await requirePermission(Resource.CUSTOMER, Action.READ)
+  await requirePagePermission(Resource.CUSTOMER, Action.READ)
 
   try {
     const c = await getCustomerById(id)
@@ -21,7 +21,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function EditCustomerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await requirePermission(Resource.CUSTOMER, Action.UPDATE)
+  await requirePagePermission(Resource.CUSTOMER, Action.UPDATE)
 
   let customer
   try {

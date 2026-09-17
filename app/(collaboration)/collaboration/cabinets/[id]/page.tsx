@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
 import { getGgaCabinetDetail, getGgaCabinetAuditHistory, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'
 import { getVisibleCollaborationMemberships } from '@/lib/services/collaboration-phase2.service'
 import { GGA_EX_ASSESSMENT_LABELS, GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS, formatGgaBetriebsstatusLabel, GGA_BETRIEBSSTATUS_BADGE_CLASS } from '@/lib/collaboration/cabinet-workflow'
@@ -11,7 +11,6 @@ import { GgaCabinetMeasureForm } from '@/components/collaboration/GgaCabinetMeas
 import { GgaCabinetChecklistTemplateButtons } from '@/components/collaboration/GgaCabinetChecklistTemplateButtons'
 import { GgaCabinetFreigabehistorie } from '@/components/collaboration/GgaCabinetFreigabehistorie'
 import { GgaCabinetDocumentVisibilityToggle } from '@/components/collaboration/GgaCabinetDocumentVisibilityToggle'
-import { NotFoundError } from '@/lib/auth/permissions'
 
 const taskStatusLabels: Record<string, string> = { TODO: 'Offen', IN_PROGRESS: 'In Arbeit', BLOCKED: 'Blockiert', DONE: 'Erledigt', SKIPPED: 'Übersprungen' }
 const priorityLabels: Record<string, string> = { URGENT: 'Dringend', HIGH: 'Hoch', MEDIUM: 'Mittel', LOW: 'Niedrig' }
@@ -47,8 +46,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
   try {
     cabinet = await getGgaCabinetDetail(id)
   } catch (error) {
-    if (error instanceof NotFoundError) notFound()
-    throw error
+    handleCollaborationPageError(error)
   }
 
   const [memberships, history] = await Promise.all([

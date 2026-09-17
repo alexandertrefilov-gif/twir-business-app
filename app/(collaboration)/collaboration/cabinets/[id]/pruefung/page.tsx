@@ -1,9 +1,8 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
 import { getGgaCabinetDetail, cabinetEditorRoles, GGA_CABINET_CHECKLIST_TEMPLATES } from '@/lib/services/gga-cabinet.service'
 import { editorRoles, approverRoles } from '@/lib/services/collaboration-phase2.service'
 import { GgaCabinetInspectionWizard } from '@/components/collaboration/GgaCabinetInspectionWizard'
-import { NotFoundError } from '@/lib/auth/permissions'
+import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
 
 function toDecimalString(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value)
@@ -18,8 +17,7 @@ export default async function GgaCabinetInspectionPage({ params }: { params: Pro
   try {
     cabinet = await getGgaCabinetDetail(id)
   } catch (error) {
-    if (error instanceof NotFoundError) notFound()
-    throw error
+    handleCollaborationPageError(error)
   }
 
   const abnahmeStage = cabinet.project.stages.find((s) => s.code === 'ABNAHME')

@@ -4,7 +4,7 @@ import Link               from 'next/link'
 import { notFound }       from 'next/navigation'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { getCustomerById } from '@/lib/services/customer.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { DeleteCustomerButton } from '@/components/customers/DeleteCustomerButton'
 import { CustomerBillingAddressActions } from '@/components/customers/CustomerBillingAddressActions'
@@ -16,7 +16,7 @@ import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/do
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
-  await requirePermission(Resource.CUSTOMER, Action.READ)
+  await requirePagePermission(Resource.CUSTOMER, Action.READ)
 
   try {
     const c = await getCustomerById(id)
@@ -28,7 +28,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await requirePermission(Resource.CUSTOMER, Action.READ)
+  await requirePagePermission(Resource.CUSTOMER, Action.READ)
 
   let customer
   try {

@@ -1,6 +1,6 @@
 import { PageHeader } from '@/components/shared/PageHeader'
 import { CustomerBillingAddressForm } from '@/components/customers/CustomerBillingAddressForm'
-import { Action, requirePermission, Resource } from '@/lib/auth/permissions'
+import { Action, requirePagePermission, Resource } from '@/lib/auth/permissions'
 import { getCustomerById } from '@/lib/services/customer.service'
 import { getCustomerBillingAddress } from '@/lib/services/customer-billing-address.service'
 import { getAddressCoUsers } from '@/lib/services/customer-address.service'
@@ -8,7 +8,7 @@ import { updateBillingAddressAction } from '../../actions'
 
 export default async function EditBillingAddressPage({ params }: { params: Promise<{ id: string; addressId: string }> }) {
   const { id, addressId } = await params
-  await requirePermission(Resource.CUSTOMER, Action.UPDATE)
+  await requirePagePermission(Resource.CUSTOMER, Action.UPDATE)
   const [customer, address] = await Promise.all([getCustomerById(id), getCustomerBillingAddress(id, addressId)])
   const sharedWith = await getAddressCoUsers(address.addressId, id)
   const defaults = {

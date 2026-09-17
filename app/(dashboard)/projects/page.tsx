@@ -1,12 +1,12 @@
 import Link from 'next/link'
-import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { listProjects } from '@/lib/services/project.service'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/types/enums'
 
 const fmt = (value: Date | null) => value ? new Intl.DateTimeFormat('de-DE').format(value) : '–'
 
 export default async function ProjectsPage({ searchParams }: { searchParams: Promise<{ search?: string; status?: string }> }) {
-  await requirePermission(Resource.PROJECT, Action.READ)
+  await requirePagePermission(Resource.PROJECT, Action.READ)
   const query = await searchParams
   const search = query.search ?? ''
   const status = (query.status ?? '') as ProjectStatus | ''
