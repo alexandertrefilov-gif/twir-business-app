@@ -16,6 +16,7 @@ export const Resource = {
   SERVICE_REPORT:  'service_report',
   INVOICE:         'invoice',
   PAYMENT:         'payment',
+  ACCOUNTING:      'accounting',
   DOCUMENT:        'document',
   AUDIT_LOG:       'audit_log',
   USER:            'user',
@@ -99,6 +100,9 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
   'payment:create':   ACCOUNTING_ROLES,
   'payment:read':     ACCOUNTING_ROLES,
   'payment:delete':   ACCOUNTING_ROLES,
+
+  // Buchhaltung — ausschließlich interne Finanzrollen
+  'accounting:read':  ACCOUNTING_ROLES,
 
   // Dokumente
   'document:create':  MANAGEMENT_ROLES,
