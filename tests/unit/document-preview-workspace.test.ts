@@ -43,4 +43,30 @@ describe('A4-Dokumentvorschau', () => {
     expect(componentSource).toContain('width: scaledWidth, height: scaledHeight')
     expect(componentSource).toContain("transformOrigin: 'top left'")
   })
+
+  it('trennt die normale Kartenansicht von der echten A4-Vorschau', () => {
+    const layoutStart = orderPageSource.indexOf('<BusinessDocumentLayout>')
+    const cardStart = orderPageSource.indexOf('<DocumentSectionCard')
+    const sidebarStart = orderPageSource.indexOf('<BusinessDocumentSidebar', cardStart)
+    const workflow = orderPageSource.indexOf('<BusinessProcessWorkflow')
+    expect(layoutStart).toBeGreaterThan(0)
+    expect(cardStart).toBeGreaterThan(layoutStart)
+    expect(sidebarStart).toBeGreaterThan(cardStart)
+    expect(workflow).toBeGreaterThan(sidebarStart)
+    expect(orderPageSource).not.toContain('<DocumentPreviewWorkspace>')
+    expect(orderPageSource.slice(cardStart, sidebarStart)).not.toContain('<BusinessProcessWorkflow')
+  })
+
+  it('bewahrt fachliche Dokumentdaten und unveränderte Workflow-Aufrufe', () => {
+    for (const value of ['Kunde', 'Auftragsdatum', 'Abgeschlossen', 'Angebotsbezug', 'Thema und Beschreibung', 'Positionen']) {
+      expect(orderPageSource).toContain(value)
+    }
+    expect(orderPageSource).toContain("currentDocument={{ type: 'order', id: order.id }}")
+    expect(orderPageSource).toContain('<OrderStatusActions')
+    expect(orderPageSource).toContain('processPermissions')
+    expect(orderPageSource).toContain('<BusinessDocumentLayout>')
+    expect(orderPageSource).toContain('<DocumentSectionCard')
+    expect(componentSource).toContain('data-document-viewport')
+    expect(componentSource).toContain('transform: `scale(${scale})`')
+  })
 })

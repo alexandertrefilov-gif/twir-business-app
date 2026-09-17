@@ -48,4 +48,26 @@ describe('verstellbares Dokumentlayout', () => {
     expect(layout).toContain('lg:flex')
     expect(layout).toContain('min-w-0')
   })
+
+  it.each([
+    'app/(dashboard)/offers/[id]/page.tsx',
+    'app/(dashboard)/offers/[id]/edit/page.tsx',
+    'app/(dashboard)/orders/[id]/page.tsx',
+    'app/(dashboard)/orders/[id]/edit/page.tsx',
+    'app/(dashboard)/customers/[id]/page.tsx',
+  ])('%s verwendet das zentrale Split-Layout', (path) => {
+    expect(source(path)).toContain('<BusinessDocumentLayout>')
+  })
+
+  it('bewahrt Sticky-Sidebar und interne Tabellen-Overflows', () => {
+    const layout = source('components/documents/BusinessDocumentLayout.tsx')
+    expect(layout).toContain('lg:sticky lg:top-[calc(var(--document-sticky-header-height,0px)+1rem)]')
+    expect(layout).toContain('lg:overflow-y-auto')
+    for (const path of [
+      'app/(dashboard)/offers/[id]/page.tsx',
+      'app/(dashboard)/orders/[id]/page.tsx',
+    ]) {
+      expect(source(path)).toContain('overflow-x-auto')
+    }
+  })
 })

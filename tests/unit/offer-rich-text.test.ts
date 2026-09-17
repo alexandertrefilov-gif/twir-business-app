@@ -6,6 +6,10 @@ import {
   isValidOfferTextValue,
   offerIntroToOrderDescription,
   offerProjectDesignation,
+  offerToOrderDescription,
+  orderDescriptionWithOfferFallback,
+  splitOfferTextAtPositions,
+  removeOrderContentCard,
   richTextToPlainText,
   type OfferTextDocument,
 } from '@/lib/offers/rich-text'
@@ -269,6 +273,36 @@ describe('strukturierte Angebotstexte', () => {
     expect(offerIntroToOrderDescription('A'.repeat(3_001))).toHaveLength(3_000)
   })
 
+  it('übernimmt alle Angebotskarten samt Positionsanker strukturiert in den Auftrag', () => {
+    const intro = encodeOfferText({
+      version: 1,
+      sections: [{ ...document.sections[0], id: 'intro' }],
+    })
+    const outro = encodeOfferText({
+      version: 1,
+      sections: [{ ...document.sections[0], id: 'outro', title: 'Schlusstext' }],
+    })
+    const value = offerToOrderDescription(intro, outro, true)
+    const decoded = decodeOfferText(value)
+
+    expect(decoded.sections.map((section) => section.id)).toEqual(['intro', 'outro'])
+    expect(decoded.positionsAfterSectionId).toBe('intro')
+    expect(decoded.positionsEnabled).toBe(true)
+    expect(splitOfferTextAtPositions(value)).toMatchObject({ positionsEnabled: true })
+    expect(decodeOfferText(splitOfferTextAtPositions(value).before).sections[0]?.id).toBe('intro')
+    expect(decodeOfferText(splitOfferTextAtPositions(value).after).sections[0]?.id).toBe('outro')
+    expect(orderDescriptionWithOfferFallback('Alter gekürzter Text', { introText: intro, outroText: outro }, true)).toBe(value)
+    expect(orderDescriptionWithOfferFallback(value, { introText: 'anderer Text' }, true)).toBe(value)
+
+    const withoutBefore = decodeOfferText(removeOrderContentCard(value, 'descriptionBefore'))
+    const withoutAfter = decodeOfferText(removeOrderContentCard(value, 'descriptionAfter'))
+    const withoutPositions = decodeOfferText(removeOrderContentCard(value, 'positions'))
+    expect(withoutBefore.sections.map((section) => section.id)).toEqual(['outro'])
+    expect(withoutBefore.positionsAfterSectionId).toBeNull()
+    expect(withoutAfter.sections.map((section) => section.id)).toEqual(['intro'])
+    expect(withoutAfter.positionsAfterSectionId).toBe('intro')
+    expect(withoutPositions.positionsEnabled).toBe(false)
+  })
 
   it('weist Script-Knoten und freie Attribute serverseitig zurück', () => {
     const malicious = `TWIR_OFFER_RICH_TEXT_V1:${JSON.stringify({

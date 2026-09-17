@@ -4,6 +4,10 @@
 // calcItemAmounts / calcOfferTotals aus offer.schema.ts wiederverwenden.
 
 import { z } from 'zod'
+import {
+  canonicalizeOfferTextValue,
+  isValidOfferTextValue,
+} from '@/lib/offers/rich-text'
 
 // ── Re-export shared calc helpers ────────────────────────────
 export {
@@ -30,7 +34,10 @@ export type OrderItemInput = z.infer<typeof OrderItemSchema>
 export const OrderCreateSchema = z.object({
   customerId:  z.string().uuid('Bitte Kunde auswählen'),
   title:       z.string().min(1, 'Bezeichnung ist erforderlich').max(200),
-  description: z.string().max(3000).optional().nullable(),
+  description: z.preprocess(
+    (value) => typeof value === 'string' ? canonicalizeOfferTextValue(value) : value,
+    z.string().max(500_000).refine(isValidOfferTextValue, 'Textformat ist ungültig'),
+  ).optional().nullable(),
   orderDate:   z.coerce.date(),
   startDate:   z.coerce.date().optional().nullable(),
   endDate:     z.coerce.date().optional().nullable(),

@@ -1,7 +1,8 @@
 'use client'
 // components/shared/ConfirmDialog.tsx
 
-import { useState, useTransition } from 'react'
+import { useId, useRef, useState, useTransition } from 'react'
+import { createPortal } from 'react-dom'
 
 interface ConfirmDialogProps {
   trigger:     React.ReactNode
@@ -22,20 +23,43 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
+  const submittingRef = useRef(false)
+  const titleId = useId()
+  const descriptionId = useId()
 
   function handleConfirm() {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    // Die Bestätigung ist abgeschlossen; der Dialog darf die Dokumentseite
+    // während einer längeren Server Action (z. B. Archivierung) nicht sperren.
+    setOpen(false)
     startTransition(async () => {
-      await onConfirm()
-      setOpen(false)
+      try {
+        await onConfirm()
+      } finally {
+        submittingRef.current = false
+      }
     })
   }
 
   return (
     <>
-      <span onClick={() => setOpen(true)}>{trigger}</span>
+      <span
+        aria-busy={isPending}
+        className={isPending ? 'pointer-events-none opacity-70' : undefined}
+        onClick={() => !isPending && !submittingRef.current && setOpen(true)}
+      >
+        {trigger}
+      </span>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {open && createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={descriptionId}
+        >
           {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
@@ -44,8 +68,8 @@ export function ConfirmDialog({
 
           {/* Dialog */}
           <div className="relative bg-white rounded-xl border border-stone-200 shadow-2xl w-full max-w-sm mx-4 p-6">
-            <h2 className="text-base font-600 text-foreground mb-2">{title}</h2>
-            <p className="text-sm text-muted-foreground mb-6">{description}</p>
+            <h2 id={titleId} className="text-base font-600 text-foreground mb-2">{title}</h2>
+            <p id={descriptionId} className="text-sm text-muted-foreground mb-6">{description}</p>
 
             <div className="flex gap-2 justify-end">
               <button
@@ -80,7 +104,8 @@ export function ConfirmDialog({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   )

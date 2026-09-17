@@ -213,6 +213,76 @@ export function offerToOrderDescription(
   })
 }
 
+export function orderDescriptionWithOfferFallback(
+  description: string | null | undefined,
+  offer: { introText?: string | null; outroText?: string | null } | null | undefined,
+  hasPositions: boolean,
+): string | null {
+  if (description?.startsWith(OFFER_RICH_TEXT_PREFIX)) return description
+  if (offer?.introText || offer?.outroText) {
+    return offerToOrderDescription(offer.introText, offer.outroText, hasPositions)
+  }
+  return description ?? null
+}
+
+export function splitOfferTextAtPositions(value?: string | null): {
+  before: string | null
+  after: string | null
+  positionsEnabled: boolean
+} {
+  if (!value) return { before: null, after: null, positionsEnabled: true }
+  const document = decodeOfferText(value)
+  if (document.positionsAfterSectionId === undefined) {
+    return { before: value, after: null, positionsEnabled: true }
+  }
+  const splitIndex = document.positionsAfterSectionId === null
+    ? 0
+    : Math.max(0, document.sections.findIndex((section) => section.id === document.positionsAfterSectionId) + 1)
+  const encodeSections = (sections: OfferTextSection[]) => sections.length > 0
+    ? encodeOfferText({ version: 1, sections })
+    : null
+  return {
+    before: encodeSections(document.sections.slice(0, splitIndex)),
+    after: encodeSections(document.sections.slice(splitIndex)),
+    positionsEnabled: document.positionsEnabled !== false,
+  }
+}
+
+export type OrderContentCard = 'descriptionBefore' | 'positions' | 'descriptionAfter'
+
+export function removeOrderContentCard(
+  value: string | null | undefined,
+  card: OrderContentCard,
+): string | null {
+  if (!value) return null
+  const document = decodeOfferText(value)
+  if (document.positionsAfterSectionId === undefined) {
+    if (card === 'descriptionBefore') return null
+    if (card === 'positions') return encodeOfferText({
+      ...document,
+      positionsEnabled: false,
+      positionsAfterSectionId: document.sections[0]?.id ?? null,
+    })
+    return value
+  }
+  const splitIndex = document.positionsAfterSectionId === null
+    ? 0
+    : Math.max(0, document.sections.findIndex((section) => section.id === document.positionsAfterSectionId) + 1)
+  if (card === 'positions') {
+    return encodeOfferText({ ...document, positionsEnabled: false })
+  }
+  const sections = card === 'descriptionBefore'
+    ? document.sections.slice(splitIndex)
+    : document.sections.slice(0, splitIndex)
+  return encodeOfferText({
+    ...document,
+    sections,
+    positionsAfterSectionId: card === 'descriptionBefore'
+      ? null
+      : sections.at(-1)?.id ?? null,
+  })
+}
+
 export function getTableColumnPercentages(table: RichTextNode): number[] {
   return calculateTableColumnPercentages((table.content ?? []).map((row) =>
     (row.content ?? []).map((cell) => ({

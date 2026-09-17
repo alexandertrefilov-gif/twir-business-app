@@ -5,6 +5,8 @@ import { OrderForm }      from '@/components/orders/OrderForm'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }         from '@/lib/db/prisma'
 import { createOrderAction } from '../actions'
+import { BusinessDocumentLayout, BusinessDocumentSidebar, BusinessWorkflowPlaceholder } from '@/components/documents/BusinessDocumentLayout'
+import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID } from '@/components/documents/DocumentFormWorkflowActions'
 
 export const metadata: Metadata = { title: 'Neuer Auftrag' }
 
@@ -21,16 +23,27 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Pro
   return (
     <div>
       <PageHeader
+        sticky
         title="Neuer Auftrag"
         breadcrumbs={[{ label: 'Aufträge', href: '/orders' }, { label: 'Neu' }]}
       />
-      <div className="p-6 max-w-3xl">
-        <OrderForm
-          mode="create"
-          customers={customers}
-          defaults={{ customerId: query.customer }}
-          action={createOrderAction}
-        />
+      <div className="p-4 sm:p-6">
+        <BusinessDocumentLayout>
+          <div className="min-w-0">
+            <OrderForm
+              mode="create"
+              customers={customers}
+              defaults={{ customerId: query.customer }}
+              action={createOrderAction}
+            />
+          </div>
+          <BusinessDocumentSidebar sticky>
+            <BusinessWorkflowPlaceholder message="Der Geschäftsvorgang wird nach dem Anlegen des Auftrags angezeigt.">
+              <p className="mb-3 text-sm font-600 text-foreground">Status: Neuer Auftrag</p>
+              <div id={DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID} />
+            </BusinessWorkflowPlaceholder>
+          </BusinessDocumentSidebar>
+        </BusinessDocumentLayout>
       </div>
     </div>
   )

@@ -144,6 +144,23 @@ export const OrderStatus = {
 } as const
 export type OrderStatus = (typeof OrderStatus)[keyof typeof OrderStatus]
 
+export const OrderConfirmationType = {
+  SIGNED_DOCUMENT: 'SIGNED_DOCUMENT',
+  EMAIL: 'EMAIL',
+  VERBAL: 'VERBAL',
+  CUSTOMER_PURCHASE_ORDER: 'CUSTOMER_PURCHASE_ORDER',
+  NOT_REQUIRED: 'NOT_REQUIRED',
+} as const
+export type OrderConfirmationType = (typeof OrderConfirmationType)[keyof typeof OrderConfirmationType]
+
+export const ORDER_CONFIRMATION_TYPE_LABELS: Record<OrderConfirmationType, string> = {
+  SIGNED_DOCUMENT: 'Unterschriebenes Dokument',
+  EMAIL: 'Per E-Mail bestätigt',
+  VERBAL: 'Mündlich / telefonisch bestätigt',
+  CUSTOMER_PURCHASE_ORDER: 'Durch Kundenbestellung bestätigt',
+  NOT_REQUIRED: 'Keine separate Bestätigung erforderlich',
+}
+
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   OPEN:        'Offen',
   IN_PROGRESS: 'In Bearbeitung',

@@ -2,8 +2,6 @@
 import type { Metadata }      from 'next'
 import { notFound }           from 'next/navigation'
 import Link                   from 'next/link'
-import { PageHeader }         from '@/components/shared/PageHeader'
-import { OrderStatusBadge }   from '@/components/orders/OrderStatusBadge'
 import { OrderStatusActions } from '@/components/orders/OrderStatusActions'
 import { getOrderById }       from '@/lib/services/order.service'
 import { hasPermission, Resource, Action } from '@/lib/auth/permissions'
@@ -11,23 +9,36 @@ import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import type { OrderStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
-import { getSupplierNumber } from '@/lib/services/settings.service'
+import { OfferRichText } from '@/components/offers/OfferRichText'
+import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
+import { getBusinessProcessForOrder } from '@/lib/services/business-process.service'
+import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
+import { requirePermission } from '@/lib/auth/permissions'
+import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
+import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
+import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
+import { orderDescriptionWithOfferFallback, splitOfferTextAtPositions } from '@/lib/offers/rich-text'
+import { OrderContentCardActions } from '@/components/orders/OrderContentCardActions'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
+  await requirePermission(Resource.ORDER, Action.READ)
   try { const o = await getOrderById(id); return { title: o.orderNumber } }
   catch { return { title: 'Auftrag' } }
 }
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  const user = await requirePermission(Resource.ORDER, Action.READ)
   let order
   try { order = await getOrderById(id) }
   catch { notFound() }
 
-  const [canEdit, canDelete] = await Promise.all([
+  const [canEdit, canDelete, process, processPermissions] = await Promise.all([
     hasPermission(Resource.ORDER, Action.UPDATE),
     hasPermission(Resource.ORDER, Action.DELETE),
+    getBusinessProcessForOrder(id, user.userId, user.role),
+    getBusinessProcessPermissions(),
   ])
 
   const items = order.items.map((i) => ({
@@ -43,79 +54,74 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const totalNet   = order.totalNet.toNumber()
   const totalGross = order.totalGross.toNumber()
   const fmt        = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const supplierNumber = await getSupplierNumber()
+  const content = splitOfferTextAtPositions(orderDescriptionWithOfferFallback(
+    order.description,
+    order.offer,
+    items.length > 0,
+  ))
 
   return (
     <div>
-      <PageHeader
+      <BusinessDocumentHeader
         title={order.orderNumber}
-        description={order.title ?? undefined}
-        supplierNumber={supplierNumber}
-        documentType="Auftrag"
-        breadcrumbs={[{ label: 'Aufträge', href: '/orders' }, { label: order.orderNumber }]}
-        actions={
-          <div className="flex items-center gap-2">
-            <OrderStatusBadge status={order.status} />
-            {order.status === 'OPEN' && canEdit && (
-              <Link href={`/orders/${order.id}/edit`}
-                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors">
-                Bearbeiten
+        description={order.title}
+        titleId="order-detail-title"
+        detailsLabel="Kunden- und Auftragsdaten"
+      >
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
+            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
+            <dd className="mt-0.5">
+              <Link href={`/customers/${order.customerId}`} className="text-sm font-600 text-blue-700 hover:underline">
+                {order.customer.name}
               </Link>
-            )}
+              {(order.customer.street || order.customer.city) && (
+                <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
+                  {order.customer.street} {order.customer.houseNumber}<br />
+                  {order.customer.postalCode} {order.customer.city}
+                </address>
+              )}
+            </dd>
           </div>
-        }
-      />
+          <MetaItem label="Auftragsdatum"
+            value={format(new Date(order.orderDate), 'dd. MMMM yyyy', { locale: de })} />
+          {order.offer && (
+            <div>
+              <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Angebotsbezug</dt>
+              <dd className="mt-0.5">
+                <Link href={`/offers/${order.offer.id}`} className="text-sm text-blue-700 hover:underline mono">
+                  {order.offer.offerNumber}
+                </Link>
+              </dd>
+            </div>
+          )}
+          {order.startDate && <MetaItem label="Geplanter Start" value={format(new Date(order.startDate), 'dd.MM.yyyy', { locale: de })} />}
+          {order.endDate && <MetaItem label="Geplantes Ende" value={format(new Date(order.endDate), 'dd.MM.yyyy', { locale: de })} />}
+          {order.completedAt && <MetaItem label="Abgeschlossen am" value={format(new Date(order.completedAt), 'dd.MM.yyyy', { locale: de })} />}
+        </dl>
+      </BusinessDocumentHeader>
 
-      <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="p-4 sm:p-6">
+        <BusinessDocumentLayout>
 
           {/* ── Main ── */}
-          <div className="lg:col-span-2 space-y-4">
-
-            {/* Customer + meta */}
-            <div className="card-base p-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                <div>
-                  <p className="text-[11px] font-600 uppercase tracking-wider text-muted-foreground mb-2">Kunde</p>
-                  <Link href={`/customers/${order.customerId}`} className="font-600 text-sm text-blue-700 hover:underline">
-                    {order.customer.name}
-                  </Link>
-                  {(order.customer.street || order.customer.city) && (
-                    <address className="not-italic text-sm text-muted-foreground mt-1 leading-5">
-                      {order.customer.street} {order.customer.houseNumber}<br />
-                      {order.customer.postalCode} {order.customer.city}
-                    </address>
-                  )}
-                </div>
-                <div className="space-y-3">
-                  <MetaItem label="Auftragsdatum"
-                    value={format(new Date(order.orderDate), 'dd. MMMM yyyy', { locale: de })} />
-                  {order.startDate && <MetaItem label="Start" value={format(new Date(order.startDate), 'dd.MM.yyyy', { locale: de })} />}
-                  {order.endDate   && <MetaItem label="Ende"  value={format(new Date(order.endDate),   'dd.MM.yyyy', { locale: de })} />}
-                  {order.completedAt && <MetaItem label="Abgeschlossen" value={format(new Date(order.completedAt), 'dd.MM.yyyy', { locale: de })} />}
-                  {order.offer && (
-                    <div>
-                      <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Aus Angebot</p>
-                      <Link href={`/offers/${order.offer.id}`} className="text-sm text-blue-700 hover:underline mono">
-                        {order.offer.offerNumber}
-                      </Link>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {order.description && (
-                <div className="mt-4 pt-4 border-t border-stone-100">
-                  <p className="text-sm text-foreground whitespace-pre-wrap">{order.description}</p>
-                </div>
-              )}
-            </div>
+          <div className="min-w-0 space-y-4">
+            {content.before && (
+              <DocumentSectionCard
+                title="Thema und Beschreibung"
+                actions={order.status === 'OPEN' && canEdit ? <OrderContentCardActions orderId={order.id} card="descriptionBefore" /> : undefined}
+              >
+                <OfferRichText value={content.before} />
+              </DocumentSectionCard>
+            )}
 
             {/* Items */}
-            {items.length > 0 && (
-              <div className="card-base overflow-hidden">
-                <div className="px-5 py-3 border-b border-stone-100">
-                  <h2 className="text-sm font-600">Positionen ({items.length})</h2>
-                </div>
+            {content.positionsEnabled && items.length > 0 && (
+              <DocumentSectionCard
+                title={`Positionen (${items.length})`}
+                actions={order.status === 'OPEN' && canEdit ? <OrderContentCardActions orderId={order.id} card="positions" /> : undefined}
+                flush
+              >
                 <div className="overflow-x-auto">
                   <table className="data-table">
                     <thead>
@@ -144,7 +150,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     </tbody>
                   </table>
                 </div>
-                <div className="px-5 py-3 border-t border-stone-100 bg-stone-50/50 flex justify-end">
+                <div className="flex justify-end border-t border-stone-200 bg-stone-50/50 px-3 py-3">
                   <div className="w-64 space-y-1">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Netto</span>
@@ -156,86 +162,44 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     </div>
                   </div>
                 </div>
-              </div>
+              </DocumentSectionCard>
             )}
 
-            {/* Service reports */}
-            <div className="card-base overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-stone-100">
-                <h2 className="text-sm font-600">
-                  Leistungsnachweise ({order.serviceReports.length})
-                </h2>
-                <Link href={`/services/new?order=${order.id}`}
-                  className="inline-flex items-center gap-1.5 h-7 px-3 rounded border border-blue-200 bg-blue-50 text-blue-700 text-xs font-500 hover:bg-blue-100 transition-colors">
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
-                  Leistung erfassen
-                </Link>
-              </div>
-              {order.serviceReports.length === 0 ? (
-                <p className="text-sm text-muted-foreground p-5">Noch keine Leistungen erfasst.</p>
-              ) : (
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Nummer</th>
-                      <th>Bezeichnung</th>
-                      <th>Datum</th>
-                      <th>Erfasst von</th>
-                      <th className="num text-right">Positionen</th>
-                      <th className="num text-right">Netto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {order.serviceReports.map((r) => (
-                      <tr key={r.id}>
-                        <td>
-                          <Link href={`/services/${r.id}`} className="mono text-xs text-blue-700 hover:underline">
-                            {r.reportNumber}
-                          </Link>
-                        </td>
-                        <td className="text-sm">{r.title ?? <span className="text-muted-foreground italic">Kein Titel</span>}</td>
-                        <td className="mono text-xs">
-                          {format(new Date(r.reportDate), 'dd.MM.yyyy', { locale: de })}
-                        </td>
-                        <td className="text-sm text-muted-foreground">
-                          {r.createdBy.firstName} {r.createdBy.lastName}
-                        </td>
-                        <td className="num text-right mono text-xs">{r._count.items}</td>
-                        <td className="num text-right mono text-sm font-500">
-                          {r.totalNet.toNumber().toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
+            {content.after && (
+              <DocumentSectionCard
+                title="Weitere Angebotsinhalte"
+                actions={order.status === 'OPEN' && canEdit ? <OrderContentCardActions orderId={order.id} card="descriptionAfter" /> : undefined}
+              >
+                <OfferRichText value={content.after} />
+              </DocumentSectionCard>
+            )}
           </div>
 
           {/* ── Sidebar ── */}
-          <div className="space-y-4">
-            <div className="card-base p-4">
-              <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground mb-3">Workflow</p>
-              <OrderStatusActions
+          <BusinessDocumentSidebar sticky>
+            <BusinessProcessWorkflow
+              process={process}
+              currentDocument={{ type: 'order', id: order.id }}
+              activeStage="order"
+              permissions={processPermissions}
+              orderAction={<OrderStatusActions
                 orderId={order.id}
                 status={order.status as OrderStatus}
                 orderNumber={order.orderNumber}
                 canEdit={canEdit}
                 canDelete={canDelete && isTestDeleteEnabled()}
-              />
-            </div>
+              />}
+            />
             <div className="card-base p-4 space-y-3">
               <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground">Details</p>
-              <MetaItem label="Auftragsnummer" value={order.orderNumber} mono />
               <MetaItem label="Angelegt von"
                 value={`${order.createdBy.firstName} ${order.createdBy.lastName}`} />
               <MetaItem label="Angelegt am"
                 value={format(new Date(order.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
             </div>
-          </div>
+          </BusinessDocumentSidebar>
 
-        </div>
+        </BusinessDocumentLayout>
       </div>
     </div>
   )

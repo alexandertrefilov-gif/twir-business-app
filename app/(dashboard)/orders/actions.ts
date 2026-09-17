@@ -12,7 +12,10 @@ import {
   updateOrder,
   changeOrderStatus,
   deleteOrder,
+  removeOrderContentCard,
+  markOrderSent,
 } from '@/lib/services/order.service'
+import type { OrderContentCard } from '@/lib/offers/rich-text'
 import type { OrderStatus } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 
@@ -113,6 +116,22 @@ export async function updateOrderAction(
   redirect(`/orders/${orderId}`)
 }
 
+export async function removeOrderContentCardAction(
+  orderId: string,
+  card: OrderContentCard,
+): Promise<ActionState> {
+  await requirePermission(Resource.ORDER, Action.UPDATE)
+  const { userId, userEmail } = await getActor()
+  try {
+    await removeOrderContentCard(orderId, card, userId, userEmail)
+    revalidatePath('/orders')
+    revalidatePath(`/orders/${orderId}`)
+    return { success: true }
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : 'Karte konnte nicht entfernt werden' }
+  }
+}
+
 // ── STATUS CHANGE ─────────────────────────────────────────────
 
 export async function changeOrderStatusAction(
@@ -129,6 +148,19 @@ export async function changeOrderStatusAction(
     return { success: true }
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
+  }
+}
+
+export async function markOrderSentAction(orderId: string): Promise<ActionState> {
+  await requirePermission(Resource.ORDER, Action.UPDATE)
+  const { userId, userEmail } = await getActor()
+  try {
+    await markOrderSent(orderId, userId, userEmail)
+    revalidatePath(`/orders/${orderId}`)
+    revalidatePath('/orders')
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Versandstatus konnte nicht gespeichert werden.' }
   }
 }
 

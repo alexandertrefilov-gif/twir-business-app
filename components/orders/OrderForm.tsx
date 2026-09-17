@@ -1,10 +1,11 @@
 'use client'
 // components/orders/OrderForm.tsx
 
-import { useActionState, useMemo, useState } from 'react'
+import { useActionState, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { useRouter }   from 'next/navigation'
-import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
 import type { ActionState } from '@/app/(dashboard)/orders/actions'
+import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEditor'
+import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
 
 interface CustomerOption { id: string; name: string; number: string }
 
@@ -15,6 +16,7 @@ interface ItemRow {
   unit:        string
   unitPrice:   string
   taxRate:     string
+  notes:       string
 }
 
 interface OrderFormProps {
@@ -38,16 +40,16 @@ const UNITS    = ['Stk.', 'Std.', 'Psch.', 'kg', 't', 'm', 'm²', 'm³', 'l', 'k
 const TAX_OPTS = [{ value: '19', label: '19 %' }, { value: '7', label: '7 %' }, { value: '0', label: '0 %' }]
 
 function newRow(): ItemRow {
-  return { _key: crypto.randomUUID(), description: '', quantity: '1', unit: 'Stk.', unitPrice: '', taxRate: '19' }
+  return { _key: crypto.randomUUID(), description: '', quantity: '1', unit: 'Stk.', unitPrice: '', taxRate: '19', notes: '' }
 }
 const todayStr = () => new Date().toISOString().slice(0, 10)
 const INIT: ActionState = {}
 
 export function OrderForm({ mode, customers, defaults = {}, action, lockCustomer }: OrderFormProps) {
-  const [state, formAction] = useActionState(action, INIT)
+  const [state, formAction, isPending] = useActionState(action, INIT)
   const router    = useRouter()
+  const formRef = useRef<HTMLFormElement>(null)
   const [items, setItems] = useState<ItemRow[]>(defaults.items ?? [])
-  const [showItems, setShowItems] = useState((defaults.items?.length ?? 0) > 0)
 
   const computed = useMemo(() => items.map((r) => {
     const net = Math.round((parseFloat(r.quantity) || 0) * (parseFloat(r.unitPrice) || 0) * 100) / 100
@@ -61,20 +63,21 @@ export function OrderForm({ mode, customers, defaults = {}, action, lockCustomer
   }
 
   const serialized = JSON.stringify(
-    showItems ? items.map((r, i) => ({
+    items.map((r, i) => ({
       position:    i + 1,
       description: r.description,
       quantity:    parseFloat(r.quantity)  || 0,
       unit:        r.unit,
       unitPrice:   parseFloat(r.unitPrice) || 0,
       taxRate:     parseFloat(r.taxRate)   || 0,
-    })) : [],
+      notes:       r.notes || null,
+    })),
   )
 
   const fe = state.fieldErrors ?? {}
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form ref={formRef} action={formAction} className="space-y-4">
       <input type="hidden" name="itemsJson" value={serialized} />
 
       {state.error && (
@@ -131,96 +134,114 @@ export function OrderForm({ mode, customers, defaults = {}, action, lockCustomer
         </div>
       </div>
 
-      {/* ── Beschreibung ── */}
-      <div className="form-section">
-        <h2 className="form-section-title">Beschreibung</h2>
-        <textarea name="description" rows={3}
-          defaultValue={defaults.description ?? ''}
-          placeholder="Interne Beschreibung des Auftragsumfangs …"
-          className="w-full px-3 py-2 rounded-md border border-stone-200 bg-white text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent resize-none" />
-      </div>
-
-      {/* ── Optional line items ── */}
-      <div className="form-section">
-        <div className="flex items-center justify-between pb-3 border-b border-stone-100 mb-4">
-          <div>
-            <h2 className="text-sm font-600 text-foreground">Positionen</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Optional — werden aus dem Angebot übernommen oder hier manuell erfasst</p>
-          </div>
-          <button type="button" onClick={() => { setShowItems((v) => !v); if (!showItems) setItems([newRow()]) }}
-            className="text-xs text-blue-700 hover:underline">
-            {showItems ? 'Ausblenden' : 'Positionen hinzufügen'}
-          </button>
-        </div>
-
-        {showItems && (
-          <>
-            <div className="hidden md:grid grid-cols-[2fr_80px_90px_100px_70px_90px_32px] gap-2 px-1 mb-1">
-              {['Beschreibung *', 'Menge', 'Einheit', 'Einzelpreis', 'MwSt.', 'Netto', ''].map((h) => (
-                <span key={h} className="text-[10px] font-600 uppercase tracking-wider text-muted-foreground">{h}</span>
-              ))}
-            </div>
-            <div className="space-y-2">
-              {computed.map((item, idx) => (
-                <div key={item._key} className="grid grid-cols-1 md:grid-cols-[2fr_80px_90px_100px_70px_90px_32px] gap-2 items-center p-3 md:p-0 rounded md:rounded-none bg-stone-50 md:bg-transparent border border-stone-100 md:border-none">
-                  <input type="text" value={item.description} onChange={(e) => upd(item._key, 'description', e.target.value)}
-                    placeholder="Leistung …"
-                    className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
-                  <input type="number" value={item.quantity} onChange={(e) => upd(item._key, 'quantity', e.target.value)}
-                    min="0.001" step="0.001"
-                    className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm text-right mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
-                  <select value={item.unit} onChange={(e) => upd(item._key, 'unit', e.target.value)}
-                    className="w-full h-9 px-2 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
-                    {UNITS.map((u) => <option key={u}>{u}</option>)}
-                  </select>
-                  <div className="relative">
-                    <input type="number" value={item.unitPrice} onChange={(e) => upd(item._key, 'unitPrice', e.target.value)}
-                      min="0" step="0.01" placeholder="0,00"
-                      className="w-full h-9 pl-3 pr-6 rounded-md border border-stone-200 bg-white text-sm text-right mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
-                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">€</span>
-                  </div>
-                  <select value={item.taxRate} onChange={(e) => upd(item._key, 'taxRate', e.target.value)}
-                    className="w-full h-9 px-2 rounded-md border border-stone-200 bg-white text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
-                    {TAX_OPTS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
-                  <div className="h-9 px-3 rounded-md bg-stone-50 border border-stone-100 flex items-center justify-end">
-                    <span className="text-sm mono">{item.net.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
-                  </div>
-                  <button type="button" onClick={() => setItems((p) => p.filter((r) => r._key !== item._key))}
-                    disabled={items.length <= 1}
-                    className="w-8 h-8 flex items-center justify-center rounded text-stone-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 transition-colors">
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between mt-4 pt-3 border-t border-stone-100">
-              <button type="button" onClick={() => setItems((p) => [...p, newRow()])}
-                className="inline-flex items-center gap-1.5 h-7 px-3 rounded border border-blue-200 bg-blue-50 text-blue-700 text-xs font-500 hover:bg-blue-100 transition-colors">
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
-                Zeile hinzufügen
-              </button>
-              <span className="text-sm mono font-500">
-                Netto: {totalNet.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
-              </span>
-            </div>
-          </>
+      <section id="order-content-cards" className="min-w-0 scroll-mt-4">
+        {lockCustomer && (
+          <p className="mb-4 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+            Der Inhalt wurde vollständig aus dem Angebot übernommen. Nicht benötigte Text- und Positionskarten können einzeln entfernt werden.
+          </p>
         )}
-      </div>
-
-      {/* ── Actions ── */}
-      <div className="flex items-center justify-end gap-3 pb-6">
-        <button type="button" onClick={() => router.back()}
-          className="h-9 px-4 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors">
-          Abbrechen
-        </button>
-        <FormSubmitButton
-          idleLabel={mode === 'create' ? 'Auftrag anlegen' : 'Änderungen speichern'}
-          pendingLabel={mode === 'create' ? 'Wird angelegt…' : 'Wird gespeichert…'}
-          className="h-9 px-5 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-sm font-500 disabled:opacity-50 transition-colors"
+        <RichTextSectionsEditor
+          name="description"
+          label="Auftragsumfang"
+          defaultValue={defaults.description}
+          placeholder="Auftragsumfang beschreiben …"
+          removableSections
+          documentLayout
+          embeddedPositions={(
+            <OrderPositionsEditor
+              computed={computed}
+              items={items}
+              totalNet={totalNet}
+              updateItem={upd}
+              setItems={setItems}
+            />
+          )}
+          embeddedPositionsHasData={items.length > 0}
+          onEmbeddedPositionsRemoved={() => setItems([])}
         />
-      </div>
+      </section>
+
+      <DocumentFormWorkflowActions
+        formRef={formRef}
+        isPending={isPending}
+        error={state.error}
+        targetId={mode === 'create' ? DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID : undefined}
+        idleLabel={mode === 'create' ? 'Auftrag anlegen' : 'Änderungen speichern'}
+        pendingLabel={mode === 'create' ? 'Wird angelegt…' : 'Wird gespeichert…'}
+        onCancel={() => router.back()}
+      />
     </form>
+  )
+}
+
+function OrderPositionsEditor({
+  computed,
+  items,
+  totalNet,
+  updateItem,
+  setItems,
+}: {
+  computed: Array<ItemRow & { net: number }>
+  items: ItemRow[]
+  totalNet: number
+  updateItem: (key: string, field: keyof ItemRow, value: string) => void
+  setItems: Dispatch<SetStateAction<ItemRow[]>>
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="mb-3 text-xs text-muted-foreground">Aus dem Angebot übernommen oder hier manuell erfasst.</p>
+      <div className="mb-1 hidden gap-2 px-1 md:grid md:grid-cols-[minmax(180px,2fr)_80px_90px_100px_70px_90px_32px]">
+        {['Beschreibung *', 'Menge', 'Einheit', 'Einzelpreis', 'MwSt.', 'Netto', ''].map((heading) => (
+          <span key={heading} className="text-[10px] font-600 uppercase tracking-wider text-muted-foreground">{heading}</span>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {computed.map((item) => (
+          <div key={item._key} className="grid grid-cols-1 items-start gap-2 rounded border border-stone-100 bg-stone-50 p-3 md:grid-cols-[minmax(180px,2fr)_80px_90px_100px_70px_90px_32px] md:rounded-none md:border-none md:bg-transparent md:p-0">
+            <div className="space-y-1.5">
+              <input
+                type="text"
+                value={item.description}
+                onChange={(event) => updateItem(item._key, 'description', event.target.value)}
+                placeholder="Leistung …"
+                className="h-9 w-full rounded-md border border-stone-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+              <input
+                type="text"
+                value={item.notes}
+                onChange={(event) => updateItem(item._key, 'notes', event.target.value)}
+                placeholder="Positionsnotiz (optional)"
+                maxLength={500}
+                className="h-8 w-full rounded-md border border-stone-200 bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600"
+              />
+            </div>
+            <input type="number" value={item.quantity} onChange={(event) => updateItem(item._key, 'quantity', event.target.value)} min="0.001" step="0.001" className="h-9 w-full rounded-md border border-stone-200 bg-white px-3 text-right text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-600" />
+            <select value={item.unit} onChange={(event) => updateItem(item._key, 'unit', event.target.value)} className="h-9 w-full rounded-md border border-stone-200 bg-white px-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600">
+              {UNITS.map((unit) => <option key={unit}>{unit}</option>)}
+            </select>
+            <div className="relative">
+              <input type="number" value={item.unitPrice} onChange={(event) => updateItem(item._key, 'unitPrice', event.target.value)} min="0" step="0.01" placeholder="0,00" className="h-9 w-full rounded-md border border-stone-200 bg-white pl-3 pr-6 text-right text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-600" />
+              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">€</span>
+            </div>
+            <select value={item.taxRate} onChange={(event) => updateItem(item._key, 'taxRate', event.target.value)} className="h-9 w-full rounded-md border border-stone-200 bg-white px-2 text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-600">
+              {TAX_OPTS.map((tax) => <option key={tax.value} value={tax.value}>{tax.label}</option>)}
+            </select>
+            <div className="flex h-9 items-center justify-end rounded-md border border-stone-100 bg-stone-50 px-3">
+              <span className="text-sm mono">{item.net.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <button type="button" onClick={() => setItems((current) => current.filter((row) => row._key !== item._key))} aria-label="Position entfernen" className="flex h-8 w-8 items-center justify-center rounded text-stone-400 transition-colors hover:bg-red-50 hover:text-red-600">
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex items-center justify-between border-t border-stone-100 pt-3">
+        <button type="button" onClick={() => setItems((current) => [...current, newRow()])} className="inline-flex h-7 items-center gap-1.5 rounded border border-blue-200 bg-blue-50 px-3 text-xs font-500 text-blue-700 hover:bg-blue-100">
+          <span aria-hidden>＋</span> Zeile hinzufügen
+        </button>
+        <span className="text-sm font-500 mono">Netto: {totalNet.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €</span>
+      </div>
+    </div>
   )
 }
 

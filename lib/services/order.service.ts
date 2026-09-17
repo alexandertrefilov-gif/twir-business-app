@@ -23,6 +23,8 @@ import {
 } from '@/lib/auth/permissions'
 import type { OrderCreateInput, OrderUpdateInput } from '@/lib/validators/order.schema'
 import { calcItemAmounts, calcOrderTotals } from '@/lib/validators/order.schema'
+import { removeOrderContentCard as removeContentCardValue, type OrderContentCard } from '@/lib/offers/rich-text'
+import { getCompanySnapshot } from '@/lib/services/settings.service'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -141,8 +143,15 @@ export async function getOrderById(id: string) {
   const order = await prisma.order.findUnique({
     where:   { id, deletedAt: null },
     include: {
-      customer:  true,
-      offer:     { select: { id: true, offerNumber: true } },
+      customer:  {
+        include: {
+          contacts: {
+            where: { deletedAt: null },
+            orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+          },
+        },
+      },
+      offer:     { select: { id: true, offerNumber: true, introText: true, outroText: true } },
       items:     { orderBy: { position: 'asc' } },
       createdBy: { select: { firstName: true, lastName: true } },
       serviceReports: {
@@ -150,6 +159,15 @@ export async function getOrderById(id: string) {
         include: {
           createdBy: { select: { firstName: true, lastName: true } },
           _count:    { select: { items: true } },
+        },
+      },
+      invoices: {
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          invoiceNumber: true,
+          invoiceDate: true,
+          status: true,
         },
       },
     },
@@ -296,6 +314,43 @@ export async function updateOrder(
   })
 }
 
+export async function removeOrderContentCard(
+  id: string,
+  card: OrderContentCard,
+  userId: string,
+  userEmail: string,
+): Promise<void> {
+  const existing = await prisma.order.findUnique({
+    where: { id, deletedAt: null },
+    select: { id: true, status: true, orderNumber: true, description: true },
+  })
+  if (!existing) throw new NotFoundError('Auftrag nicht gefunden')
+  if (existing.status !== OrderStatus.OPEN) {
+    throw new BusinessRuleError('Nur offene Aufträge können inhaltlich bearbeitet werden.')
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (card === 'positions') {
+      await tx.orderItem.deleteMany({ where: { orderId: id } })
+    }
+    await tx.order.update({
+      where: { id },
+      data: {
+        description: removeContentCardValue(existing.description, card),
+        ...(card === 'positions' && { totalNet: 0, totalTax: 0, totalGross: 0 }),
+      },
+    })
+    await buildAuditLogCreate(tx, {
+      userId,
+      userEmail,
+      action: AuditAction.UPDATE,
+      entityType: 'order',
+      entityId: id,
+      newValue: { orderNumber: existing.orderNumber, removedContentCard: card },
+    })
+  })
+}
+
 // ── STATUS CHANGE ─────────────────────────────────────────────
 
 export async function changeOrderStatus(
@@ -320,11 +375,12 @@ export async function changeOrderStatus(
 
   const timestamps: Record<string, Date | null> = {}
   if (toStatus === OrderStatus.COMPLETED) timestamps.completedAt = new Date()
+  const companySnapshot = toStatus === OrderStatus.COMPLETED ? await getCompanySnapshot() : undefined
 
   await prisma.$transaction(async (tx) => {
     await tx.order.update({
       where: { id },
-      data:  { status: toStatus, ...timestamps },
+      data:  { status: toStatus, ...timestamps, ...(companySnapshot && { companySnapshot: companySnapshot as Prisma.InputJsonValue }) },
     })
 
     await buildAuditLogCreate(tx, {
@@ -335,6 +391,31 @@ export async function changeOrderStatus(
       oldValue:   { status: fromStatus },
       newValue:   { status: toStatus },
     })
+  })
+}
+
+export async function markOrderSent(
+  id: string,
+  userId: string,
+  userEmail: string,
+): Promise<void> {
+  await prisma.$transaction(async tx => {
+    const order = await tx.order.findUnique({
+      where: { id, deletedAt: null },
+      select: { status: true, sentAt: true, orderNumber: true },
+    })
+    if (!order) throw new NotFoundError('Auftrag nicht gefunden')
+    if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.INVOICED) {
+      throw new BusinessRuleError('Dieser Auftrag kann nicht mehr als versendet markiert werden.')
+    }
+    if (order.sentAt) return
+    const sentAt = new Date()
+    await tx.order.update({ where: { id }, data: { sentAt } })
+    await tx.auditLog.create({ data: {
+      userId, userEmail, action: AuditAction.STATUS_CHANGE,
+      entityType: 'order', entityId: id,
+      oldValue: { sentAt: null }, newValue: { sentAt: sentAt.toISOString(), orderNumber: order.orderNumber },
+    } })
   })
 }
 
