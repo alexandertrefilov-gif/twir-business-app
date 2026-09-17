@@ -19,6 +19,8 @@ import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentH
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { orderDescriptionWithOfferFallback, splitOfferTextAtPositions } from '@/lib/offers/rich-text'
 import { OrderContentCardActions } from '@/components/orders/OrderContentCardActions'
+import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
+import { listProjectsForCustomer } from '@/lib/services/project.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -34,12 +36,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   try { order = await getOrderById(id) }
   catch { notFound() }
 
-  const [canEdit, canDelete, process, processPermissions] = await Promise.all([
+  const [canEdit, canDelete, canManageProject, process, processPermissions] = await Promise.all([
     hasPermission(Resource.ORDER, Action.UPDATE),
     hasPermission(Resource.ORDER, Action.DELETE),
+    hasPermission(Resource.PROJECT, Action.CREATE),
     getBusinessProcessForOrder(id, user.userId, user.role),
     getBusinessProcessPermissions(),
   ])
+  const availableProjects = canManageProject && !process.project ? await listProjectsForCustomer(order.customerId) : []
 
   const items = order.items.map((i) => ({
     ...i,
@@ -182,6 +186,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               currentDocument={{ type: 'order', id: order.id }}
               activeStage="order"
               permissions={processPermissions}
+              projectAction={canManageProject
+                ? <ProjectAssignmentAction kind="order" targetId={order.id} customerId={order.customerId} suggestedName={order.title ?? order.orderNumber} projects={availableProjects} />
+                : undefined}
               orderAction={<OrderStatusActions
                 orderId={order.id}
                 status={order.status as OrderStatus}

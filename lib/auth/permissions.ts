@@ -22,6 +22,7 @@ export const Resource = {
   USER:            'user',
   ROLE:            'role',
   SETTINGS:        'settings',
+  PROJECT:         'project',
 } as const
 export type Resource = (typeof Resource)[keyof typeof Resource]
 
@@ -108,6 +109,12 @@ export const PERMISSION_MATRIX: PermissionMatrix = {
   'document:create':  MANAGEMENT_ROLES,
   'document:read':    ALL_ROLES,
   'document:delete':  OFFICE_ROLES,
+
+  // Interne Projekte
+  'project:create': MANAGEMENT_ROLES,
+  'project:read': [RoleName.ADMIN, RoleName.OFFICE, RoleName.PROJECT_MANAGER, RoleName.ACCOUNTING],
+  'project:update': MANAGEMENT_ROLES,
+  'project:delete': OFFICE_ROLES,
 
   // Audit-Log — nur lesen
   'audit_log:read':   ACCOUNTING_ROLES,

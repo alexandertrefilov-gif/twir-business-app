@@ -20,6 +20,8 @@ import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentH
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 import { CustomerPurchaseOrderDialog } from '@/components/offers/CustomerPurchaseOrderDialog'
+import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
+import { listProjectsForCustomer } from '@/lib/services/project.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -44,14 +46,16 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
     notFound()
   }
 
-  const [canEdit, canDelete, canConvert, canCopy, process, processPermissions] = await Promise.all([
+  const [canEdit, canDelete, canConvert, canCopy, canManageProject, process, processPermissions] = await Promise.all([
     hasPermission(Resource.OFFER, Action.UPDATE),
     hasPermission(Resource.OFFER, Action.DELETE),
     hasPermission(Resource.ORDER, Action.CREATE),
     hasPermission(Resource.OFFER, Action.CREATE),
+    hasPermission(Resource.PROJECT, Action.CREATE),
     getBusinessProcessForOffer(id, user.userId, user.role),
     getBusinessProcessPermissions(),
   ])
+  const availableProjects = canManageProject && !process.project ? await listProjectsForCustomer(offer.customerId) : []
 
   // Compute per-item amts and totals from stored values
   const items = offer.items.map((item) => ({
@@ -209,6 +213,9 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
               currentDocument={{ type: 'offer', id: offer.id }}
               permissions={processPermissions}
               offerCopyHref={canCopy ? `/offers/new?copy=${offer.id}` : undefined}
+              projectAction={canManageProject
+                ? <ProjectAssignmentAction kind="offer" targetId={offer.id} customerId={offer.customerId} suggestedName={offer.title ?? offer.offerNumber} projects={availableProjects} />
+                : undefined}
               customerPurchaseOrderAction={canEdit && ['ACCEPTED', 'CONVERTED_TO_ORDER'].includes(offer.status)
                 ? <CustomerPurchaseOrderDialog
                     offerId={offer.id}

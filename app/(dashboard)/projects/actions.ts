@@ -1,0 +1,54 @@
+'use server'
+import { revalidatePath } from 'next/cache'
+import { redirect } from 'next/navigation'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth/options'
+import { Action, requirePermission, Resource } from '@/lib/auth/permissions'
+import { activateCollaboration, assignInvoiceToProject, assignOfferToProject, assignOrderToProject, createProject, linkExistingCollaborationProject, updateProject } from '@/lib/services/project.service'
+
+async function actor() { const session = await getServerSession(authOptions); if (!session?.user) throw new Error('Nicht angemeldet'); return { userId: session.user.id, userEmail: session.user.email } }
+const data = (f: FormData) => ({ projectNumber: f.get('projectNumber'), name: f.get('name'), description: f.get('description') || null, customerId: f.get('customerId'), leadUserId: f.get('leadUserId') || null, status: f.get('status'), location: f.get('location') || null, building: f.get('building') || null, floor: f.get('floor') || null, area: f.get('area') || null, plannedStart: f.get('plannedStart') || null, plannedEnd: f.get('plannedEnd') || null, actualStart: f.get('actualStart') || null, actualEnd: f.get('actualEnd') || null })
+export async function createProjectAction(_: { error?: string }, formData: FormData) {
+  let id: string
+  try {
+    await requirePermission(Resource.PROJECT, Action.CREATE)
+    const who = await actor()
+    id = await createProject(data(formData), who)
+    const sourceOfferId = formData.get('sourceOfferId')
+    const sourceOrderId = formData.get('sourceOrderId')
+    const sourceInvoiceId = formData.get('sourceInvoiceId')
+    if (typeof sourceOfferId === 'string' && sourceOfferId) await assignOfferToProject(id, sourceOfferId, who)
+    if (typeof sourceOrderId === 'string' && sourceOrderId) await assignOrderToProject(id, sourceOrderId, who)
+    if (typeof sourceInvoiceId === 'string' && sourceInvoiceId) await assignInvoiceToProject(id, sourceInvoiceId, who)
+    revalidatePath('/projects')
+    if (typeof sourceOfferId === 'string' && sourceOfferId) revalidatePath(`/offers/${sourceOfferId}`)
+    if (typeof sourceOrderId === 'string' && sourceOrderId) revalidatePath(`/orders/${sourceOrderId}`)
+    if (typeof sourceInvoiceId === 'string' && sourceInvoiceId) revalidatePath(`/invoices/${sourceInvoiceId}`)
+  } catch (e) { return { error: e instanceof Error ? e.message : 'Projekt konnte nicht angelegt werden' } }
+  redirect(`/projects/${id}`)
+}
+export async function updateProjectAction(id: string, _: { error?: string }, formData: FormData) { try { await requirePermission(Resource.PROJECT, Action.UPDATE); await updateProject(id, data(formData), await actor()); revalidatePath('/projects'); revalidatePath(`/projects/${id}`); return {} } catch (e) { return { error: e instanceof Error ? e.message : 'Projekt konnte nicht aktualisiert werden' } } }
+export async function activateProjectCollaborationAction(projectId: string) { await requirePermission(Resource.PROJECT, Action.UPDATE); await activateCollaboration(projectId, await actor()); revalidatePath(`/projects/${projectId}`); revalidatePath('/projects') }
+
+export async function linkExistingCollaborationProjectAction(projectId: string, collaborationProjectId: string): Promise<{ error?: string }> {
+  try {
+    await requirePermission(Resource.PROJECT, Action.UPDATE)
+    await linkExistingCollaborationProject(projectId, collaborationProjectId, await actor())
+    revalidatePath(`/projects/${projectId}`)
+    revalidatePath('/projects')
+    return {}
+  } catch (e) { return { error: e instanceof Error ? e.message : 'Zusammenarbeit konnte nicht verknüpft werden' } }
+}
+
+export async function assignExistingProjectAction(kind: 'offer' | 'order' | 'invoice', targetId: string, projectId: string): Promise<{ error?: string }> {
+  try {
+    await requirePermission(Resource.PROJECT, Action.UPDATE)
+    const who = await actor()
+    if (kind === 'offer') await assignOfferToProject(projectId, targetId, who)
+    else if (kind === 'order') await assignOrderToProject(projectId, targetId, who)
+    else await assignInvoiceToProject(projectId, targetId, who)
+    revalidatePath(`/${kind}s/${targetId}`)
+    revalidatePath(`/projects/${projectId}`)
+    return {}
+  } catch (e) { return { error: e instanceof Error ? e.message : 'Zuordnung fehlgeschlagen' } }
+}

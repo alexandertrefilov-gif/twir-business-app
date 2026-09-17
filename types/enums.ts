@@ -42,6 +42,14 @@ export const CollaborationHealthStatus = {
 } as const
 export type CollaborationHealthStatus = (typeof CollaborationHealthStatus)[keyof typeof CollaborationHealthStatus]
 
+export const ProjectStatus = { DRAFT: 'DRAFT', PLANNED: 'PLANNED', ACTIVE: 'ACTIVE', ON_HOLD: 'ON_HOLD', COMPLETED: 'COMPLETED', CANCELLED: 'CANCELLED' } as const
+export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus]
+export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = { DRAFT: 'Entwurf', PLANNED: 'Geplant', ACTIVE: 'Aktiv', ON_HOLD: 'Pausiert', COMPLETED: 'Abgeschlossen', CANCELLED: 'Abgebrochen' }
+
+export const ProjectParticipantRole = { PROJECT_LEAD: 'PROJECT_LEAD', PROJECT_MEMBER: 'PROJECT_MEMBER', OBSERVER: 'OBSERVER' } as const
+export type ProjectParticipantRole = (typeof ProjectParticipantRole)[keyof typeof ProjectParticipantRole]
+export const PROJECT_PARTICIPANT_ROLE_LABELS: Record<ProjectParticipantRole, string> = { PROJECT_LEAD: 'Projektleitung', PROJECT_MEMBER: 'Projektmitglied', OBSERVER: 'Beobachter' }
+
 export const CollaborationStageStatus = {
   NOT_STARTED: 'NOT_STARTED',
   READY: 'READY',

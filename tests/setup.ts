@@ -28,6 +28,7 @@ vi.mock('@/lib/db/prisma', () => ({
     collaborationBlocker: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     collaborationApproval: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     user: { findUnique: vi.fn(), update: vi.fn() },
+    project: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
   },
 }))
 

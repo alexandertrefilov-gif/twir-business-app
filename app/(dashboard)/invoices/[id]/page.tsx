@@ -30,6 +30,8 @@ import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/do
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { OfferRichText } from '@/components/offers/OfferRichText'
+import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
+import { listProjectsForCustomer } from '@/lib/services/project.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -57,6 +59,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     canCreatePayment,
     canReadPayments,
     canManageDunning,
+    canManageProject,
     process,
     processPermissions,
   ] = await Promise.all([
@@ -67,6 +70,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     hasPermission(Resource.PAYMENT, Action.CREATE),
     hasPermission(Resource.PAYMENT, Action.READ),
     hasPermission(Resource.INVOICE, Action.UPDATE),
+    hasPermission(Resource.PROJECT, Action.CREATE),
     getBusinessProcessForInvoice(id, user.userId, user.role, {
       id: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
@@ -76,6 +80,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     }),
     getBusinessProcessPermissions(),
   ])
+  const availableProjects = canManageProject && !process.project ? await listProjectsForCustomer(invoice.customerId) : []
 
   const paymentRecords = canReadPayments
     ? await getInvoicePayments(invoice.id)
@@ -329,6 +334,9 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           {/* Sidebar */}
           <BusinessDocumentSidebar sticky>
             <BusinessProcessWorkflow process={process} currentDocument={{ type: 'invoice', id: invoice.id }} permissions={processPermissions}
+              projectAction={canManageProject
+                ? <ProjectAssignmentAction kind="invoice" targetId={invoice.id} customerId={invoice.customerId} suggestedName={invoice.order?.title ?? invoice.invoiceNumber ?? 'Rechnung'} projects={availableProjects} />
+                : undefined}
               invoiceAction={<InvoiceActions
                 invoiceId={invoice.id}
                 status={invoice.status as InvoiceStatus}
