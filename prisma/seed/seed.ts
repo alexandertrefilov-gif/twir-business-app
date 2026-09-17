@@ -69,6 +69,8 @@ async function main() {
     // Zahlungen
     { resource: 'payment',  action: 'create'   }, { resource: 'payment',  action: 'read' },
     { resource: 'payment',  action: 'delete'   },
+    // Buchhaltung (read-only Grundbereich)
+    { resource: 'accounting', action: 'read'   },
     // Dokumente
     { resource: 'document', action: 'create'   }, { resource: 'document', action: 'read' },
     { resource: 'document', action: 'delete'   },
@@ -140,6 +142,7 @@ async function main() {
     { roleName: 'ACCOUNTING', key: 'invoice:cancel'      },
     { roleName: 'ACCOUNTING', key: 'payment:create'      }, { roleName: 'ACCOUNTING', key: 'payment:read'  },
     { roleName: 'ACCOUNTING', key: 'payment:delete'      },
+    { roleName: 'ACCOUNTING', key: 'accounting:read'     },
     { roleName: 'ACCOUNTING', key: 'document:read'       }, { roleName: 'ACCOUNTING', key: 'document:create' },
     { roleName: 'ACCOUNTING', key: 'audit_log:read'      },
   ]

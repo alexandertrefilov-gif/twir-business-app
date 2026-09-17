@@ -52,6 +52,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Rechnungen',   href: '/invoices',    icon: <IconReceipt />, roles: ['ADMIN', 'OFFICE', 'PROJECT_MANAGER', 'ACCOUNTING'] },
       { label: 'Zahlungen',    href: '/payments',    icon: <IconCash />,    roles: ['ADMIN', 'ACCOUNTING'] },
+      { label: 'Buchhaltung',  href: '/accounting',  icon: <IconLog />,     roles: ['ADMIN', 'ACCOUNTING'] },
     ],
   },
   {
