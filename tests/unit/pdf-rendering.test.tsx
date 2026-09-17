@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   editorFontSizeToPdfPoints,
   getPdfTableColumnWidths,
@@ -6,10 +8,13 @@ import {
   offerNumberForDocument,
   renderOfferPdf,
   getOfferLogoDimensions,
+  tableBudgetForLogoHeight,
   OFFER_CONTENT_WIDTH_POINTS,
   OFFER_FOOTER_BOTTOM,
   OFFER_FOOTER_MIN_HEIGHT,
   OFFER_PAGE_BOTTOM_PADDING,
+  OFFER_DOCUMENT_NUMBER_STYLE,
+  OFFER_HEADER_TEXT_STYLE,
   estimatePdfTableRowHeight,
   paginatePdfTable,
   type OfferPdfData,
@@ -31,6 +36,11 @@ function expectPdf(buffer: Buffer) {
 }
 
 describe('PDF-Renderer', () => {
+  it('hält Rich-Text-Überschriften beim Angebot beim nachfolgenden Inhalt', () => {
+    const source = readFileSync(resolve(process.cwd(), 'lib/pdf-templates/offer.template.tsx'), 'utf8')
+    expect(source).toContain('style={S.richSectionTitle} minPresenceAhead={28}')
+    expect(source).toContain('minPresenceAhead={28}')
+  })
   it('wiederholt einen privaten Kundennamen nicht zusätzlich zum Ansprechpartner', () => {
     expect(getOfferRecipientLines({
       name: 'Harry Bitzer',
@@ -67,6 +77,20 @@ describe('PDF-Renderer', () => {
     expect(offerNumberForDocument('AN 260701')).toBe('260701')
     expect(offerNumberForDocument('AN-2026-0001')).toBe('2026-0001')
     expect(offerNumberForDocument('260701')).toBe('260701')
+  })
+
+  it('formatiert Angebotsbezeichnung und -nummer wie die übrigen Kopfdaten, aber fett', () => {
+    expect(OFFER_HEADER_TEXT_STYLE).toEqual({
+      fontFamily: 'Helvetica',
+      fontSize: 11,
+      lineHeight: 1.18,
+    })
+    expect(OFFER_DOCUMENT_NUMBER_STYLE).toMatchObject({
+      fontFamily: 'Helvetica-Bold',
+      fontSize: OFFER_HEADER_TEXT_STYLE.fontSize,
+      lineHeight: OFFER_HEADER_TEXT_STYLE.lineHeight,
+      color: '#1e3a5f',
+    })
   })
 
   it('verwendet für alle Tabellenzeilen ein gemeinsames Spaltenraster', () => {
@@ -115,6 +139,25 @@ describe('PDF-Renderer', () => {
     expect(pages.every((page) => page.bodyRows.length > 0)).toBe(true)
   })
 
+  it('ignoriert historische feste Zeilenhöhen zugunsten der inhaltsbasierten PDF-Höhe', () => {
+    const content = [{
+      type: 'paragraph',
+      content: [{ type: 'text', text: 'Kurzer Inhalt' }],
+    }]
+    const automatic = estimatePdfTableRowHeight({
+      type: 'tableRow',
+      content: [{ type: 'tableCell', content }],
+    }, [100])
+    const legacy = estimatePdfTableRowHeight({
+      type: 'tableRow',
+      content: [{ type: 'tableCell', attrs: { rowHeight: 160 }, content }],
+    }, [100])
+
+    expect(legacy).toBe(automatic)
+    const template = readFileSync(resolve(process.cwd(), 'lib/pdf-templates/offer.template.tsx'), 'utf8')
+    expect(template).not.toContain('cell.attrs?.rowHeight')
+  })
+
   it('berücksichtigt lange Zellen, colspan und den Footer-Sicherheitsabstand', () => {
     const longRow: RichTextNode = {
       type: 'tableRow',
@@ -150,12 +193,30 @@ describe('PDF-Renderer', () => {
     expect(editorFontSizeToPdfPoints('10px', 11)).toBe(11)
     expect(editorFontSizeToPdfPoints('16px', 12)).toBe(12)
     expect(editorFontSizeToPdfPoints('14pt', 11)).toBe(14)
+    expect(editorFontSizeToPdfPoints('18pt')).toBe(18)
     expect(editorFontSizeToPdfPoints('beliebig')).toBeUndefined()
   })
 
-  it('skaliert das Firmenlogo proportional bis zur A4-Grenze', () => {
-    expect(getOfferLogoDimensions(200)).toEqual({ width: 220, height: 110 })
-    expect(getOfferLogoDimensions(600)).toEqual({ width: 220, height: 110 })
+  it('setzt 100/150/200/300 proportional und 400 weiterhin größer um', () => {
+    const widths = [100, 150, 200, 300, 400]
+      .map((scale) => getOfferLogoDimensions(scale, 1200, 600).width)
+    const squareWidths = [100, 150, 200, 300, 400]
+      .map((scale) => getOfferLogoDimensions(scale, 600, 600).width)
+
+    expect(widths).toEqual([70, 105, 140, 210, 280])
+    expect(squareWidths).toEqual([35, 52.5, 70, 105, 140])
+  })
+
+  it('behält das Seitenverhältnis bei und passt den Header-Budget sicher an', () => {
+    const wide = getOfferLogoDimensions(400, 1200, 600)
+    const portrait = getOfferLogoDimensions(400, 600, 1200)
+
+    expect(wide.width / wide.height).toBeCloseTo(2)
+    expect(portrait.width / portrait.height).toBeCloseTo(0.5)
+    expect(wide.width).toBeLessThanOrEqual(300)
+    expect(wide.height).toBeLessThanOrEqual(140)
+    expect(portrait.height).toBeLessThanOrEqual(140)
+    expect(tableBudgetForLogoHeight(wide.height)).toBeLessThan(400)
   })
 
   it('rendert ein Angebot als Node.js-Buffer', async () => {
@@ -202,6 +263,27 @@ describe('PDF-Renderer', () => {
     } satisfies OfferPdfData
 
     expectPdf(await renderOfferPdf(data))
+  })
+
+  it('rendert ein 400-Prozent-Logo ohne festen Höhencontainer im Angebot', async () => {
+    const logoDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    const offer = {
+      offerNumber: 'AN-2026-0400',
+      offerDate: '01.01.2026',
+      logoDataUri,
+      logoScale: 400,
+      logoSourceWidth: 1,
+      logoSourceHeight: 1,
+      company: { companyName: 'TWIR GmbH' },
+      customer: { name: 'Testkunde GmbH' },
+      items: [],
+      totalNet: 0,
+      totalTax: 0,
+      totalGross: 0,
+      taxGroups: {},
+    } satisfies OfferPdfData
+
+    expectPdf(await renderOfferPdf(offer))
   })
 
   it('rendert eine Mahnung als Node.js-Buffer', async () => {

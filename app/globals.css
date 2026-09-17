@@ -85,6 +85,8 @@
   .offer-rich-editor,
   .offer-rich-output {
     font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.18;
   }
   .offer-standard-font .mono,
   .offer-standard-font td.num,
@@ -98,13 +100,15 @@
     pointer-events: none;
   }
   .offer-rich-editor h1,
-  .offer-rich-output h1 { @apply mb-3 font-bold; font-size: 14pt; }
+  .offer-rich-output h1 { @apply mb-3 font-600; font-size: 14pt; }
   .offer-rich-editor h2,
-  .offer-rich-output h2 { @apply mb-2 font-bold text-blue-800; font-size: 12pt; }
+  .offer-rich-output h2 { @apply mb-2 font-600 text-blue-800; font-size: 12pt; }
   .offer-rich-editor h3,
-  .offer-rich-output h3 { @apply mb-2 font-bold; font-size: 11pt; }
+  .offer-rich-output h3 { @apply mb-2 font-600; font-size: 11pt; }
+  .offer-rich-editor :is(h1, h2, h3) strong,
+  .offer-rich-output :is(h1, h2, h3) strong { font-weight: 800; }
   .offer-rich-editor p,
-  .offer-rich-output p { @apply mb-2; font-size: 11pt; line-height: 1.35; }
+  .offer-rich-output p { @apply mb-2; font-size: 11pt; line-height: 1.18; }
   .offer-rich-editor ul,
   .offer-rich-output ul { @apply mb-3 list-disc pl-6; }
   .offer-rich-editor ol,
@@ -116,11 +120,21 @@
   .offer-rich-editor table,
   .offer-rich-output table {
     @apply my-3 w-full max-w-full border-collapse;
+    box-sizing: border-box;
     font-size: 11pt;
     table-layout: fixed;
   }
-  .offer-rich-editor .tableWrapper { @apply my-3 overflow-x-auto; }
-  .offer-rich-editor .tableWrapper table { margin-top: 0; margin-bottom: 0; }
+  .offer-rich-editor .tableWrapper {
+    @apply my-3 w-full max-w-full overflow-x-auto;
+    min-width: 0;
+  }
+  .offer-rich-editor .tableWrapper table {
+    width: 100%;
+    max-width: 100%;
+    min-width: 100%;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
   .offer-rich-editor th,
   .offer-rich-output th {
     @apply relative border border-stone-500 bg-stone-100 px-3 py-2 text-left font-600;
@@ -129,6 +143,7 @@
     word-break: normal;
     white-space: normal;
     vertical-align: top;
+    height: auto;
   }
   .offer-rich-editor td,
   .offer-rich-output td {
@@ -138,6 +153,7 @@
     word-break: normal;
     white-space: normal;
     vertical-align: top;
+    height: auto;
   }
   .offer-rich-editor .selectedCell { @apply bg-blue-50 outline outline-2 outline-blue-400; }
   .offer-rich-editor .column-resize-handle {
