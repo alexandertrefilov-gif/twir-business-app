@@ -257,7 +257,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Betreiberportal — Datenbankintegration'
     internalDocId = internalDoc.id
     expect(internalDoc.visibility).toBe('INTERNAL')
 
-    const externalDoc = await documentService.uploadCollaborationDocument({ projectId: projectAId, cabinetId, documentKind: 'Pruefbericht', originalName: 'pruefbericht.pdf', mimeType: 'application/pdf', buffer: Buffer.from('extern') })
+    const externalDoc = await documentService.uploadCollaborationDocument({ projectId: projectAId, cabinetId, documentKind: 'Pruefbericht', originalName: 'pruefbericht.pdf', mimeType: 'application/pdf', buffer: Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]) })
     await documentService.setCollaborationDocumentVisibility(externalDoc.id, 'EXTERNAL')
     externalDocId = externalDoc.id
     const reloaded = await db.collaborationDocument.findUnique({ where: { id: externalDocId } })

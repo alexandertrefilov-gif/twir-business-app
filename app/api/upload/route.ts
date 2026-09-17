@@ -9,7 +9,7 @@ import {
   requirePermission,
   toHttpError,
 } from '@/lib/auth/permissions'
-import { validateUpload } from '@/lib/security/upload-validator'
+import { validateUpload, validateUploadSignature } from '@/lib/security/upload-validator'
 import {
   generateStorageFilename,
   registerDocument,
@@ -67,6 +67,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: validation.error }, { status: 422 })
   }
 
+  // 3b. Magic-Byte-Prüfung: MIME-Type/Extension allein sind clientseitig
+  // vorgetäuscht angebbar (gleiches Muster wie customer-purchase-order.service.ts).
+  const buffer = Buffer.from(await file.arrayBuffer())
+  if (!validateUploadSignature(buffer, mimeType)) {
+    return NextResponse.json({ error: 'Der Dateiinhalt passt nicht zum angegebenen Dateityp.' }, { status: 422 })
+  }
+
   // 4. Resolve storage location
   const storageRoot = process.env.STORAGE_LOCAL_PATH ?? './storage/documents'
   const storageDriver = process.env.STORAGE_DRIVER ?? 'local'
@@ -79,7 +86,6 @@ export async function POST(req: NextRequest) {
   if (storageDriver === 'local') {
     try {
       await fs.mkdir(storageRoot, { recursive: true })
-      const buffer = Buffer.from(await file.arrayBuffer())
       await fs.writeFile(path.join(storageRoot, storagePath), buffer)
     } catch (err) {
       console.error('[Upload] Dateisystem-Fehler:', err)

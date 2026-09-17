@@ -20,7 +20,7 @@ import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permi
 import { buildAuditLogCreate } from '@/lib/services/audit.service'
 import { AuditAction } from '@/types/enums'
 import { editorRoles } from '@/lib/services/collaboration-phase2.service'
-import { validateUpload } from '@/lib/security/upload-validator'
+import { validateUpload, validateUploadSignature } from '@/lib/security/upload-validator'
 import { generateStorageFilename } from '@/lib/services/document.service'
 import { LocalFilesystemArchiveStorage } from '@/lib/documents/archive-storage'
 
@@ -77,6 +77,12 @@ export async function uploadCollaborationDocument(input: UploadCollaborationDocu
     sizeBytes: input.buffer.byteLength,
   })
   if (!validation.valid) throw new ValidationError(validation.error ?? 'Datei ungültig')
+  // Magic-Byte-Prüfung: MIME-Type/Extension allein sind clientseitig
+  // vorgetäuscht angebbar. Gleiches Muster wie
+  // customer-purchase-order.service.ts/external-confirmation.service.ts.
+  if (!validateUploadSignature(input.buffer, input.mimeType)) {
+    throw new ValidationError('Der Dateiinhalt passt nicht zum angegebenen Dateityp.')
+  }
 
   const storage = getStorage()
   const storageName = generateStorageFilename('collab', validation.sanitizedName)

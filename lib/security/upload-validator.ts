@@ -198,7 +198,15 @@ export function getMimeTypeLabel(mimeType: string): string {
   return map[mimeType.split(';')[0].trim()] ?? mimeType
 }
 
-/** Zusätzliche Inhaltsprüfung für die im Kundenbestellungs-Workflow erlaubten Formate. */
+/**
+ * Magic-Byte-Inhaltsprüfung für alle in ALLOWED_TYPES erlaubten Formate.
+ * MIME-Type/Extension allein sind clientseitig vorgetäuscht angebbar.
+ *
+ * Für Formate ohne verlässliche binäre Signatur (reiner Text: .txt/.csv)
+ * gibt es keine sinnvolle Inhaltsprüfung jenseits der bereits erfolgten
+ * Extension-/MIME-Validierung — hier wird bewusst true zurückgegeben,
+ * statt eine Datei ohne echten Sicherheitsgewinn abzulehnen.
+ */
 export function validateUploadSignature(buffer: Uint8Array, mimeType: string): boolean {
   const mime = mimeType.split(';')[0].trim().toLowerCase()
   const starts = (...bytes: number[]) => bytes.every((byte, index) => buffer[index] === byte)
@@ -209,6 +217,8 @@ export function validateUploadSignature(buffer: Uint8Array, mimeType: string): b
   if (mime === 'image/webp') return starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...buffer.slice(8, 12)) === 'WEBP'
   if (mime.includes('openxmlformats-officedocument')) return starts(0x50, 0x4b, 0x03, 0x04)
   if (mime === 'application/vnd.ms-excel' || mime === 'application/msword') return starts(0xd0, 0xcf, 0x11, 0xe0)
+  if (mime === 'application/zip' || mime === 'application/x-zip-compressed') return starts(0x50, 0x4b, 0x03, 0x04)
+  if (mime === 'text/plain' || mime === 'text/csv' || mime === 'application/csv') return true
   if (mime === 'message/rfc822') {
     const header = new TextDecoder('ascii').decode(buffer.slice(0, 4096))
     return /^(?:From|Return-Path|Received|Date|Message-ID|Subject|MIME-Version):/im.test(header)
