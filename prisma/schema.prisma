@@ -464,6 +464,7 @@ model CollaborationChecklistItem {
   @@index([projectId, completed])
   @@index([stageId, sequence])
   @@index([cabinetId])
+  @@index([responsibleMembershipId])
   @@map("collaboration_checklist_items")
 }
 
@@ -843,6 +844,13 @@ model CustomerAddress {
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
+  // Höchstens eine aktive Standardadresse je Kunde+Typ (is_default AND
+  // is_active AND deleted_at IS NULL). Prismas Schema-DSL kennt keine
+  // partiellen Indizes — die Constraint
+  // "customer_addresses_one_active_default_per_type" existiert ausschließlich
+  // als rohes SQL in der Migration
+  // 20260917200000_restore_missing_baseline_indexes. Bei einer künftigen
+  // Migrations-Konsolidierung MUSS dieser Index explizit erhalten bleiben.
   @@unique([customerId, addressId, type])
   @@index([customerId, type, isActive])
   @@index([addressId])
@@ -880,7 +888,11 @@ model Contact {
 
 model Offer {
   id          String      @id @default(uuid())
-  // Eindeutig nur für aktive Angebote; PostgreSQL-Partial-Index siehe Migration.
+  // Eindeutig nur für aktive Angebote (deleted_at IS NULL). Prismas Schema-DSL
+  // kennt keine partiellen Indizes — die Constraint "offers_offer_number_key"
+  // existiert ausschließlich als rohes SQL in der Migration
+  // 20260917200000_restore_missing_baseline_indexes. Bei einer künftigen
+  // Migrations-Konsolidierung MUSS dieser Index explizit erhalten bleiben.
   offerNumber String      @map("offer_number") // AN-2024-0001
   customerId  String      @map("customer_id")
   customer    Customer    @relation(fields: [customerId], references: [id])
