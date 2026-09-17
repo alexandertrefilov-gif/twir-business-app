@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Fragment, type ReactNode } from 'react'
 import { OrderPdfDialog } from '@/components/orders/OrderPdfDialog'
 import { OfferPdfDialog } from '@/components/offers/OfferPdfDialog'
+import { InvoicePdfDialog } from '@/components/invoices/InvoicePdfDialog'
 import { ServiceReportPdfDialog } from '@/components/service-reports/ServiceReportPdfDialog'
 import { DocumentPrintButton } from '@/components/documents/DocumentPrintButton'
 import type { BusinessProcessData } from '@/lib/services/business-process.service'
@@ -335,6 +336,15 @@ function DocumentActions({ stageKey, documentId, offerCopyHref }: { stageKey: Pr
     return (
       <div className="grid w-full grid-cols-2 items-start gap-1.5">
         <OrderPdfDialog orderId={documentId} />
+        <Link href={documentHref(stageKey, documentId)} className={`${className} inline-flex items-center justify-center`}>Anzeigen</Link>
+        <DocumentPrintButton pdfUrl={documentPdfHref(stageKey, documentId)} className={className} />
+      </div>
+    )
+  }
+  if (stageKey === 'invoice') {
+    return (
+      <div className="grid w-full grid-cols-2 items-start gap-1.5">
+        <InvoicePdfDialog invoiceId={documentId} />
         <Link href={documentHref(stageKey, documentId)} className={`${className} inline-flex items-center justify-center`}>Anzeigen</Link>
         <DocumentPrintButton pdfUrl={documentPdfHref(stageKey, documentId)} className={className} />
       </div>

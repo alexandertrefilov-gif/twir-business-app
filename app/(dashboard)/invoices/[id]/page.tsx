@@ -6,9 +6,6 @@
 import type { Metadata }      from 'next'
 import { notFound }           from 'next/navigation'
 import Link                   from 'next/link'
-import { getServerSession }   from 'next-auth'
-import { authOptions }        from '@/lib/auth/options'
-import { PageHeader }         from '@/components/shared/PageHeader'
 import { InvoiceStatusBadge } from '@/components/invoices/InvoiceStatusBadge'
 import { InvoiceActions }     from '@/components/invoices/InvoiceActions'
 import { PaymentForm }        from '@/components/payments/PaymentForm'
@@ -20,12 +17,19 @@ import {
 } from '@/lib/services/invoice-query.service'
 import { getDunningNoticesForInvoice } from '@/lib/services/dunning.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
-import { isInvoiceLocked, InvoiceStatus, INVOICE_TYPE_LABELS } from '@/types/enums'
+import { InvoiceStatus, INVOICE_TYPE_LABELS } from '@/types/enums'
 import { addPaymentAction }   from '@/app/(dashboard)/payments/actions'
 import { format }             from 'date-fns'
 import { de }                 from 'date-fns/locale'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { getSupplierNumber } from '@/lib/services/settings.service'
+import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
+import { getBusinessProcessForInvoice } from '@/lib/services/business-process.service'
+import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
+import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
+import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
+import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
+import { OfferRichText } from '@/components/offers/OfferRichText'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -39,14 +43,11 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await requirePermission(Resource.INVOICE, Action.READ)
+  const user = await requirePermission(Resource.INVOICE, Action.READ)
 
   let invoice
   try { invoice = await getInvoiceById(id) }
   catch { notFound() }
-
-  const session  = await getServerSession(authOptions)
-  const userRole = (session?.user as any)?.role ?? 'OFFICE'
 
   const [
     canEdit,
@@ -56,6 +57,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     canCreatePayment,
     canReadPayments,
     canManageDunning,
+    process,
+    processPermissions,
   ] = await Promise.all([
     hasPermission(Resource.INVOICE, Action.UPDATE),
     hasPermission(Resource.INVOICE, Action.DELETE),
@@ -64,6 +67,14 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     hasPermission(Resource.PAYMENT, Action.CREATE),
     hasPermission(Resource.PAYMENT, Action.READ),
     hasPermission(Resource.INVOICE, Action.UPDATE),
+    getBusinessProcessForInvoice(id, user.userId, user.role, {
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      status: invoice.status,
+      type: invoice.type,
+      orderId: invoice.orderId,
+    }),
+    getBusinessProcessPermissions(),
   ])
 
   const paymentRecords = canReadPayments
@@ -76,8 +87,6 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     catch { /* dunning table may not exist pre-migration */ }
   }
 
-  const locked     = isInvoiceLocked(invoice.status as InvoiceStatus)
-  const canEditNow = canEdit && !locked
   const totalGross = invoice.totalGross.toNumber()
   const paidAmount = invoice.paidAmount.toNumber()
   const remaining  = Math.round((totalGross - paidAmount) * 100) / 100
@@ -117,51 +126,90 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div>
-      <PageHeader
+      <BusinessDocumentHeader
         title={invoice.invoiceNumber ?? 'Rechnungsentwurf'}
         description={invoice.order
           ? `Auftrag ${invoice.order.orderNumber}${invoice.order.title ? ` · ${invoice.order.title}` : ''}`
           : undefined}
-        supplierNumber={supplierNumber}
-        documentType="Rechnung"
-        breadcrumbs={[
-          { label: 'Rechnungen', href: '/invoices' },
-          { label: invoice.invoiceNumber ?? 'Entwurf' },
-        ]}
-        actions={
-          <div className="flex items-center gap-2">
-            <InvoiceStatusBadge status={invoice.status} />
-            {invoice.type !== 'STANDARD' && (
-              <span className="text-xs mono text-muted-foreground px-2 py-0.5 rounded bg-stone-100 border border-stone-200">
-                {INVOICE_TYPE_LABELS[invoice.type as keyof typeof INVOICE_TYPE_LABELS] ?? invoice.type}
-              </span>
-            )}
-            {canEditNow && (
-              <Link href={`/invoices/${invoice.id}/edit`}
-                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors">
-                Bearbeiten
+        titleId="invoice-detail-title"
+        detailsLabel="Kunden- und Rechnungsdaten"
+      >
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
+            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
+            <dd className="mt-0.5">
+              <Link href={`/customers/${invoice.customerId}`} className="text-sm font-600 text-blue-700 hover:underline">
+                {cs?.name ?? invoice.customer.name}
               </Link>
-            )}
+              {(cs?.street || cs?.city) && (
+                <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
+                  {cs.street} {cs.houseNumber}<br />
+                  {cs.postalCode} {cs.city}
+                </address>
+              )}
+            </dd>
           </div>
-        }
-      />
+          <HeaderReference
+            label="Angebot"
+            value={invoice.order?.offer?.offerNumber}
+            href={invoice.order?.offer ? `/offers/${invoice.order.offer.id}` : undefined}
+            canLink={processPermissions.readOffer}
+          />
+          <HeaderReference
+            label="Auftrag"
+            value={invoice.order?.orderNumber}
+            href={invoice.order ? `/orders/${invoice.order.id}` : undefined}
+            canLink={processPermissions.readOrder}
+          />
+          <HeaderReference
+            label="Leistungsnachweis"
+            value={invoice.order?.serviceReports[0]?.reportNumber}
+            href={invoice.order?.serviceReports[0] ? `/services/${invoice.order.serviceReports[0].id}` : undefined}
+            canLink={processPermissions.readServiceReport}
+          />
+          <HeaderReference label="Rechnung" value={invoice.invoiceNumber ?? 'Entwurf'} />
+          {supplierNumber && <HeaderValue label="Lieferantennummer" value={supplierNumber} />}
+          <HeaderValue label="Rechnungsdatum" value={fmtD(invoice.invoiceDate)} />
+          {invoice.dueDate && <HeaderValue label="Zahlungsziel" value={fmtD(invoice.dueDate)} />}
+          <div>
+            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Status</dt>
+            <dd className="mt-1 flex flex-wrap items-center gap-2">
+              <InvoiceStatusBadge status={invoice.status} />
+              {invoice.type !== 'STANDARD' && (
+                <span className="rounded border border-stone-200 bg-stone-100 px-2 py-0.5 text-xs text-muted-foreground mono">
+                  {INVOICE_TYPE_LABELS[invoice.type as keyof typeof INVOICE_TYPE_LABELS] ?? invoice.type}
+                </span>
+              )}
+            </dd>
+          </div>
+          {invoice.finalizedAt && (
+            <HeaderValue label="Finalisiert am" value={format(new Date(invoice.finalizedAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+          )}
+          {invoice.sentAt && (
+            <HeaderValue label="Versendet am" value={format(new Date(invoice.sentAt), 'dd.MM.yyyy', { locale: de })} />
+          )}
+        </dl>
+      </BusinessDocumentHeader>
 
       <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <div className="lg:col-span-2 space-y-4">
+        <BusinessDocumentLayout>
+          <div className="min-w-0 space-y-4">
 
-            {/* Customer + Dates */}
-            <div className="card-base p-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <DocumentSectionCard title="Rechnungsparteien">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 <div>
-                  <p className="text-[11px] font-600 uppercase tracking-wider text-muted-foreground mb-2">Rechnungsempfänger</p>
+                  <p className="mb-2 text-[11px] font-600 uppercase tracking-wider text-muted-foreground">Rechnungsadresse</p>
                   {cs ? (
                     <div className="text-sm">
                       <p className="font-600">{cs.name}</p>
+                      {cs.additional && <p className="text-xs text-muted-foreground">{cs.additional}</p>}
+                      {cs.contactName && <p className="text-xs text-muted-foreground">{cs.contactName}</p>}
+                      {cs.email && <p className="text-xs text-muted-foreground">{cs.email}</p>}
                       {cs.vatId && <p className="text-xs text-muted-foreground mono">USt-ID: {cs.vatId}</p>}
                       {(cs.street || cs.city) && (
-                        <address className="not-italic text-muted-foreground text-xs mt-1 leading-5">
+                        <address className="mt-1 text-xs not-italic leading-5 text-muted-foreground">
                           {cs.street} {cs.houseNumber}<br />{cs.postalCode} {cs.city}
+                          {cs.country && cs.country !== 'DE' && <><br />{cs.country}</>}
                         </address>
                       )}
                     </div>
@@ -172,32 +220,27 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                     </Link>
                   )}
                 </div>
-                <div className="space-y-2.5">
-                  <MI label="Rechnungsdatum" value={fmtD(invoice.invoiceDate)} />
-                  {invoice.dueDate    && <MI label="Zahlungsziel" value={fmtD(invoice.dueDate)} />}
-                  {invoice.finalizedAt && <MI label="Finalisiert am"
-                    value={format(new Date(invoice.finalizedAt), 'dd.MM.yyyy HH:mm', { locale: de })} />}
-                  {invoice.sentAt && <MI label="Versendet am"
-                    value={format(new Date(invoice.sentAt), 'dd.MM.yyyy', { locale: de })} />}
-                </div>
+                {cmp && (
+                  <div>
+                    <p className="mb-2 text-[11px] font-600 uppercase tracking-wider text-muted-foreground">Rechnungssteller</p>
+                    <div className="space-y-1 text-sm">
+                      <p className="font-600">{cmp.companyName}{cmp.legalForm ? ` ${cmp.legalForm}` : ''}</p>
+                      {cmp.vatId && <p className="text-xs text-muted-foreground"><span className="font-500">USt-Id:</span> <span className="mono">{cmp.vatId}</span></p>}
+                      {cmp.iban && <p className="text-xs text-muted-foreground"><span className="font-500">IBAN:</span> <span className="mono">{cmp.iban}</span></p>}
+                    </div>
+                  </div>
+                )}
               </div>
-              {cmp && (
-                <div className="mt-4 pt-4 border-t border-stone-100">
-                  <p className="text-[10px] font-600 uppercase tracking-wider text-muted-foreground mb-1">Rechnungssteller (Snapshot)</p>
-                  <p className="text-xs text-muted-foreground">
-                    {cmp.companyName}{cmp.legalForm ? ` ${cmp.legalForm}` : ''}
-                    {cmp.vatId ? ` · USt-ID: ${cmp.vatId}` : ''}
-                    {cmp.iban  ? ` · IBAN: ${cmp.iban}` : ''}
-                  </p>
-                </div>
-              )}
-            </div>
+            </DocumentSectionCard>
+
+            {invoice.introText && (
+              <DocumentSectionCard title="Leistungsbeschreibung / Abrechnungstext">
+                <OfferRichText value={invoice.introText} />
+              </DocumentSectionCard>
+            )}
 
             {/* Items */}
-            <div className="card-base overflow-hidden">
-              <div className="px-5 py-3 border-b border-stone-100">
-                <h2 className="text-sm font-600">Positionen ({items.length})</h2>
-              </div>
+            <DocumentSectionCard title={`Positionen (${items.length})`} flush>
               {items.length === 0
                 ? <p className="p-5 text-sm text-muted-foreground">Noch keine Positionen.</p>
                 : <>
@@ -246,7 +289,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                     </div>
                   </>
               }
-            </div>
+            </DocumentSectionCard>
 
             {/* Payments journal */}
             {!['DRAFT', 'FINALIZED'].includes(invoice.status) && canReadPayments && (
@@ -284,10 +327,9 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-4">
-            <div className="card-base p-4">
-              <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground mb-3">Workflow</p>
-              <InvoiceActions
+          <BusinessDocumentSidebar sticky>
+            <BusinessProcessWorkflow process={process} currentDocument={{ type: 'invoice', id: invoice.id }} permissions={processPermissions}
+              invoiceAction={<InvoiceActions
                 invoiceId={invoice.id}
                 status={invoice.status as InvoiceStatus}
                 invoiceNumber={invoice.invoiceNumber}
@@ -296,8 +338,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                 canCancel={canCancel}
                 canEdit={canEdit}
                 canDelete={canDelete && isTestDeleteEnabled()}
-              />
-            </div>
+              />} />
 
             {/* FIX: addPaymentAction importiert direkt — kein inline 'use server' wrapper */}
             {canAddPayment && (
@@ -346,8 +387,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                 </div>
               )}
             </div>
-          </div>
-        </div>
+          </BusinessDocumentSidebar>
+        </BusinessDocumentLayout>
       </div>
     </div>
   )
@@ -360,6 +401,28 @@ function MI({ label, value, mono }: { label: string; value: string; mono?: boole
       <dd className={`mt-0.5 text-sm text-foreground ${mono ? 'mono' : ''}`}>{value}</dd>
     </div>
   )
+}
+
+function HeaderReference({ label, value, href, canLink = false }: {
+  label: string
+  value?: string | null
+  href?: string
+  canLink?: boolean
+}) {
+  return (
+    <div>
+      <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 text-sm mono">
+        {value && href && canLink
+          ? <Link href={href} className="text-blue-700 hover:underline">{value}</Link>
+          : value ?? '—'}
+      </dd>
+    </div>
+  )
+}
+
+function HeaderValue({ label, value }: { label: string; value: string }) {
+  return <div><dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">{label}</dt><dd className="mt-0.5 text-sm text-foreground">{value}</dd></div>
 }
 
 function TR({ label, value, bold, muted, green, amber }: {

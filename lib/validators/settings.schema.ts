@@ -67,7 +67,11 @@ export const SettingsUpdateSchema = z.object({
   defaultOfferOutro:    z.string().max(3000).optional().nullable(),
 
   // Logo-Darstellung in PDF-Dokumenten
-  logoScale: z.coerce.number().int().min(50).max(200).default(140),
+  logoScale: z.coerce.number().int().min(50).max(400).default(140),
+
+  documentArchiveEnabled: z.preprocess((value) => value === true || value === 'true' || value === 'on', z.boolean()).default(false),
+  documentArchivePath: z.string().trim().max(1000).optional().nullable().transform((value) => value || null),
+  documentArchiveJsonEnabled: z.preprocess((value) => value === true || value === 'true' || value === 'on', z.boolean()).default(false),
 })
 
 export type SettingsUpdateInput = z.infer<typeof SettingsUpdateSchema>

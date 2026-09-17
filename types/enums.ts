@@ -264,6 +264,10 @@ export const AuditAction = {
   LOGOUT:             'LOGOUT',
   PERMISSION_CHANGED: 'PERMISSION_CHANGED',
   SETTINGS_CHANGED:   'SETTINGS_CHANGED',
+  ARCHIVE_SUCCEEDED:   'ARCHIVE_SUCCEEDED',
+  ARCHIVE_FAILED:      'ARCHIVE_FAILED',
+  ARCHIVE_RETRIED:     'ARCHIVE_RETRIED',
+  ARCHIVE_TESTED:      'ARCHIVE_TESTED',
 } as const
 export type AuditAction = (typeof AuditAction)[keyof typeof AuditAction]
 

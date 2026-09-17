@@ -2,21 +2,24 @@
 import type { Metadata }    from 'next'
 import { notFound }         from 'next/navigation'
 import Link                 from 'next/link'
-import { OfferStatusActions } from '@/components/offers/OfferStatusActions'
+import { OfferConvertAction, OfferStatusActions } from '@/components/offers/OfferStatusActions'
 import { OfferRichText }      from '@/components/offers/OfferRichText'
 import { getOfferById }     from '@/lib/services/offer.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
+import { calcOfferTotals }  from '@/lib/validators/offer.schema'
 import { format }           from 'date-fns'
 import { de }               from 'date-fns/locale'
 import type { OfferStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { getSupplierNumber } from '@/lib/services/settings.service'
-import { BusinessDocumentLayout, BusinessDocumentSidebar, BusinessWorkflowPlaceholder } from '@/components/documents/BusinessDocumentLayout'
+import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
+import { getBusinessProcessForOffer } from '@/lib/services/business-process.service'
+import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
+import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 import { CustomerPurchaseOrderDialog } from '@/components/offers/CustomerPurchaseOrderDialog'
-import { getBusinessProcessForOffer } from '@/lib/services/business-process.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -41,12 +44,13 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
     notFound()
   }
 
-  const [canEdit, canDelete, canConvert, canCopy, process] = await Promise.all([
+  const [canEdit, canDelete, canConvert, canCopy, process, processPermissions] = await Promise.all([
     hasPermission(Resource.OFFER, Action.UPDATE),
     hasPermission(Resource.OFFER, Action.DELETE),
     hasPermission(Resource.ORDER, Action.CREATE),
     hasPermission(Resource.OFFER, Action.CREATE),
     getBusinessProcessForOffer(id, user.userId, user.role),
+    getBusinessProcessPermissions(),
   ])
 
   // Compute per-item amts and totals from stored values
@@ -74,9 +78,6 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
 
   const fmt = (n: number) =>
     n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-  const purchaseOrder = process.customerPurchaseOrder
-  const showPurchaseOrderSection = ['SENT', 'ACCEPTED', 'CONVERTED_TO_ORDER'].includes(offer.status)
 
   return (
     <div>
@@ -203,52 +204,39 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
 
           {/* ── Sidebar (1/3) ── */}
           <BusinessDocumentSidebar sticky>
-            <BusinessWorkflowPlaceholder message="Der vollständige Geschäftsvorgang-Workflow steht an dieser Stelle noch nicht zur Verfügung.">
-              <p className="mb-3 text-sm font-600 text-foreground">Status: {offer.status}</p>
-              {canCopy && (
-                <Link href={`/offers/new?copy=${offer.id}`} className="mb-3 inline-block text-sm text-blue-700 hover:underline">Als Vorlage kopieren</Link>
-              )}
-              <OfferStatusActions
-                offerId={offer.id}
-                status={offer.status as OfferStatus}
-                totalGross={totalGross}
-                offerNumber={offer.offerNumber}
-                canEdit={canEdit}
-                canDelete={canDelete && isTestDeleteEnabled()}
-                canConvert={canConvert}
-              />
-              {showPurchaseOrderSection && (
-                <div className="mt-4 border-t border-stone-200 pt-4">
-                  <p className="mb-2 text-xs font-600 uppercase tracking-wider text-muted-foreground">Kundenbestellung</p>
-                  {purchaseOrder?.documents.length ? (
-                    <div className="space-y-2 text-xs">
-                      {purchaseOrder.orderNumber && <p><span className="text-muted-foreground">Bestellnummer:</span> {purchaseOrder.orderNumber}</p>}
-                      {purchaseOrder.orderDate && <p><span className="text-muted-foreground">Bestelldatum:</span> {format(new Date(purchaseOrder.orderDate), 'dd.MM.yyyy', { locale: de })}</p>}
-                      {purchaseOrder.documents.map(document => (
-                        <div key={document.id} className="rounded border border-stone-200 bg-stone-50 p-2">
-                          <p className="break-all font-500">{document.originalName}</p>
-                          <div className="mt-2 grid grid-cols-2 gap-1.5">
-                            <a className="rounded border border-stone-200 bg-white px-2 py-1.5 text-center text-blue-700" href={`/api/documents/${document.id}/download?disposition=inline`} target="_blank" rel="noreferrer">Öffnen</a>
-                            <a className="rounded border border-stone-200 bg-white px-2 py-1.5 text-center text-blue-700" href={`/api/documents/${document.id}/download`}>Download</a>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-amber-800">Noch nicht hinterlegt</p>
-                  )}
-                  {canEdit && ['ACCEPTED', 'CONVERTED_TO_ORDER'].includes(offer.status) && (
-                    <div className="mt-3">
-                      <CustomerPurchaseOrderDialog
-                        offerId={offer.id}
-                        mode="add"
-                        trigger={<button type="button" className="min-h-9 w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-500 text-blue-700 hover:bg-stone-50">{purchaseOrder?.documents.length ? 'Weitere Anlage hinzufügen' : 'Bestellung hinzufügen'}</button>}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </BusinessWorkflowPlaceholder>
+            <BusinessProcessWorkflow
+              process={process}
+              currentDocument={{ type: 'offer', id: offer.id }}
+              permissions={processPermissions}
+              offerCopyHref={canCopy ? `/offers/new?copy=${offer.id}` : undefined}
+              customerPurchaseOrderAction={canEdit && ['ACCEPTED', 'CONVERTED_TO_ORDER'].includes(offer.status)
+                ? <CustomerPurchaseOrderDialog
+                    offerId={offer.id}
+                    mode="add"
+                    trigger={<button type="button" className="min-h-9 w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-500 text-blue-700 hover:bg-stone-50">{process.customerPurchaseOrder?.documents.length ? 'Weitere Anlage hinzufügen' : 'Bestellung hinzufügen'}</button>}
+                  />
+                : undefined}
+              orderAction={offer.status === 'ACCEPTED' && canConvert
+                ? <OfferConvertAction offerId={offer.id} offerNumber={offer.offerNumber} totalGross={totalGross} />
+                : undefined}
+              offerLifecycle={{
+                status: offer.status,
+                sentDate: offer.sentAt ? format(new Date(offer.sentAt), 'dd.MM.yyyy', { locale: de }) : undefined,
+                actions: (
+                  <OfferStatusActions
+                    offerId={offer.id}
+                    status={offer.status as OfferStatus}
+                    totalGross={totalGross}
+                    offerNumber={offer.offerNumber}
+                    canEdit={canEdit}
+                    canDelete={canDelete && isTestDeleteEnabled()}
+                    canConvert={canConvert}
+                    showConversion={false}
+                    compactDecision
+                  />
+                ),
+              }}
+            />
 
             {/* Meta */}
             <div className="card-base p-4 space-y-3">

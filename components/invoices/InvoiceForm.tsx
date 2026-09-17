@@ -3,12 +3,18 @@
 // Rechnungsformular (Entwurf erstellen/bearbeiten).
 // Itemzeilen-Logik analog OfferForm (Phase 4) — kein Kopieren, gleiche Muster.
 
-import { useActionState, useMemo, useState } from 'react'
+import { useActionState, useMemo, useRef, useState } from 'react'
 import { useRouter }   from 'next/navigation'
-import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
+import { InvoiceDraftPdfPreview } from '@/components/invoices/InvoiceDraftPdfPreview'
 import type { ActionState } from '@/app/(dashboard)/invoices/actions'
+import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEditor'
+import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
 
-interface CustomerOption { id: string; name: string; number: string }
+interface CustomerOption {
+  id: string; name: string; number: string; legalName?: string | null
+  street?: string | null; houseNumber?: string | null; postalCode?: string | null; city?: string | null; country: string
+  billingAddresses: Array<{ id:string; label:string; companyName:string; additional:string|null; street:string; houseNumber:string|null; postalCode:string; city:string; country:string; contactName:string|null; email:string|null; isDefault:boolean }>
+}
 interface OrderOption    { id: string; orderNumber: string; title: string | null }
 
 interface ItemRow {
@@ -24,10 +30,16 @@ interface InvoiceFormProps {
     customerId: string; orderId: string; invoiceDate: string; dueDate: string
     deliveryDate: string; paymentTermDays: string
     introText: string; outroText: string; items: ItemRow[]
+    invoiceRecipientSource: 'CUSTOMER' | 'BILLING' | 'CUSTOM'
+    billingAddressId: string
+    recipientName: string; recipientAdditional: string; recipientStreet: string
+    recipientHouseNumber: string; recipientPostalCode: string; recipientCity: string; recipientCountry: string
+    recipientContactName: string; recipientEmail: string
   }>
   action: (prev: ActionState, fd: FormData) => Promise<ActionState>
   lockCustomer?: boolean
   lockOrder?:    boolean
+  invoiceId?:    string
 }
 
 const UNITS    = ['Stk.', 'Std.', 'Psch.', 'kg', 't', 'm', 'm²', 'm³', 'l', 'km']
@@ -40,10 +52,16 @@ function addDays(n: number) {
 }
 
 export function InvoiceForm({
-  mode, customers, orders, defaults = {}, action, lockCustomer, lockOrder,
+  mode, customers, orders, defaults = {}, action, lockCustomer, lockOrder, invoiceId,
 }: InvoiceFormProps) {
-  const [state, formAction] = useActionState(action, INIT)
+  const [state, formAction, isPending] = useActionState(action, INIT)
   const router = useRouter()
+  const formRef = useRef<HTMLFormElement>(null)
+  const initialCustomer = customers.find(customer => customer.id === (defaults.customerId ?? ''))
+  const initialDefaultAddress = initialCustomer?.billingAddresses.find(address => address.isDefault)
+  const [selectedCustomerId, setSelectedCustomerId] = useState(defaults.customerId ?? '')
+  const [recipientSource, setRecipientSource] = useState<'CUSTOMER' | 'BILLING' | 'CUSTOM'>(defaults.invoiceRecipientSource ?? (initialDefaultAddress ? 'BILLING' : 'CUSTOMER'))
+  const [billingAddressId, setBillingAddressId] = useState(defaults.billingAddressId ?? initialDefaultAddress?.id ?? '')
   const [items, setItems] = useState<ItemRow[]>(
     defaults.items?.length ? defaults.items : [newRow()],
   )
@@ -75,10 +93,13 @@ export function InvoiceForm({
 
   const fe = state.fieldErrors ?? {}
   const fmt = (n:number) => n.toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})
+  const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId)
+  const selectedBillingAddress = selectedCustomer?.billingAddresses.find(address => address.id === billingAddressId)
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form ref={formRef} action={formAction} className="space-y-4">
       <input type="hidden" name="itemsJson" value={serialized} />
+      <input type="hidden" name="billingAddressId" value={recipientSource === 'BILLING' ? billingAddressId : ''} />
 
       {state.error && (
         <div className="p-3 rounded bg-red-50 border border-red-200 text-sm text-red-700">
@@ -86,28 +107,71 @@ export function InvoiceForm({
         </div>
       )}
 
-      {/* ── Kopfdaten ── */}
+      {/* ── Rechnungsempfänger ── */}
       <div className="form-section">
-        <h2 className="form-section-title">Rechnungskopf</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-          {/* Kunde */}
+        <h2 className="form-section-title">Rechnungsempfänger</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className="field-label field-required" htmlFor="customerId">Kunde</label>
             {lockCustomer
               ? (<>
                   <input type="hidden" name="customerId" value={defaults.customerId} />
-                  <div className="h-9 px-3 rounded-md border border-stone-200 bg-stone-50 text-sm flex items-center text-muted-foreground">
-                    {customers.find(c=>c.id===defaults.customerId)?.name ?? defaults.customerId}
+                  <div className="flex h-9 items-center rounded-md border border-stone-200 bg-stone-50 px-3 text-sm text-muted-foreground">
+                    {selectedCustomer?.name ?? defaults.customerId}
                   </div>
                 </>)
               : (<select id="customerId" name="customerId" required defaultValue={defaults.customerId??''}
-                  className={`w-full h-9 px-2.5 rounded-md border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent ${fe.customerId?'border-red-400':'border-stone-200'}`}>
+                  onChange={(event) => { const next = customers.find(customer => customer.id === event.target.value); setSelectedCustomerId(event.target.value); const defaultAddress = next?.billingAddresses.find(address => address.isDefault); setBillingAddressId(defaultAddress?.id ?? ''); setRecipientSource(defaultAddress ? 'BILLING' : 'CUSTOMER') }}
+                  className={`h-9 w-full rounded-md border bg-white px-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600 ${fe.customerId?'border-red-400':'border-stone-200'}`}>
                   <option value="">— Kunde auswählen —</option>
                   {customers.map(c=><option key={c.id} value={c.id}>{c.number} · {c.name}</option>)}
-                </select>)
-            }
+                </select>)}
           </div>
+          <div className="sm:col-span-2">
+            <label className="field-label" htmlFor="invoiceRecipientSource">Anschrift verwenden</label>
+            <select id="invoiceRecipientSource" value={recipientSource === 'BILLING' ? `BILLING:${billingAddressId}` : recipientSource}
+              onChange={(event) => { const value = event.target.value; if (value.startsWith('BILLING:')) { setRecipientSource('BILLING'); setBillingAddressId(value.slice(8)) } else setRecipientSource(value as 'CUSTOMER' | 'CUSTOM') }}
+              className="h-9 w-full rounded-md border border-stone-200 bg-white px-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600">
+              <option value="CUSTOMER">Kundenanschrift</option>
+              {selectedCustomer?.billingAddresses.map(address => <option key={address.id} value={`BILLING:${address.id}`}>{address.label} · {address.companyName}</option>)}
+              <option value="CUSTOM">Einmalige abweichende Rechnungsadresse</option>
+            </select>
+            <input type="hidden" name="invoiceRecipientSource" value={recipientSource} />
+          </div>
+          {recipientSource !== 'CUSTOM' && selectedCustomer && (
+            <address className="sm:col-span-2 rounded-md border border-stone-200 bg-stone-50 p-3 text-sm not-italic leading-5 text-muted-foreground">
+              {recipientSource === 'BILLING' ? selectedBillingAddress?.companyName : (selectedCustomer.legalName ?? selectedCustomer.name)}<br />
+              {recipientSource === 'BILLING' && selectedBillingAddress?.additional && <>{selectedBillingAddress.additional}<br /></>}
+              {recipientSource === 'BILLING' && selectedBillingAddress?.contactName && <>{selectedBillingAddress.contactName}<br /></>}
+              {recipientSource === 'BILLING' ? selectedBillingAddress?.street : selectedCustomer.street} {recipientSource === 'BILLING' ? selectedBillingAddress?.houseNumber : selectedCustomer.houseNumber}<br />
+              {recipientSource === 'BILLING' ? selectedBillingAddress?.postalCode : selectedCustomer.postalCode} {recipientSource === 'BILLING' ? selectedBillingAddress?.city : selectedCustomer.city}
+            </address>
+          )}
+          {recipientSource === 'CUSTOM' && <>
+            <AF label="Firma / Name" name="recipientName" required defaultValue={defaults.recipientName} error={fe.recipientName?.[0]} />
+            <AF label="Zusatz / Abteilung" name="recipientAdditional" defaultValue={defaults.recipientAdditional} error={fe.recipientAdditional?.[0]} />
+            <AF label="Ansprechpartner" name="recipientContactName" defaultValue={defaults.recipientContactName} error={fe.recipientContactName?.[0]} />
+            <AF label="E-Mail" name="recipientEmail" defaultValue={defaults.recipientEmail} error={fe.recipientEmail?.[0]} />
+            <div className="grid grid-cols-3 gap-4 sm:col-span-2">
+              <div className="col-span-2"><AF label="Straße" name="recipientStreet" required defaultValue={defaults.recipientStreet} error={fe.recipientStreet?.[0]} /></div>
+              <AF label="Hausnummer" name="recipientHouseNumber" defaultValue={defaults.recipientHouseNumber} error={fe.recipientHouseNumber?.[0]} />
+            </div>
+            <AF label="PLZ" name="recipientPostalCode" required defaultValue={defaults.recipientPostalCode} error={fe.recipientPostalCode?.[0]} />
+            <AF label="Ort" name="recipientCity" required defaultValue={defaults.recipientCity} error={fe.recipientCity?.[0]} />
+            <div>
+              <label className="field-label field-required" htmlFor="recipientCountry">Land</label>
+              <select id="recipientCountry" name="recipientCountry" defaultValue={defaults.recipientCountry ?? 'DE'} className="h-9 w-full rounded-md border border-stone-200 bg-white px-2.5 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600">
+                <option value="DE">Deutschland</option><option value="AT">Österreich</option><option value="CH">Schweiz</option><option value="LU">Luxemburg</option>
+              </select>
+            </div>
+          </>}
+        </div>
+      </div>
+
+      {/* ── Kopfdaten ── */}
+      <div className="form-section">
+        <h2 className="form-section-title">Rechnungsdaten</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
           {/* Auftrag (optional) */}
           <div className="sm:col-span-2">
@@ -142,9 +206,16 @@ export function InvoiceForm({
 
       {/* ── Texte ── */}
       <div className="form-section">
-        <h2 className="form-section-title">Texte</h2>
+        <h2 className="form-section-title">Leistungsbeschreibung / Abrechnungstext</h2>
         <div className="space-y-4">
-          <TA label="Einleitungstext" name="introText" defaultValue={defaults.introText??''} />
+          <RichTextSectionsEditor
+            name="introText"
+            label="Textmodule"
+            defaultValue={defaults.introText}
+            placeholder="Abrechnungstext eingeben …"
+            removableSections
+            documentLayout
+          />
           <TA label="Schlusstext"     name="outroText" defaultValue={defaults.outroText??''} />
         </div>
       </div>
@@ -213,16 +284,16 @@ export function InvoiceForm({
         </div>
       </div>
 
-      {/* ── Actions ── */}
-      <div className="flex items-center justify-end gap-3 pb-6">
-        <button type="button" onClick={()=>router.back()}
-          className="h-9 px-4 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors">Abbrechen</button>
-        <FormSubmitButton
-          idleLabel={mode === 'create' ? 'Entwurf anlegen' : 'Änderungen speichern'}
-          pendingLabel={mode === 'create' ? 'Wird angelegt…' : 'Wird gespeichert…'}
-          className="h-9 px-5 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-sm font-500 disabled:opacity-50 transition-colors"
-        />
-      </div>
+      <DocumentFormWorkflowActions
+        formRef={formRef}
+        isPending={isPending}
+        error={state.error}
+        targetId={mode === 'create' ? DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID : undefined}
+        idleLabel={mode === 'create' ? 'Entwurf anlegen' : 'Änderungen speichern'}
+        pendingLabel={mode === 'create' ? 'Wird angelegt…' : 'Wird gespeichert…'}
+        onCancel={() => router.back()}
+        preview={<InvoiceDraftPdfPreview invoiceId={invoiceId} />}
+      />
     </form>
   )
 }
@@ -237,6 +308,9 @@ function FD({label,name,required,defaultValue,error,hint}:{label:string;name:str
       {hint&&!error&&<p className="field-hint">{hint}</p>}
     </div>
   )
+}
+function AF({label,name,required,defaultValue,error}:{label:string;name:string;required?:boolean;defaultValue?:string;error?:string}){
+  return <div><label className={`field-label${required?' field-required':''}`} htmlFor={name}>{label}</label><input id={name} name={name} required={required} defaultValue={defaultValue??''} className={`h-9 w-full rounded-md border bg-white px-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-600 ${error?'border-red-400':'border-stone-200'}`} />{error&&<p className="field-error">{error}</p>}</div>
 }
 function TA({label,name,defaultValue}:{label:string;name:string;defaultValue?:string}){
   return(

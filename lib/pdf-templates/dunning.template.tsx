@@ -4,6 +4,11 @@
 
 import React from 'react'
 import { Document, Page, Text, View, StyleSheet, renderToBuffer } from '@react-pdf/renderer'
+import {
+  PDF_BODY_TEXT_SIZE,
+  PDF_HEADER_HEADING_STYLE,
+  PDF_HEADER_TEXT_STYLE,
+} from '@/lib/pdf-templates/document-header'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -59,10 +64,10 @@ const LEVEL_COLORS = {
 }
 
 const S = StyleSheet.create({
-  page:      { fontFamily: 'Helvetica', fontSize: 9, color: '#1a1917', paddingTop: 40, paddingBottom: 50, paddingLeft: 50, paddingRight: 40 },
+  page:      { fontFamily: 'Helvetica', fontSize: PDF_BODY_TEXT_SIZE, color: '#1a1917', paddingTop: 40, paddingBottom: 50, paddingLeft: 50, paddingRight: 40 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 28 },
-  compName:  { fontSize: 13, fontFamily: 'Helvetica-Bold', marginBottom: 2 },
-  small:     { fontSize: 7.5, color: '#6b6b80', lineHeight: 1.5 },
+  compName:  { ...PDF_HEADER_HEADING_STYLE, marginBottom: 2 },
+  small:     { ...PDF_HEADER_TEXT_STYLE, color: '#6b6b80', lineHeight: 1.5 },
   label:     { fontSize: 7, color: '#6b6b80', marginBottom: 2 },
   body:      { fontSize: 9, lineHeight: 1.6, color: '#3a3a50' },
   bold:      { fontFamily: 'Helvetica-Bold' },
@@ -75,10 +80,10 @@ const S = StyleSheet.create({
     alignSelf:         'flex-start',
     marginBottom:      10,
   },
-  levelText: { fontSize: 9, fontFamily: 'Helvetica-Bold', color: '#fff' },
+  levelText: { ...PDF_HEADER_HEADING_STYLE, color: '#fff' },
 
-  senderSmall:  { fontSize: 7, color: '#6b6b80', borderBottom: '0.5 solid #c0bdb8', paddingBottom: 2, marginBottom: 4 },
-  addressLine:  { fontSize: 9, lineHeight: 1.5 },
+  senderSmall:  { ...PDF_HEADER_TEXT_STYLE, color: '#6b6b80', borderBottom: '0.5 solid #c0bdb8', paddingBottom: 2, marginBottom: 4 },
+  addressLine:  { ...PDF_HEADER_TEXT_STYLE, lineHeight: 1.5 },
 
   subjectLine:  { fontSize: 11, fontFamily: 'Helvetica-Bold', marginTop: 20, marginBottom: 12 },
 

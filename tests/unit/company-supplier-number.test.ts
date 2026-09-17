@@ -81,9 +81,19 @@ describe('Lieferantennummer in Einstellungen und Angebotskopf', () => {
       email: 'info@tb-twir.de',
       phone: '015168456056',
       supplierNumber: '18045419',
+      logoStorageKey: 'logos/company.png',
+      logoScale: 300,
+      logoWidth: 1200,
+      logoHeight: 600,
     })
 
     expect(snapshot.supplierNumber).toBe('18045419')
+    expect(snapshot).toMatchObject({
+      logoStorageKey: 'logos/company.png',
+      logoScale: 300,
+      logoWidth: 1200,
+      logoHeight: 600,
+    })
   })
 
   it('rendert einen Leistungsnachweis mit Lieferantennummer', async () => {

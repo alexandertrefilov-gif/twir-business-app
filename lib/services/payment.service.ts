@@ -121,6 +121,13 @@ export async function addPayment(
   userEmail: string,
 ): Promise<string> {
   return prisma.$transaction(async (tx) => {
+    // Rechnungszeile sperren — verhindert, dass zwei parallele Zahlungsbuchungen
+    // sich gegenseitig beim Neuberechnen von paidAmount/Status überschreiben (lost update).
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${data.invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
     const invoice = await tx.invoice.findUnique({
       where:  { id: data.invoiceId },
       select: {
@@ -210,6 +217,19 @@ export async function removePayment(
   userEmail: string,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
+    const paymentLookup = await tx.payment.findUnique({
+      where:  { id: paymentId },
+      select: { invoiceId: true },
+    })
+    if (!paymentLookup) throw new NotFoundError('Zahlung nicht gefunden')
+
+    // Rechnungszeile sperren — verhindert, dass eine parallele Zahlungsbuchung
+    // oder -entfernung sich beim Neuberechnen von paidAmount/Status überschreibt.
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${paymentLookup.invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
     const payment = await tx.payment.findUnique({
       where:  { id: paymentId },
       select: {

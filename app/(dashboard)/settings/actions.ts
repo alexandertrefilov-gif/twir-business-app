@@ -7,12 +7,14 @@ import { authOptions }      from '@/lib/auth/options'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { SettingsUpdateSchema } from '@/lib/validators/settings.schema'
 import {
-  hasValidCompanyLogoSignature,
+  getCompanyLogoMetadata,
   saveCompanyLogo,
   saveCompanyLogoScale,
   updateSettings,
 } from '@/lib/services/settings.service'
 import { validateUpload } from '@/lib/security/upload-validator'
+import { LocalFilesystemArchiveStorage } from '@/lib/documents/archive-storage'
+import { writeAuditLog } from '@/lib/services/audit.service'
 
 export interface ActionState {
   success?: boolean
@@ -24,16 +26,17 @@ export async function updateLogoScaleAction(scale: number): Promise<ActionState>
   await requirePermission(Resource.SETTINGS, Action.UPDATE)
   const result = SettingsUpdateSchema.shape.logoScale.safeParse(scale)
   if (!result.success) {
-    return { success: false, error: 'Logo-Größe muss zwischen 50 % und 200 % liegen.' }
+    return { success: false, error: 'Logo-Größe muss zwischen 50 % und 400 % liegen.' }
   }
   try {
     await saveCompanyLogoScale(result.data)
     revalidatePath('/settings')
     return { success: true }
   } catch (error: unknown) {
+    console.error('Logo-Größe konnte nicht gespeichert werden.', error)
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Logo-Größe konnte nicht gespeichert werden.',
+      error: 'Logo-Größe konnte nicht gespeichert werden.',
     }
   }
 }
@@ -83,6 +86,9 @@ export async function updateSettingsAction(
       defaultOfferIntro:     formData.get('defaultOfferIntro')   || null,
       defaultOfferOutro:     formData.get('defaultOfferOutro')   || null,
       logoScale:             formData.get('logoScale')           || '140',
+      documentArchiveEnabled: formData.get('documentArchiveEnabled') || 'false',
+      documentArchivePath: formData.get('documentArchivePath') || null,
+      documentArchiveJsonEnabled: formData.get('documentArchiveJsonEnabled') || 'false',
     }).filter(([, v]) => v !== undefined),
   )
 
@@ -97,6 +103,7 @@ export async function updateSettingsAction(
 
   const logo = formData.get('companyLogo')
   let logoContents: Uint8Array | null = null
+  let logoMetadata: ReturnType<typeof getCompanyLogoMetadata> = null
   if (logo instanceof File && logo.size > 0) {
     const validation = validateUpload({
       originalName: logo.name,
@@ -114,7 +121,8 @@ export async function updateSettingsAction(
       }
     }
     logoContents = new Uint8Array(await logo.arrayBuffer())
-    if (!hasValidCompanyLogoSignature(logoContents, logo.type)) {
+    logoMetadata = getCompanyLogoMetadata(logoContents, logo.type)
+    if (!logoMetadata) {
       return {
         success: false,
         error: 'Die Logo-Datei enthält keine gültigen PNG- oder JPEG-Bilddaten.',
@@ -124,13 +132,21 @@ export async function updateSettingsAction(
 
   try {
     await updateSettings(result.data, userId, userEmail)
-    await saveCompanyLogoScale(result.data.logoScale)
-    if (logo instanceof File && logoContents) {
-      await saveCompanyLogo(logo, logoContents)
+    if (logo instanceof File && logoContents && logoMetadata) {
+      await saveCompanyLogo(logo, logoContents, logoMetadata)
     }
     revalidatePath('/settings')
     return { success: true }
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler beim Speichern' }
   }
+}
+
+export async function testDocumentArchiveAction(pathValue: string, createTestFile: boolean): Promise<ActionState> {
+  const actor = await requirePermission(Resource.SETTINGS, Action.UPDATE)
+  const parsed = SettingsUpdateSchema.shape.documentArchivePath.safeParse(pathValue)
+  if (!parsed.success || !parsed.data) return { success: false, error: 'Bitte einen gültigen Archivpfad eingeben.' }
+  const result = await new LocalFilesystemArchiveStorage(parsed.data).healthCheck(createTestFile)
+  await writeAuditLog({ userId: actor.userId, userEmail: actor.userEmail, action: 'ARCHIVE_TESTED', entityType: 'settings', entityId: '00000000-0000-0000-0000-000000000001', metadata: { ok: result.ok, createTestFile } })
+  return result.ok ? { success: true } : { success: false, error: result.message }
 }

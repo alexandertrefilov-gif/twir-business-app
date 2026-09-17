@@ -12,6 +12,7 @@ describe('gemeinsamer Adressbestand', () => {
   const normalizedKeyMigration = source('prisma/migrations_archive_20260915_pre_canonical_baseline/20260903170000_add_address_normalized_key/migration.sql')
   const service = source('lib/services/customer-address.service.ts')
   const picker = source('components/customers/CustomerAddressPicker.tsx')
+  const invoice = source('lib/services/invoice.service.ts')
 
   it('erlaubt eine Adresse bei mehreren Kunden und beiden Adresstypen', () => {
     expect(schema).toContain('customerAddresses CustomerAddress[]')
@@ -86,5 +87,12 @@ describe('gemeinsamer Adressbestand', () => {
     for (const form of ['components/customers/CustomerBillingAddressForm.tsx', 'components/customers/CustomerDeliveryAddressForm.tsx']) {
       expect(source(form)).toContain('<SharedAddressNotice sharedWith={sharedWith} />')
     }
+  })
+
+  it('erhält den unveränderlichen Rechnungssnapshot', () => {
+    expect(invoice).toContain("type: 'BILLING'")
+    expect(invoice).toContain('include: { address: true }')
+    expect(invoice).toContain('return buildBillingAddressSnapshot')
+    expect(invoice).toContain("recipientSource: 'BILLING'")
   })
 })

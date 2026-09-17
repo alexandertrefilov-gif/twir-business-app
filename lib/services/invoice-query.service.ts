@@ -137,7 +137,11 @@ export async function getInvoiceById(id: string) {
     where: { id },
     include: {
       customer:  true,
-      order:     { select: { id: true, orderNumber: true, title: true } },
+      order:     { select: {
+        id: true, orderNumber: true, title: true,
+        offer: { select: { id: true, offerNumber: true } },
+        serviceReports: { orderBy: { reportDate: 'asc' }, take: 1, select: { id: true, reportNumber: true, reportDate: true } },
+      } },
       items:     { orderBy: { position: 'asc' } },
       createdBy: { select: { firstName: true, lastName: true } },
     },

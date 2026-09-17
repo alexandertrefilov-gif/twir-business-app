@@ -5,7 +5,7 @@
 import { useState }           from 'react'
 import { useRouter }          from 'next/navigation'
 import { ConfirmDialog }      from '@/components/shared/ConfirmDialog'
-import { deleteDocumentAction } from '@/app/(dashboard)/documents/actions'
+import { deleteDocumentAction, retryDocumentArchiveAction } from '@/app/(dashboard)/documents/actions'
 import { formatFileSize }     from '@/lib/services/document.service'
 import { format }             from 'date-fns'
 import { de }                 from 'date-fns/locale'
@@ -30,6 +30,8 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   ORDER_PDF:          'Auftrags-PDF',
   INVOICE_PDF:        'Rechnungs-PDF',
   SERVICE_REPORT_PDF: 'Leistungsnachweis',
+  ORDER_CONFIRMATION: 'Kundenbestätigung Auftrag',
+  SERVICE_REPORT_CONFIRMATION: 'Kundenbestätigung Leistungsnachweis',
   CORRECTION_PDF:     'Korrektur-PDF',
   CANCELLATION_PDF:   'Storno-PDF',
   DUNNING_PDF:        'Mahnung',
@@ -42,8 +44,9 @@ export function DocumentArchive({
 }: DocumentArchiveProps) {
   const router            = useRouter()
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const visibleDocuments = documents.filter((document) => document.format !== 'JSON')
 
-  if (documents.length === 0) {
+  if (visibleDocuments.length === 0) {
     return (
       <div className="text-center py-8">
         <div className="w-10 h-10 rounded-xl bg-stone-100 flex items-center justify-center mx-auto mb-3">
@@ -64,7 +67,7 @@ export function DocumentArchive({
         </div>
       )}
       <ul className="divide-y divide-stone-100">
-        {documents.map((doc) => {
+        {visibleDocuments.map((doc) => {
           const iconType = MIME_ICONS[doc.mimeType] ?? 'file'
           const typeLabel = DOC_TYPE_LABELS[doc.type] ?? doc.type
 
@@ -92,6 +95,7 @@ export function DocumentArchive({
                   {doc.isArchived && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 font-mono">Archiv</span>
                   )}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${doc.archiveStatus === 'ARCHIVED' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : doc.archiveStatus === 'FAILED' ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>{doc.format} · {doc.lifecycle} · {doc.archiveStatus}</span>
                 </div>
                 <div className="flex gap-3 mt-0.5 text-xs text-muted-foreground">
                   <span className="mono">{formatFileSize(doc.fileSize)}</span>
@@ -99,11 +103,13 @@ export function DocumentArchive({
                   {doc.entityLabel !== '–' && (
                     <span className="mono">{doc.entityLabel}</span>
                   )}
+                  {doc.archiveError && <span className="text-red-700" title={doc.archiveError}>{doc.archiveError}</span>}
                 </div>
               </div>
 
               {/* Actions */}
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                {doc.archiveStatus === 'FAILED' && <button className="px-2 py-1 rounded text-xs text-amber-800 hover:bg-amber-50" onClick={async () => { const result = await retryDocumentArchiveAction(doc.id); if (!result.success) setDeleteError(result.error ?? 'Retry fehlgeschlagen'); else { setDeleteError(null); router.refresh() } }}>Erneut versuchen</button>}
                 {/* Download — via API route (auth-protected) */}
                 <a
                   href={`/api/documents/${doc.id}/download`}

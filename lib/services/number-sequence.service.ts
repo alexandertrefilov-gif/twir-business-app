@@ -53,18 +53,38 @@ export async function nextNumber(
   let sequence: { id: string; lastNumber: number; prefix: string; format: string }
 
   if (existing.length === 0) {
-    // Ersten Eintrag für diesen Nummernzeitraum anlegen
+    // Ersten Eintrag für diesen Nummernzeitraum anlegen.
+    // FOR UPDATE kann eine noch nicht existierende Zeile nicht sperren — ein
+    // paralleler Request kann daher denselben Bootstrap gleichzeitig auslösen.
+    // @@unique([type, year]) verhindert einen doppelten Eintrag; der unterlegene
+    // Request liest die inzwischen angelegte Zeile stattdessen gesperrt neu.
     const settings = await tx.companySetting.findFirst()
     const prefix = getPrefixFromSettings(type, settings)
 
-    const created = await tx.numberSequence.create({
-      data: { type, year: period, prefix, lastNumber: 0 },
-    })
-    sequence = {
-      id:         created.id,
-      lastNumber: created.lastNumber,
-      prefix:     created.prefix,
-      format:     created.format,
+    try {
+      const created = await tx.numberSequence.create({
+        data: { type, year: period, prefix, lastNumber: 0 },
+      })
+      sequence = {
+        id:         created.id,
+        lastNumber: created.lastNumber,
+        prefix:     created.prefix,
+        format:     created.format,
+      }
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error
+      const retried = await tx.$queryRaw<
+        Array<{ id: string; last_number: number; prefix: string; format: string }>
+      >`
+        SELECT id, last_number, prefix, format
+        FROM number_sequences
+        WHERE type = ${type}::"NumberSequenceType"
+          AND year = ${period}
+        FOR UPDATE
+      `
+      if (retried.length === 0) throw error
+      const row = retried[0]
+      sequence = { id: row.id, lastNumber: row.last_number, prefix: row.prefix, format: row.format }
     }
   } else {
     const row = existing[0]

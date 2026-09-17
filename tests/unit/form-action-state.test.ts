@@ -21,6 +21,7 @@ vi.mock('@/lib/services/settings.service', () => ({
   updateSettings: mocks.updateSettings,
   saveCompanyLogoScale: mocks.saveCompanyLogoScale,
   saveCompanyLogo: vi.fn(),
+  getCompanyLogoMetadata: vi.fn(),
   hasValidCompanyLogoSignature: vi.fn(),
 }))
 
@@ -61,7 +62,7 @@ describe('React-18-kompatibler Formularzustand', () => {
 
     expect(state).toEqual({ success: true })
     expect(mocks.updateSettings).toHaveBeenCalledTimes(1)
-    expect(mocks.saveCompanyLogoScale).toHaveBeenCalledWith(140)
+    expect(mocks.saveCompanyLogoScale).not.toHaveBeenCalled()
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/settings')
   })
 
@@ -85,17 +86,33 @@ describe('React-18-kompatibler Formularzustand', () => {
     })
   })
 
-  it('speichert eine geänderte Logo-Größe unmittelbar', async () => {
-    const state = await updateLogoScaleAction(200)
+  it.each([100, 200, 300, 400])('speichert Logo-Größe %i unmittelbar', async (scale) => {
+    const state = await updateLogoScaleAction(scale)
 
     expect(state).toEqual({ success: true })
-    expect(mocks.saveCompanyLogoScale).toHaveBeenCalledWith(200)
+    expect(mocks.saveCompanyLogoScale).toHaveBeenCalledWith(scale)
   })
 
   it('weist eine Logo-Größe außerhalb des Bereichs zurück', async () => {
-    const state = await updateLogoScaleAction(210)
+    const state = await updateLogoScaleAction(410)
 
     expect(state.success).toBe(false)
     expect(mocks.saveCompanyLogoScale).not.toHaveBeenCalled()
+  })
+
+  it('gibt bei einem Prisma-Fehler keine technischen Details an die UI weiter', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mocks.saveCompanyLogoScale.mockRejectedValueOnce(
+      new Error('Unknown argument `logoScale` in prisma.companySetting.update()'),
+    )
+
+    const state = await updateLogoScaleAction(150)
+
+    expect(state).toEqual({
+      success: false,
+      error: 'Logo-Größe konnte nicht gespeichert werden.',
+    })
+    expect(consoleError).toHaveBeenCalledOnce()
+    consoleError.mockRestore()
   })
 })

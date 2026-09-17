@@ -70,6 +70,7 @@ describe('Gemeinsamer PDF-Dokumentheader', () => {
     'lib/pdf-templates/offer.template.tsx',
     'lib/pdf-templates/order.template.tsx',
     'lib/pdf-templates/service-report.template.tsx',
+    'lib/pdf-templates/invoice.template.tsx',
   ])('verwendet in %s die gemeinsame Header-Geometrie ohne individuellen oberen Abstand', (file) => {
     const source = readFileSync(resolve(process.cwd(), file), 'utf8')
 

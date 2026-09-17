@@ -25,11 +25,23 @@ import {
   ConflictError,
   NotFoundError,
 } from '@/lib/auth/permissions'
+import { isServiceReportReadyForInvoice } from '@/lib/workflow/invoice-eligibility'
 
 // ── Typen ────────────────────────────────────────────────────
 
 export interface CreateInvoiceDraftInput {
   customerId:      string
+  invoiceRecipientSource: 'CUSTOMER' | 'BILLING' | 'CUSTOM'
+  billingAddressId?: string
+  recipientName?:        string
+  recipientAdditional?:  string
+  recipientStreet?:      string
+  recipientHouseNumber?: string
+  recipientPostalCode?:  string
+  recipientCity?:        string
+  recipientCountry?:     string
+  recipientContactName?: string
+  recipientEmail?:       string
   orderId?:        string
   invoiceDate:     Date
   dueDate?:        Date
@@ -51,6 +63,17 @@ export interface InvoiceItemInput {
   taxRate:     number
 }
 
+export function assertServiceReportReadyForInvoice(report: {
+  status: string
+  finalizedAt: Date | null
+  sentAt: Date | null
+  confirmedAt: Date | null
+}): void {
+  if (!isServiceReportReadyForInvoice(report)) {
+    throw new BusinessRuleError('Die Rechnung kann erst nach bestätigtem Leistungsnachweis erstellt werden.')
+  }
+}
+
 // ── Hauptfunktionen ──────────────────────────────────────────
 
 /**
@@ -70,11 +93,56 @@ export async function createInvoiceDraft(
   }
 
   const totals = calculateTotals(input.items)
-
   const invoice = await prisma.$transaction(async (tx) => {
+    if (input.orderId) {
+      // Serialisiert parallele Erstellungen für denselben Auftrag. So reicht die
+      // UI-Sperre nicht als einzige Absicherung gegen Doppelklicks/Mehrfachrequests.
+      const lockedOrders = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM orders
+        WHERE id = ${input.orderId}
+          AND deleted_at IS NULL
+        FOR UPDATE
+      `
+      if (lockedOrders.length === 0) throw new NotFoundError('Auftrag nicht gefunden')
+
+      const order = await tx.order.findUnique({
+        where: { id: input.orderId },
+        select: {
+          customerId: true,
+          status: true,
+          serviceReports: { take: 2, select: { id: true, status: true, finalizedAt: true, sentAt: true, confirmedAt: true } },
+        },
+      })
+      if (!order) throw new NotFoundError('Auftrag nicht gefunden')
+      if (order.customerId !== input.customerId) {
+        throw new BusinessRuleError('Auftrag und Kunde stimmen nicht überein.')
+      }
+      if (order.status === 'CANCELLED' || order.status === 'INVOICED') {
+        throw new BusinessRuleError('Für stornierte oder bereits abgerechnete Aufträge kann keine Rechnung erstellt werden.')
+      }
+      if (order.serviceReports.length === 0) {
+        throw new BusinessRuleError('Für diesen Auftrag existiert noch kein Leistungsnachweis.')
+      }
+      if (order.serviceReports.length > 1) {
+        throw new BusinessRuleError('Für diesen Auftrag existieren mehrere Leistungsnachweise. Bitte den Datenbestand zuerst bereinigen.')
+      }
+      assertServiceReportReadyForInvoice(order.serviceReports[0])
+
+      const existingInvoice = await tx.invoice.findFirst({
+        where: { orderId: input.orderId, type: InvoiceType.STANDARD },
+        select: { id: true },
+      })
+      if (existingInvoice) {
+        throw new BusinessRuleError('Für diesen Auftrag existiert bereits eine Rechnung.')
+      }
+    }
+
+    const customerSnapshot = await resolveInvoiceRecipientSnapshot(customer, input, tx)
     const inv = await tx.invoice.create({
       data: {
         customerId:      input.customerId,
+        customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
         orderId:         input.orderId,
         status:          InvoiceStatus.DRAFT,
         type:            InvoiceType.STANDARD,
@@ -174,7 +242,13 @@ export async function finalizeInvoice(
   userEmail: string,
 ): Promise<{ invoiceNumber: string }> {
   return prisma.$transaction(async (tx) => {
-    // 1. Rechnung mit Lock lesen
+    // 1. Rechnungszeile sperren — verhindert, dass zwei parallele Finalisierungen
+    // derselben Rechnung beide eine Nummer verbrauchen bzw. sich gegenseitig überschreiben.
+    const lockedInvoices = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${invoiceId} FOR UPDATE
+    `
+    if (lockedInvoices.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
     const invoice = await tx.invoice.findUnique({
       where:   { id: invoiceId },
       include: { customer: true, items: true },
@@ -200,15 +274,17 @@ export async function finalizeInvoice(
       )
     }
 
-    const customerSnapshot = buildCustomerSnapshot(invoice.customer)
+    const customerSnapshot = invoice.customerSnapshot ?? buildCustomerSnapshot(invoice.customer)
     const companySnapshot  = buildCompanySnapshot(companySetting)
 
     // 5. Rechnungsnummer vergeben (gesperrt innerhalb dieser Transaktion)
     const invoiceNumber = await nextNumber(NumberSequenceType.INVOICE, tx)
 
-    // 6. Rechnung finalisieren
-    const finalized = await tx.invoice.update({
-      where: { id: invoiceId },
+    // 6. Rechnung finalisieren — optimistische Bedingung auf den Ausgangsstatus
+    // zusätzlich zum Row-Lock: verhindert unter allen Umständen, dass eine zweite
+    // parallele Finalisierung dieselbe Rechnung mit einer zweiten Nummer überschreibt.
+    const updated = await tx.invoice.updateMany({
+      where: { id: invoiceId, status: InvoiceStatus.DRAFT },
       data: {
         invoiceNumber,
         status:           InvoiceStatus.FINALIZED,
@@ -217,6 +293,10 @@ export async function finalizeInvoice(
         companySnapshot:  companySnapshot  as Prisma.InputJsonValue,
       },
     })
+    if (updated.count === 0) {
+      throw new ConflictError('Die Rechnung wurde zwischenzeitlich bereits finalisiert.')
+    }
+    const finalized = await tx.invoice.findUniqueOrThrow({ where: { id: invoiceId }, select: { invoiceNumber: true } })
 
     // 7. Audit-Log innerhalb der Transaktion
     await buildAuditLogCreate(tx, {
@@ -353,7 +433,8 @@ function validateInvoiceForFinalization(invoice: {
   }
 }
 
-function buildCustomerSnapshot(customer: {
+type InvoiceRecipientCustomer = {
+  id:          string
   name:        string
   legalName:   string | null
   vatId:       string | null
@@ -363,9 +444,15 @@ function buildCustomerSnapshot(customer: {
   postalCode:  string | null
   city:        string | null
   country:     string
-}) {
+}
+
+function buildCustomerSnapshot(customer: InvoiceRecipientCustomer) {
   return {
+    recipientSource: 'CUSTOMER',
     name:        customer.legalName ?? customer.name,
+    additional:  null,
+    contactName: null,
+    email:       null,
     vatId:       customer.vatId,
     taxNumber:   customer.taxNumber,
     street:      customer.street,
@@ -373,6 +460,47 @@ function buildCustomerSnapshot(customer: {
     postalCode:  customer.postalCode,
     city:        customer.city,
     country:     customer.country,
+  }
+}
+
+export async function resolveInvoiceRecipientSnapshot(
+  customer: InvoiceRecipientCustomer,
+  input: Pick<CreateInvoiceDraftInput,
+    'invoiceRecipientSource' | 'billingAddressId' | 'recipientName' | 'recipientAdditional' | 'recipientStreet' |
+    'recipientHouseNumber' | 'recipientPostalCode' | 'recipientCity' | 'recipientCountry' | 'recipientContactName' | 'recipientEmail'>,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  if (input.invoiceRecipientSource === 'CUSTOMER') return buildCustomerSnapshot(customer)
+  if (input.invoiceRecipientSource === 'BILLING') {
+    if (!input.billingAddressId) throw new BusinessRuleError('Bitte eine Rechnungsadresse auswählen.')
+    const assignment = await db.customerAddress.findFirst({
+      where: { id: input.billingAddressId, customerId: customer.id, type: 'BILLING', deletedAt: null, isActive: true },
+      include: { address: true },
+    })
+    if (!assignment) throw new BusinessRuleError('Die gewählte Rechnungsadresse ist nicht mehr verfügbar.')
+    return buildBillingAddressSnapshot(customer, { ...assignment.address, id: assignment.id })
+  }
+  if (!input.recipientName || !input.recipientStreet || !input.recipientPostalCode || !input.recipientCity || !input.recipientCountry) {
+    throw new BusinessRuleError('Die einmalige Rechnungsadresse ist unvollständig.')
+  }
+  return {
+    recipientSource: 'CUSTOM', name: input.recipientName, additional: input.recipientAdditional ?? null,
+    street: input.recipientStreet, houseNumber: input.recipientHouseNumber ?? null,
+    postalCode: input.recipientPostalCode, city: input.recipientCity, country: input.recipientCountry,
+    contactName: input.recipientContactName ?? null, email: input.recipientEmail ?? null,
+    vatId: customer.vatId, taxNumber: customer.taxNumber,
+  }
+}
+
+export function buildBillingAddressSnapshot(customer: Pick<InvoiceRecipientCustomer, 'vatId'|'taxNumber'>, address: {
+  id: string; companyName: string; additional: string | null; street: string; houseNumber: string | null
+  postalCode: string; city: string; country: string; contactName: string | null; email: string | null
+}) {
+  return {
+    recipientSource: 'BILLING', billingAddressId: address.id, name: address.companyName,
+    additional: address.additional, contactName: address.contactName, email: address.email,
+    street: address.street, houseNumber: address.houseNumber, postalCode: address.postalCode,
+    city: address.city, country: address.country, vatId: customer.vatId, taxNumber: customer.taxNumber,
   }
 }
 
@@ -392,6 +520,10 @@ export function buildCompanySnapshot(settings: {
   email:        string | null
   phone:        string | null
   supplierNumber: string | null
+  logoStorageKey?: string | null
+  logoScale?: number
+  logoWidth?: number | null
+  logoHeight?: number | null
 }) {
   return {
     companyName:  settings.companyName,
@@ -409,5 +541,9 @@ export function buildCompanySnapshot(settings: {
     email:        settings.email,
     phone:        settings.phone,
     supplierNumber: settings.supplierNumber,
+    logoStorageKey: settings.logoStorageKey ?? null,
+    logoScale: settings.logoScale ?? 140,
+    logoWidth: settings.logoWidth ?? null,
+    logoHeight: settings.logoHeight ?? null,
   }
 }

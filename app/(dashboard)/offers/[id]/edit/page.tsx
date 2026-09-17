@@ -7,7 +7,10 @@ import { getOfferById }    from '@/lib/services/offer.service'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }          from '@/lib/db/prisma'
 import { changeOfferNumberAction, updateOfferAction } from '../../actions'
-import { BusinessDocumentLayout, BusinessDocumentSidebar, BusinessWorkflowPlaceholder } from '@/components/documents/BusinessDocumentLayout'
+import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
+import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
+import { getBusinessProcessForOffer } from '@/lib/services/business-process.service'
+import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
 import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
@@ -24,7 +27,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function EditOfferPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await requirePermission(Resource.OFFER, Action.UPDATE)
+  const user = await requirePermission(Resource.OFFER, Action.UPDATE)
 
   let offer
   try {
@@ -46,6 +49,10 @@ export default async function EditOfferPage({ params }: { params: Promise<{ id: 
 
   const boundAction = updateOfferAction.bind(null, offer.id)
   const boundNumberAction = changeOfferNumberAction.bind(null, offer.id)
+  const [process, processPermissions] = await Promise.all([
+    getBusinessProcessForOffer(offer.id, user.userId, user.role),
+    getBusinessProcessPermissions(),
+  ])
 
   // Prepare defaults from existing data
   const itemDefaults = offer.items.map((item, idx) => ({
@@ -92,11 +99,7 @@ export default async function EditOfferPage({ params }: { params: Promise<{ id: 
             />
           </div>
           <BusinessDocumentSidebar sticky>
-            <BusinessWorkflowPlaceholder message="Der vollständige Geschäftsvorgang-Workflow steht an dieser Stelle noch nicht zur Verfügung.">
-              <p className="mb-3 text-sm font-600 text-foreground">Status: Entwurf</p>
-              <p className="mb-3 text-sm text-muted-foreground">{offerNumberForDisplay(offer.offerNumber)}</p>
-              <div id="document-edit-workflow-actions" />
-            </BusinessWorkflowPlaceholder>
+            <BusinessProcessWorkflow process={process} currentDocument={{ type: 'offer', id: offer.id }} permissions={processPermissions} editingAction={<div id="document-edit-workflow-actions" />} />
           </BusinessDocumentSidebar>
         </BusinessDocumentLayout>
       </div>

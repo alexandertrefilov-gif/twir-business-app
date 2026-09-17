@@ -2,7 +2,7 @@
 import type { Metadata }  from 'next'
 import { PageHeader }     from '@/components/shared/PageHeader'
 import { SettingsForm }   from '@/components/settings/SettingsForm'
-import { getCompanyLogoScale, getSettings } from '@/lib/services/settings.service'
+import { getSettings } from '@/lib/services/settings.service'
 import { getSequenceStatus } from '@/lib/services/number-sequence.service'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 
@@ -11,10 +11,9 @@ export const metadata: Metadata = { title: 'Einstellungen' }
 export default async function SettingsPage() {
   await requirePermission(Resource.SETTINGS, Action.READ)
 
-  const [settings, sequences, logoScale] = await Promise.all([
+  const [settings, sequences] = await Promise.all([
     getSettings(),
     getSequenceStatus(),
-    getCompanyLogoScale(),
   ])
 
   return (
@@ -61,7 +60,10 @@ export default async function SettingsPage() {
             defaultOfferIntro:     settings.defaultOfferIntro  ?? '',
             defaultOfferOutro:     settings.defaultOfferOutro  ?? '',
             logoPath:              settings.logoPath            ?? '',
-            logoScale,
+            logoScale:             settings.logoScale,
+            documentArchiveEnabled: settings.documentArchiveEnabled ? 'true' : '',
+            documentArchivePath: settings.documentArchivePath ?? '',
+            documentArchiveJsonEnabled: settings.documentArchiveJsonEnabled ? 'true' : '',
           }}
           sequences={sequences.map((s) => ({
             type:       s.type,

@@ -13,16 +13,20 @@ import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { InvoiceDraftSchema } from '@/lib/validators/invoice.schema'
 import {
   createInvoiceDraft,
+  resolveInvoiceRecipientSnapshot,
   deleteInvoiceDraft,
   finalizeInvoice,
   cancelInvoice,
 } from '@/lib/services/invoice.service'
 import { prisma } from '@/lib/db/prisma'
+import { Prisma } from '@prisma/client'
 import { InvoiceStatus, isInvoiceTransitionAllowed } from '@/types/enums'
-import { BusinessRuleError, NotFoundError } from '@/lib/auth/permissions'
+import { BusinessRuleError, ConflictError, NotFoundError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate } from '@/lib/services/audit.service'
 import { AuditAction } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
+import { archiveBusinessDocument } from '@/lib/documents/document-archive.service'
+import type { RoleName } from '@/types/enums'
 
 export interface ActionState {
   success?:     boolean
@@ -33,8 +37,8 @@ export interface ActionState {
 async function getActor() {
   const session = await getServerSession(authOptions)
   if (!session?.user) throw new Error('Nicht angemeldet')
-  const u = session.user as { id: string; email: string }
-  return { userId: u.id, userEmail: u.email }
+  const u = session.user as { id: string; email: string; role: RoleName }
+  return { userId: u.id, userEmail: u.email, role: u.role }
 }
 
 function parseItems(formData: FormData) {
@@ -54,6 +58,17 @@ export async function createInvoiceDraftAction(
 
   const raw = {
     customerId:          formData.get('customerId'),
+    invoiceRecipientSource: formData.get('invoiceRecipientSource') || 'CUSTOMER',
+    billingAddressId:       formData.get('billingAddressId') || null,
+    recipientName:        formData.get('recipientName')        || null,
+    recipientAdditional:  formData.get('recipientAdditional')  || null,
+    recipientStreet:      formData.get('recipientStreet')      || null,
+    recipientHouseNumber: formData.get('recipientHouseNumber') || null,
+    recipientPostalCode:  formData.get('recipientPostalCode')  || null,
+    recipientCity:        formData.get('recipientCity')        || null,
+    recipientCountry:     formData.get('recipientCountry')     || null,
+    recipientContactName: formData.get('recipientContactName') || null,
+    recipientEmail:       formData.get('recipientEmail')       || null,
     orderId:             formData.get('orderId')   || null,
     invoiceDate:         formData.get('invoiceDate'),
     dueDate:             formData.get('dueDate')   || null,
@@ -82,6 +97,16 @@ export async function createInvoiceDraftAction(
         ...result.data,
         // Coerce nullables
         orderId:             result.data.orderId             ?? undefined,
+        billingAddressId:     result.data.billingAddressId     ?? undefined,
+        recipientName:        result.data.recipientName        ?? undefined,
+        recipientAdditional:  result.data.recipientAdditional  ?? undefined,
+        recipientStreet:      result.data.recipientStreet      ?? undefined,
+        recipientHouseNumber: result.data.recipientHouseNumber ?? undefined,
+        recipientPostalCode:  result.data.recipientPostalCode  ?? undefined,
+        recipientCity:        result.data.recipientCity        ?? undefined,
+        recipientCountry:     result.data.recipientCountry     ?? undefined,
+        recipientContactName: result.data.recipientContactName ?? undefined,
+        recipientEmail:       result.data.recipientEmail       ?? undefined,
         dueDate:             result.data.dueDate             ?? undefined,
         deliveryDate:        result.data.deliveryDate        ?? undefined,
         deliveryPeriodStart: result.data.deliveryPeriodStart ?? undefined,
@@ -93,6 +118,7 @@ export async function createInvoiceDraftAction(
       userId,
       userEmail,
     )
+    await archiveBusinessDocument('invoice', invoiceId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler beim Anlegen' }
   }
@@ -114,6 +140,17 @@ export async function updateInvoiceDraftAction(
 
   const raw = {
     customerId:          formData.get('customerId'),
+    invoiceRecipientSource: formData.get('invoiceRecipientSource') || 'CUSTOMER',
+    billingAddressId:       formData.get('billingAddressId') || null,
+    recipientName:        formData.get('recipientName')        || null,
+    recipientAdditional:  formData.get('recipientAdditional')  || null,
+    recipientStreet:      formData.get('recipientStreet')      || null,
+    recipientHouseNumber: formData.get('recipientHouseNumber') || null,
+    recipientPostalCode:  formData.get('recipientPostalCode')  || null,
+    recipientCity:        formData.get('recipientCity')        || null,
+    recipientCountry:     formData.get('recipientCountry')     || null,
+    recipientContactName: formData.get('recipientContactName') || null,
+    recipientEmail:       formData.get('recipientEmail')       || null,
     orderId:             formData.get('orderId')   || null,
     invoiceDate:         formData.get('invoiceDate'),
     dueDate:             formData.get('dueDate')   || null,
@@ -146,6 +183,8 @@ export async function updateInvoiceDraftAction(
       throw new BusinessRuleError('Nur Rechnungsentwürfe können bearbeitet werden.')
     }
 
+    const customer = await prisma.customer.findFirst({ where: { id: result.data.customerId, deletedAt: null } })
+    if (!customer) throw new NotFoundError('Kunde nicht gefunden')
     const items = result.data.items
     let totalNet = 0, totalTax = 0
     for (const item of items) {
@@ -158,11 +197,25 @@ export async function updateInvoiceDraftAction(
     const totalGross = Math.round((totalNet + totalTax) * 100) / 100
 
     await prisma.$transaction(async (tx) => {
+      const customerSnapshot = await resolveInvoiceRecipientSnapshot(customer, {
+        invoiceRecipientSource: result.data.invoiceRecipientSource,
+        billingAddressId: result.data.billingAddressId ?? undefined,
+        recipientName: result.data.recipientName ?? undefined,
+        recipientAdditional: result.data.recipientAdditional ?? undefined,
+        recipientStreet: result.data.recipientStreet ?? undefined,
+        recipientHouseNumber: result.data.recipientHouseNumber ?? undefined,
+        recipientPostalCode: result.data.recipientPostalCode ?? undefined,
+        recipientCity: result.data.recipientCity ?? undefined,
+        recipientCountry: result.data.recipientCountry ?? undefined,
+        recipientContactName: result.data.recipientContactName ?? undefined,
+        recipientEmail: result.data.recipientEmail ?? undefined,
+      }, tx)
       await tx.invoiceItem.deleteMany({ where: { invoiceId } })
       await tx.invoice.update({
         where: { id: invoiceId },
         data: {
           customerId:          result.data.customerId,
+          customerSnapshot:    customerSnapshot as Prisma.InputJsonValue,
           orderId:             result.data.orderId             ?? null,
           invoiceDate:         result.data.invoiceDate,
           dueDate:             result.data.dueDate             ?? null,
@@ -200,6 +253,7 @@ export async function updateInvoiceDraftAction(
         newValue:   { totalNet, totalGross, itemCount: items.length },
       })
     })
+    await archiveBusinessDocument('invoice', invoiceId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler beim Speichern' }
   }
@@ -236,9 +290,10 @@ export async function finalizeInvoiceAction(invoiceId: string): Promise<ActionSt
 
   try {
     const { invoiceNumber } = await finalizeInvoice(invoiceId, userId, userEmail)
+    const archive = await archiveBusinessDocument('invoice', invoiceId, 'FINAL', await getActor())
     revalidatePath('/invoices')
     revalidatePath(`/invoices/${invoiceId}`)
-    return { success: true, error: undefined }
+    return archive.status === 'failed' ? { success: true, error: `Rechnung finalisiert; Archivierung fehlgeschlagen: ${archive.error}` } : { success: true, error: undefined }
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler beim Finalisieren' }
   }
@@ -285,13 +340,18 @@ export async function changeInvoiceStatusAction(
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.invoice.update({
-        where: { id: invoiceId },
+      // Optimistische Bedingung auf den Ausgangsstatus: verhindert, dass zwei
+      // parallele Requests denselben Übergang doppelt anwenden bzw. doppelt auditieren.
+      const updated = await tx.invoice.updateMany({
+        where: { id: invoiceId, status: invoice.status },
         data: {
           status:  toStatus,
           ...(toStatus === InvoiceStatus.SENT ? { sentAt: new Date() } : {}),
         },
       })
+      if (updated.count === 0) {
+        throw new ConflictError('Der Rechnungsstatus wurde zwischenzeitlich geändert.')
+      }
       await buildAuditLogCreate(tx, {
         userId, userEmail,
         action:     AuditAction.STATUS_CHANGE,

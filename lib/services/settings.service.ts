@@ -90,6 +90,10 @@ export async function updateSettings(
         defaultInvoiceOutro:   data.defaultInvoiceOutro   ?? null,
         defaultOfferIntro:     data.defaultOfferIntro     ?? null,
         defaultOfferOutro:     data.defaultOfferOutro     ?? null,
+        logoScale:             data.logoScale,
+        documentArchiveEnabled: data.documentArchiveEnabled,
+        documentArchivePath: data.documentArchivePath,
+        documentArchiveJsonEnabled: data.documentArchiveJsonEnabled,
       },
     })
 
@@ -107,6 +111,8 @@ export async function updateSettings(
         companyName: data.companyName,
         vatId:       data.vatId,
         iban:        data.iban,
+        documentArchiveEnabled: data.documentArchiveEnabled,
+        documentArchivePath: data.documentArchivePath,
       },
     })
   })
@@ -115,7 +121,6 @@ export async function updateSettings(
 /** Für PDF-Templates: gibt Snapshot-kompatibles Objekt zurück */
 export async function getCompanySnapshot() {
   const s = await getSettings()
-  const logoScale = await getCompanyLogoScale()
   return {
     companyName:      s.companyName,
     legalForm:        s.legalForm,
@@ -138,34 +143,21 @@ export async function getCompanySnapshot() {
     supplierNumber:   s.supplierNumber,
     logoPath:          s.logoPath,
     logoStorageKey:    s.logoStorageKey,
-    logoScale,
+    logoScale:         s.logoScale,
     logoWidth:         s.logoWidth,
     logoHeight:        s.logoHeight,
   }
 }
 
-const DEFAULT_LOGO_SCALE = 140
-
 export async function getCompanyLogoScale(): Promise<number> {
-  if ((process.env.STORAGE_DRIVER ?? 'local') !== 'local') return DEFAULT_LOGO_SCALE
-  const storageRoot = path.resolve(process.env.STORAGE_LOCAL_PATH ?? './storage/documents')
-  try {
-    const value = Number(await fs.readFile(path.join(storageRoot, 'company-logo-scale.txt'), 'utf8'))
-    return Number.isInteger(value) && value >= 50 && value <= 200
-      ? value
-      : DEFAULT_LOGO_SCALE
-  } catch {
-    return DEFAULT_LOGO_SCALE
-  }
+  return (await getSettings()).logoScale
 }
 
 export async function saveCompanyLogoScale(scale: number): Promise<void> {
-  if ((process.env.STORAGE_DRIVER ?? 'local') !== 'local') {
-    throw new Error('Logo-Größe ist für den konfigurierten Speicher noch nicht verfügbar.')
-  }
-  const storageRoot = path.resolve(process.env.STORAGE_LOCAL_PATH ?? './storage/documents')
-  await fs.mkdir(storageRoot, { recursive: true })
-  await fs.writeFile(path.join(storageRoot, 'company-logo-scale.txt'), String(scale), 'utf8')
+  await prisma.companySetting.update({
+    where: { id: SETTINGS_ID },
+    data: { logoScale: scale },
+  })
 }
 
 export function hasValidCompanyLogoSignature(
@@ -248,7 +240,11 @@ function getSafeJpegDimensions(contents: Uint8Array): CompanyLogoMetadata | null
   return null
 }
 
-export async function saveCompanyLogo(file: File, contents: Uint8Array): Promise<void> {
+export async function saveCompanyLogo(
+  file: File,
+  contents: Uint8Array,
+  metadata: CompanyLogoMetadata,
+): Promise<void> {
   if ((process.env.STORAGE_DRIVER ?? 'local') !== 'local') {
     throw new Error('Logo-Upload ist für den konfigurierten Speicher noch nicht verfügbar.')
   }
@@ -267,6 +263,11 @@ export async function saveCompanyLogo(file: File, contents: Uint8Array): Promise
   await fs.writeFile(destination, contents)
   await prisma.companySetting.update({
     where: { id: SETTINGS_ID },
-    data: { logoPath: storageKey, logoStorageKey: storageKey },
+    data: {
+      logoPath: storageKey,
+      logoStorageKey: storageKey,
+      logoWidth: metadata.width,
+      logoHeight: metadata.height,
+    },
   })
 }

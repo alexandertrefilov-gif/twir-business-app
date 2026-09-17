@@ -4,6 +4,7 @@
 import { useActionState, useState, useTransition } from 'react'
 import type { ActionState } from '@/app/(dashboard)/settings/actions'
 import {
+  testDocumentArchiveAction,
   updateLogoScaleAction,
   updateSettingsAction,
 } from '@/app/(dashboard)/settings/actions'
@@ -29,14 +30,16 @@ export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
   const [logoScaleMessage, setLogoScaleMessage] = useState('')
   const [logoScale, setLogoScale] = useState(() => {
     const initial = Number(defaults.logoScale ?? 140)
-    return Math.min(200, Math.max(50, initial))
+    return Math.min(400, Math.max(50, initial))
   })
+  const [archiveMessage, setArchiveMessage] = useState('')
+  const [archivePath, setArchivePath] = useState(() => String(defaults.documentArchivePath ?? ''))
   const fe = state.fieldErrors ?? {}
   const v  = (key: string) => String(defaults[key] ?? '')
 
   function changeLogoScale(delta: number) {
     const previous = logoScale
-    const next = Math.min(200, Math.max(50, previous + delta))
+    const next = Math.min(400, Math.max(50, previous + delta))
     if (next === previous) return
     setLogoScale(next)
     setLogoScaleMessage('Wird gespeichert …')
@@ -98,7 +101,7 @@ export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
               <button
                 type="button"
                 onClick={() => changeLogoScale(10)}
-                disabled={logoScale >= 200 || isSavingLogoScale}
+                disabled={logoScale >= 400 || isSavingLogoScale}
                 aria-label="Logo vergrößern"
                 className="h-9 w-9 rounded-md border border-blue-200 bg-blue-50 text-lg font-600 text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-30"
               >
@@ -224,6 +227,29 @@ export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
           <TextArea label="Standard-Schlusstext Rechnung"     name="defaultInvoiceOutro" defaultValue={v('defaultInvoiceOutro')} />
           <TextArea label="Standard-Einleitungstext Angebot"  name="defaultOfferIntro"   defaultValue={v('defaultOfferIntro')} />
           <TextArea label="Standard-Schlusstext Angebot"      name="defaultOfferOutro"   defaultValue={v('defaultOfferOutro')} />
+        </div>
+      </Section>
+
+      <Section title="Dokumentenarchiv" hint="PDF- und Word-Notfallkopien auf dem Server-Dateisystem">
+        <div className="space-y-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="documentArchiveEnabled" defaultChecked={v('documentArchiveEnabled') === 'true'} />
+            Archivierung aktiv
+          </label>
+          <div>
+            <label className="field-label" htmlFor="documentArchivePath">Basispfad</label>
+            <input id="documentArchivePath" name="documentArchivePath" value={archivePath} onChange={(event) => setArchivePath(event.target.value)} placeholder="/Users/…/TWIR_Dokumente" className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-mono" />
+            <p className="field-hint">Der Pfad gehört zum Rechner, auf dem der Next.js-Server läuft. Lokale OneDrive-Sync-Ordner werden unterstützt.</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="documentArchiveJsonEnabled" defaultChecked={v('documentArchiveJsonEnabled') === 'true'} />
+            Zusätzlich minimale JSON-Metadaten archivieren
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="h-9 px-3 rounded-md border border-stone-200 bg-white text-sm" onClick={() => startLogoScaleTransition(async () => { const result = await testDocumentArchiveAction(archivePath, false); setArchiveMessage(result.success ? 'Speicherort erreichbar.' : result.error ?? 'Prüfung fehlgeschlagen.') })}>Speicherort prüfen</button>
+            <button type="button" className="h-9 px-3 rounded-md border border-stone-200 bg-white text-sm" onClick={() => startLogoScaleTransition(async () => { const result = await testDocumentArchiveAction(archivePath, true); setArchiveMessage(result.success ? 'Testdatei erfolgreich erstellt und entfernt.' : result.error ?? 'Test fehlgeschlagen.') })}>Testdatei erstellen</button>
+            {archiveMessage && <span className="text-xs text-muted-foreground" role="status">{archiveMessage}</span>}
+          </div>
         </div>
       </Section>
 

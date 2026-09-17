@@ -225,6 +225,21 @@ export function orderDescriptionWithOfferFallback(
   return description ?? null
 }
 
+/**
+ * Copies the editable text modules of a source document into a successor.
+ * Document-specific placement metadata (for example the service position card)
+ * is deliberately not inherited by the invoice text area.
+ */
+export function copyDocumentTextModules(value?: string | null): string | undefined {
+  if (!value) return undefined
+  const source = decodeOfferText(value)
+  const copy: OfferTextDocument = {
+    version: 1,
+    sections: source.sections,
+  }
+  return isOfferTextDocumentEmpty(copy) ? undefined : encodeOfferText(copy)
+}
+
 export function splitOfferTextAtPositions(value?: string | null): {
   before: string | null
   after: string | null
