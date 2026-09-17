@@ -16,6 +16,15 @@ const sharedConfig = {
     ignoreDuringBuilds: false,
   },
 
+  experimental: {
+    // Next.js liest den Request-Body vollständig ein, sobald die Middleware
+    // greift (siehe middleware.ts-Matcher). Ohne dieses Limit werden Bodies
+    // über 10 MB stillschweigend abgeschnitten — der 20-MB-Upload für
+    // Kundenbestellungen (lib/security/upload-validator.ts) würde dann mit
+    // einem kaputten multipart-Body statt einer sauberen 413-Antwort scheitern.
+    middlewareClientMaxBodySize: '25mb',
+  },
+
   async rewrites() {
     return {
       beforeFiles: [

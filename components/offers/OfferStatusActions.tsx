@@ -13,6 +13,7 @@ import {
 } from '@/app/(dashboard)/offers/actions'
 import type { OfferStatus } from '@/types/enums'
 import { OfferStatusBadge } from './OfferStatusBadge'
+import { CustomerPurchaseOrderDialog } from './CustomerPurchaseOrderDialog'
 
 interface OfferStatusActionsProps {
   offerId:     string
@@ -100,11 +101,9 @@ export function OfferStatusActions({
       {/* SENT actions */}
       {status === 'SENT' && (
         <div className={compactDecision ? 'grid w-full grid-cols-1 gap-2' : 'space-y-3'}>
-          <ConfirmDialog
-            title="Angebot als angenommen markieren?"
-            description={`„${offerNumber}" (${fmt}) wird auf ANGENOMMEN gesetzt. Die Umwandlung in einen Auftrag wird danach möglich.`}
-            confirmLabel="Angenommen"
-            onConfirm={() => doStatusChange('ACCEPTED' as OfferStatus)}
+          <CustomerPurchaseOrderDialog
+            offerId={offerId}
+            mode="accept"
             trigger={<ActionButton label="Angenommen" variant="success" icon="check" />}
           />
           <ConfirmDialog

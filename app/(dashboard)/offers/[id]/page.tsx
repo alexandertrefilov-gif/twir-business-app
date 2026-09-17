@@ -15,6 +15,8 @@ import { BusinessDocumentLayout, BusinessDocumentSidebar, BusinessWorkflowPlaceh
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { offerNumberForDisplay } from '@/lib/offers/offer-display'
+import { CustomerPurchaseOrderDialog } from '@/components/offers/CustomerPurchaseOrderDialog'
+import { getBusinessProcessForOffer } from '@/lib/services/business-process.service'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -30,7 +32,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function OfferDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await requirePermission(Resource.OFFER, Action.READ)
+  const user = await requirePermission(Resource.OFFER, Action.READ)
 
   let offer
   try {
@@ -39,11 +41,12 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
     notFound()
   }
 
-  const [canEdit, canDelete, canConvert, canCopy] = await Promise.all([
+  const [canEdit, canDelete, canConvert, canCopy, process] = await Promise.all([
     hasPermission(Resource.OFFER, Action.UPDATE),
     hasPermission(Resource.OFFER, Action.DELETE),
     hasPermission(Resource.ORDER, Action.CREATE),
     hasPermission(Resource.OFFER, Action.CREATE),
+    getBusinessProcessForOffer(id, user.userId, user.role),
   ])
 
   // Compute per-item amts and totals from stored values
@@ -71,6 +74,9 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
 
   const fmt = (n: number) =>
     n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  const purchaseOrder = process.customerPurchaseOrder
+  const showPurchaseOrderSection = ['SENT', 'ACCEPTED', 'CONVERTED_TO_ORDER'].includes(offer.status)
 
   return (
     <div>
@@ -211,6 +217,37 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
                 canDelete={canDelete && isTestDeleteEnabled()}
                 canConvert={canConvert}
               />
+              {showPurchaseOrderSection && (
+                <div className="mt-4 border-t border-stone-200 pt-4">
+                  <p className="mb-2 text-xs font-600 uppercase tracking-wider text-muted-foreground">Kundenbestellung</p>
+                  {purchaseOrder?.documents.length ? (
+                    <div className="space-y-2 text-xs">
+                      {purchaseOrder.orderNumber && <p><span className="text-muted-foreground">Bestellnummer:</span> {purchaseOrder.orderNumber}</p>}
+                      {purchaseOrder.orderDate && <p><span className="text-muted-foreground">Bestelldatum:</span> {format(new Date(purchaseOrder.orderDate), 'dd.MM.yyyy', { locale: de })}</p>}
+                      {purchaseOrder.documents.map(document => (
+                        <div key={document.id} className="rounded border border-stone-200 bg-stone-50 p-2">
+                          <p className="break-all font-500">{document.originalName}</p>
+                          <div className="mt-2 grid grid-cols-2 gap-1.5">
+                            <a className="rounded border border-stone-200 bg-white px-2 py-1.5 text-center text-blue-700" href={`/api/documents/${document.id}/download?disposition=inline`} target="_blank" rel="noreferrer">Öffnen</a>
+                            <a className="rounded border border-stone-200 bg-white px-2 py-1.5 text-center text-blue-700" href={`/api/documents/${document.id}/download`}>Download</a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-800">Noch nicht hinterlegt</p>
+                  )}
+                  {canEdit && ['ACCEPTED', 'CONVERTED_TO_ORDER'].includes(offer.status) && (
+                    <div className="mt-3">
+                      <CustomerPurchaseOrderDialog
+                        offerId={offer.id}
+                        mode="add"
+                        trigger={<button type="button" className="min-h-9 w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-500 text-blue-700 hover:bg-stone-50">{purchaseOrder?.documents.length ? 'Weitere Anlage hinzufügen' : 'Bestellung hinzufügen'}</button>}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </BusinessWorkflowPlaceholder>
 
             {/* Meta */}

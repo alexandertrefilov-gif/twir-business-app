@@ -27,7 +27,9 @@ const ALLOWED_TYPES: Record<string, string[]> = {
   '.webp': ['image/webp'],
   '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
   '.xls':  ['application/vnd.ms-excel'],
+  '.doc':  ['application/msword'],
   '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  '.eml':  ['message/rfc822'],
   '.csv':  ['text/csv', 'text/plain', 'application/csv'],
   '.txt':  ['text/plain'],
   '.zip':  ['application/zip', 'application/x-zip-compressed'],
@@ -194,4 +196,22 @@ export function getMimeTypeLabel(mimeType: string): string {
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word',
   }
   return map[mimeType.split(';')[0].trim()] ?? mimeType
+}
+
+/** Zusätzliche Inhaltsprüfung für die im Kundenbestellungs-Workflow erlaubten Formate. */
+export function validateUploadSignature(buffer: Uint8Array, mimeType: string): boolean {
+  const mime = mimeType.split(';')[0].trim().toLowerCase()
+  const starts = (...bytes: number[]) => bytes.every((byte, index) => buffer[index] === byte)
+  if (mime === 'application/pdf') return starts(0x25, 0x50, 0x44, 0x46)
+  if (mime === 'image/jpeg') return starts(0xff, 0xd8, 0xff)
+  if (mime === 'image/png') return starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+  if (mime === 'image/gif') return starts(0x47, 0x49, 0x46, 0x38)
+  if (mime === 'image/webp') return starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...buffer.slice(8, 12)) === 'WEBP'
+  if (mime.includes('openxmlformats-officedocument')) return starts(0x50, 0x4b, 0x03, 0x04)
+  if (mime === 'application/vnd.ms-excel' || mime === 'application/msword') return starts(0xd0, 0xcf, 0x11, 0xe0)
+  if (mime === 'message/rfc822') {
+    const header = new TextDecoder('ascii').decode(buffer.slice(0, 4096))
+    return /^(?:From|Return-Path|Received|Date|Message-ID|Subject|MIME-Version):/im.test(header)
+  }
+  return false
 }
