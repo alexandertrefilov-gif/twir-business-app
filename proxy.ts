@@ -10,7 +10,7 @@ function loginRedirect(req: NextRequest, loginPath: string) {
   return NextResponse.redirect(url)
 }
 
-export default async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next()
 
