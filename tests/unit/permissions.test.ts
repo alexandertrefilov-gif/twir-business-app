@@ -28,7 +28,7 @@ describe('Rollenmatrix — Vollständigkeitsprüfung', () => {
       // Admin hat überall CREATE außer wo keine create-Berechtigung definiert ist
       // (z.B. audit_log hat kein create)
       const hasCreate = roleHasPermission(RoleName.ADMIN, resource as any, Action.CREATE)
-      if (['audit_log', 'role', 'settings'].includes(resource)) {
+      if (['audit_log', 'role', 'settings', 'accounting'].includes(resource)) {
         // Für diese Ressourcen ist keine direkte CREATE-Aktion definiert.
         expect(hasCreate).toBe(false)
       } else {
@@ -40,6 +40,9 @@ describe('Rollenmatrix — Vollständigkeitsprüfung', () => {
   // ── ACCOUNTING: Rechnungen + Zahlungen ───────────────────────
 
   describe('ACCOUNTING', () => {
+    it('darf die Buchhaltung lesen', () => {
+      expect(roleHasPermission(RoleName.ACCOUNTING, Resource.ACCOUNTING, Action.READ)).toBe(true)
+    })
     it('darf Rechnungen finalisieren', () => {
       expect(roleHasPermission(RoleName.ACCOUNTING, Resource.INVOICE, Action.FINALIZE)).toBe(true)
     })
@@ -157,6 +160,10 @@ describe('Rollenmatrix — Vollständigkeitsprüfung', () => {
       RoleName.PROJECT_MANAGER,
       RoleName.EMPLOYEE,
     ]
+
+    it.each(NON_ACCOUNTING)('%s darf die Buchhaltung nicht lesen', (role) => {
+      expect(roleHasPermission(role, Resource.ACCOUNTING, Action.READ)).toBe(false)
+    })
 
     it.each(NON_ACCOUNTING)('%s darf keine Rechnung finalisieren', (role) => {
       expect(roleHasPermission(role, Resource.INVOICE, Action.FINALIZE)).toBe(false)
