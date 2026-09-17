@@ -2,23 +2,21 @@
 import type { Metadata }  from 'next'
 import { notFound }       from 'next/navigation'
 import Link               from 'next/link'
-import { PageHeader }     from '@/components/shared/PageHeader'
 import { getServiceReportById } from '@/lib/services/service-report.service'
-import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
-import { SERVICE_ITEM_TYPE_LABELS, type ServiceItemType } from '@/lib/validators/service-report.schema'
-import { DeleteServiceReportButton } from '@/components/service-reports/DeleteServiceReportButton'
+import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
-import { isTestDeleteEnabled } from '@/lib/security/test-delete'
-import { getSupplierNumber } from '@/lib/services/settings.service'
+import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
+import { getBusinessProcessForServiceReport } from '@/lib/services/business-process.service'
+import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
+import { OfferRichText } from '@/components/offers/OfferRichText'
+import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
+import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
+import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
+import { buildServiceReportDocumentSections } from '@/lib/documents/service-report-document'
+import { ServiceReportFinalizeButton } from '@/components/service-reports/ServiceReportFinalizeButton'
 
 export const metadata: Metadata = { title: 'Leistungsnachweis' }
-
-const TYPE_STYLES: Record<ServiceItemType, string> = {
-  hours:    'bg-blue-50 text-blue-700 border-blue-200',
-  material: 'bg-amber-50 text-amber-700 border-amber-200',
-  flat:     'bg-violet-50 text-violet-700 border-violet-200',
-}
 
 export default async function ServiceReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -28,168 +26,114 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
   try { report = await getServiceReportById(id, user.userId, user.role) }
   catch { notFound() }
 
-  const [canEdit, canDelete] = await Promise.all([
-    hasPermission(Resource.SERVICE_REPORT, Action.UPDATE),
-    hasPermission(Resource.SERVICE_REPORT, Action.DELETE),
+  const [process, processPermissions] = await Promise.all([
+    getBusinessProcessForServiceReport(id, user.userId, user.role),
+    getBusinessProcessPermissions(),
   ])
 
-  // Employees can only edit their own
-  const isOwn      = report.createdBy.id === user.userId
-  const canEditNow = canEdit && (user.role !== 'EMPLOYEE' || isOwn)
-  const canDelNow  = canDelete &&
-    isTestDeleteEnabled() &&
-    (user.role !== 'EMPLOYEE' || isOwn)
-
-  const items = report.items.map((i) => ({
-    ...i,
-    quantity:  i.quantity.toNumber(),
-    unitPrice: i.unitPrice.toNumber(),
-    netAmount: i.netAmount.toNumber(),
+  const preparedBy = `${report.createdBy.firstName} ${report.createdBy.lastName}`
+  // The surrounding split layout is a Client Component. Convert Prisma
+  // class instances before they can become part of its React payload.
+  const serializableItems = report.items.map((item) => ({
+    id: item.id,
+    position: item.position,
+    type: item.type,
+    description: item.description,
+    quantity: item.quantity.toNumber(),
+    unit: item.unit,
+    unitPrice: item.unitPrice.toNumber(),
+    discountRate: item.discountRate.toNumber(),
+    taxRate: item.taxRate.toNumber(),
+    netAmount: item.netAmount.toNumber(),
+    notes: item.notes,
   }))
-
-  const totalNet = report.totalNet.toNumber()
-  const fmt      = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const supplierNumber = await getSupplierNumber()
-
-  // Totals by type
-  const byType: Record<string, number> = {}
-  for (const i of items) {
-    byType[i.type] = Math.round(((byType[i.type] ?? 0) + i.netAmount) * 100) / 100
-  }
+  const documentSections = buildServiceReportDocumentSections({
+    description: report.description,
+    items: serializableItems,
+    preparedBy,
+    customerName: report.order.customer.name,
+  })
 
   return (
     <div>
-      <PageHeader
+      <BusinessDocumentHeader
         title={report.reportNumber}
-        description={report.title ?? undefined}
-        supplierNumber={supplierNumber}
-        documentType="Leistung"
-        breadcrumbs={[
-          { label: 'Leistungen', href: '/services' },
-          { label: report.reportNumber },
-        ]}
-        actions={
-          <div className="flex items-center gap-2">
-            {canEditNow && (
-              <Link href={`/services/${report.id}/edit`}
-                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors">
-                Bearbeiten
+        description={report.title}
+        titleId="service-report-detail-title"
+        detailsLabel="Kunden- und Auftragsdaten"
+      >
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
+            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
+            <dd className="mt-0.5">
+              <Link href={`/customers/${report.order.customer.id}`} className="text-sm font-600 text-blue-700 hover:underline">
+                {report.order.customer.name}
               </Link>
-            )}
-            {canDelNow && <DeleteServiceReportButton reportId={report.id} />}
+              {(report.order.customer.street || report.order.customer.city) && (
+                <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
+                  {report.order.customer.street} {report.order.customer.houseNumber}<br />
+                  {report.order.customer.postalCode} {report.order.customer.city}
+                </address>
+              )}
+            </dd>
           </div>
-        }
-      />
+          <div>
+            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Auftrag</dt>
+            <dd className="mt-0.5">
+              <Link href={`/orders/${report.order.id}`} className="text-sm text-blue-700 hover:underline mono">{report.order.orderNumber}</Link>
+            </dd>
+          </div>
+          <MetaItem label="Leistungsdatum" value={format(new Date(report.reportDate), 'dd. MMMM yyyy', { locale: de })} />
+          <MetaItem label="Erfasst von" value={preparedBy} />
+          {report.order.offer && processPermissions.readOffer && (
+            <div>
+              <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Angebotsbezug</dt>
+              <dd className="mt-0.5">
+                <Link href={`/offers/${report.order.offer.id}`} className="text-sm text-blue-700 hover:underline mono">{report.order.offer.offerNumber}</Link>
+              </dd>
+            </div>
+          )}
+        </dl>
+      </BusinessDocumentHeader>
 
       <div className="p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <BusinessDocumentLayout>
 
           {/* ── Main ── */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="min-w-0 space-y-4">
 
-            {/* Header info */}
-            <div className="card-base p-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                <div>
-                  <p className="text-[11px] font-600 uppercase tracking-wider text-muted-foreground mb-2">Auftrag</p>
-                  <Link href={`/orders/${report.order.id}`} className="font-600 text-sm text-blue-700 hover:underline mono">
-                    {report.order.orderNumber}
-                  </Link>
-                  {report.order.title && (
-                    <p className="text-sm text-muted-foreground mt-0.5">{report.order.title}</p>
-                  )}
-                  <div className="mt-3">
-                    <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</p>
-                    <Link href={`/customers/${report.order.customer.id}`} className="text-sm text-blue-700 hover:underline">
-                      {report.order.customer.name}
-                    </Link>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Leistungsdatum</p>
-                    <p className="text-sm font-500">
-                      {format(new Date(report.reportDate), 'dd. MMMM yyyy', { locale: de })}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Erfasst von</p>
-                    <p className="text-sm">
-                      {report.createdBy.firstName} {report.createdBy.lastName}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              {report.description && (
-                <div className="mt-4 pt-4 border-t border-stone-100">
-                  <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{report.description}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Items */}
-            <div className="card-base overflow-hidden">
-              <div className="px-5 py-3 border-b border-stone-100">
-                <h2 className="text-sm font-600">Positionen ({items.length})</h2>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th className="w-8">#</th>
-                      <th>Typ</th>
-                      <th>Beschreibung</th>
-                      <th className="num text-right">Menge</th>
-                      <th>Einh.</th>
-                      <th className="num text-right">Einzelpr.</th>
-                      <th className="num text-right">Netto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item, idx) => (
-                      <tr key={item.id}>
-                        <td className="mono text-xs text-muted-foreground">{idx + 1}</td>
-                        <td>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono font-500 ${TYPE_STYLES[item.type as ServiceItemType] ?? ''}`}>
-                            {SERVICE_ITEM_TYPE_LABELS[item.type as ServiceItemType] ?? item.type}
-                          </span>
-                        </td>
-                        <td>
-                          <p className="font-500 text-sm">{item.description}</p>
-                          {item.notes && <p className="text-xs text-muted-foreground mt-0.5">{item.notes}</p>}
-                        </td>
-                        <td className="num text-right mono text-sm">
-                          {item.quantity.toLocaleString('de-DE', { maximumFractionDigits: 3 })}
-                        </td>
-                        <td className="text-sm">{item.unit}</td>
-                        <td className="num text-right mono text-sm">{fmt(item.unitPrice)} €</td>
-                        <td className="num text-right mono text-sm font-500">{fmt(item.netAmount)} €</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="px-5 py-3 border-t border-stone-100 bg-stone-50/50">
-                <div className="flex flex-col items-end gap-1.5">
-                  {Object.entries(byType).map(([type, amount]) => (
-                    <div key={type} className="flex gap-8 text-sm">
-                      <span className="text-muted-foreground">
-                        {SERVICE_ITEM_TYPE_LABELS[type as ServiceItemType] ?? type}
-                      </span>
-                      <span className="mono">{fmt(amount)} €</span>
+            {documentSections.map((section) => {
+              if (section.kind === 'richText') {
+                return <OfferRichText key={section.id} value={section.value} sectionCards />
+              }
+              if (section.kind === 'positions') {
+                return (
+                  <DocumentSectionCard key={section.id} title={`Positionen (${section.items.length})`} flush>
+                    <div className="overflow-x-auto px-5 pb-5">
+                      <table className="w-full text-left text-sm">
+                        <thead><tr className="border-b border-stone-200 text-xs uppercase tracking-wider text-muted-foreground"><th className="py-2 pr-3">Pos.</th><th className="py-2 pr-3">Leistung / Material</th><th className="py-2 pr-3 text-right">Menge</th><th className="py-2">Einheit</th></tr></thead>
+                        <tbody>{section.items.map((item) => <tr key={item.id} className="border-b border-stone-100"><td className="py-2 pr-3 tabular-nums">{item.position}</td><td className="py-2 pr-3"><span className="font-500">{item.description}</span>{item.notes && <span className="mt-0.5 block text-xs text-muted-foreground">{item.notes}</span>}</td><td className="py-2 pr-3 text-right tabular-nums">{item.quantity.toLocaleString('de-DE')}</td><td className="py-2">{item.unit}</td></tr>)}</tbody>
+                      </table>
                     </div>
-                  ))}
-                  <div className="flex gap-8 font-600 pt-1.5 mt-0.5 border-t border-stone-200 w-48 justify-between">
-                    <span>Gesamt netto</span>
-                    <span className="mono">{fmt(totalNet)} €</span>
+                  </DocumentSectionCard>
+                )
+              }
+              return (
+                <DocumentSectionCard key={section.id} title="Unterschriften">
+                  <div className="grid grid-cols-1 gap-6 text-sm sm:grid-cols-2">
+                    <div className="border-t border-stone-300 pt-2 text-muted-foreground">Ort, Datum, Unterschrift Auftragnehmer<br />{section.preparedBy}</div>
+                    <div className="border-t border-stone-300 pt-2 text-muted-foreground">Ort, Datum, Unterschrift Auftraggeber<br />{section.customerName}</div>
                   </div>
-                </div>
-              </div>
-            </div>
+                </DocumentSectionCard>
+              )
+            })}
+
           </div>
 
           {/* ── Sidebar ── */}
-          <div className="space-y-4">
+          <BusinessDocumentSidebar sticky>
+            <BusinessProcessWorkflow process={process} currentDocument={{ type: 'serviceReport', id: report.id }} permissions={processPermissions}
+              serviceReportAction={report.status === 'DRAFT' ? <ServiceReportFinalizeButton reportId={report.id} /> : undefined} />
             <div className="card-base p-4 space-y-3">
               <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground">Details</p>
               <div>
@@ -202,20 +146,19 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
               </div>
             </div>
 
-            <div className="card-base p-4">
-              <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground mb-3">Aktionen</p>
-              <div className="space-y-2">
-                <a href={`/services/new?order=${report.orderId}`}
-                  className="flex items-center gap-2 w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors">
-                  <svg className="w-3.5 h-3.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
-                  Weitere Leistung erfassen
-                </a>
-              </div>
-            </div>
-          </div>
+          </BusinessDocumentSidebar>
 
-        </div>
+        </BusinessDocumentLayout>
       </div>
+    </div>
+  )
+}
+
+function MetaItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 text-sm text-foreground">{value}</dd>
     </div>
   )
 }

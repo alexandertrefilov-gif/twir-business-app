@@ -24,6 +24,8 @@ import {
   type DunningPdfData,
 } from '@/lib/pdf-templates/dunning.template'
 import {
+  paginateServiceReportItems,
+  getServiceReportHeaderMetadata,
   renderServiceReportPdf,
   type ServiceReportPdfData,
 } from '@/lib/pdf-templates/service-report.template'
@@ -36,6 +38,36 @@ function expectPdf(buffer: Buffer) {
 }
 
 describe('PDF-Renderer', () => {
+  it('teilt Leistungspositionen in stabile Seitenpakete mit eigenem Tabellenkopf', () => {
+    const pages = paginateServiceReportItems(Array.from({ length: 25 }, (_, index) => index + 1))
+    expect(pages.map((page) => page.length)).toEqual([18, 7])
+    expect(pages.flat()).toEqual(Array.from({ length: 25 }, (_, index) => index + 1))
+  })
+  it('führt relevante Leistungsnachweis-Kopfdaten genau einmal im gemeinsamen Header', () => {
+    const data = {
+      reportNumber: 'LN-2026-0001',
+      reportDate: '24.08.2026',
+      company: { companyName: 'TWIR GmbH', supplierNumber: '18045419' },
+      order: { orderNumber: 'AU2026-0005', offerNumber: 'AN 260801' },
+      customer: { name: 'Mercedes-Benz AG' },
+      preparedBy: 'Admin Benutzer',
+      items: [],
+      totalNet: 0,
+      byType: { hours: 0, material: 0, flat: 0 },
+    } satisfies ServiceReportPdfData
+
+    expect(getServiceReportHeaderMetadata(data)).toEqual([
+      { label: 'LN-Nr.', value: '18045419' },
+      { label: 'Datum', value: '24.08.2026' },
+      { label: 'Auftrag', value: 'AU2026-0005' },
+      { label: 'Angebot', value: 'AN 260801' },
+    ])
+
+    const template = readFileSync(resolve(process.cwd(), 'lib/pdf-templates/service-report.template.tsx'), 'utf8')
+    expect(template).not.toContain('<Text style={S.label}>Auftraggeber</Text>')
+    expect(template).not.toContain('<Text style={S.label}>Berichtsdatum</Text>')
+    expect(template).not.toContain('style={S.infoGrid}')
+  })
   it('hält Rich-Text-Überschriften beim Angebot beim nachfolgenden Inhalt', () => {
     const source = readFileSync(resolve(process.cwd(), 'lib/pdf-templates/offer.template.tsx'), 'utf8')
     expect(source).toContain('style={S.richSectionTitle} minPresenceAhead={28}')
@@ -265,7 +297,7 @@ describe('PDF-Renderer', () => {
     expectPdf(await renderOfferPdf(data))
   })
 
-  it('rendert ein 400-Prozent-Logo ohne festen Höhencontainer im Angebot', async () => {
+  it('rendert ein 400-Prozent-Logo ohne festen Höhencontainer in Angebot und Leistungsnachweis', async () => {
     const logoDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
     const offer = {
       offerNumber: 'AN-2026-0400',
@@ -282,8 +314,24 @@ describe('PDF-Renderer', () => {
       totalGross: 0,
       taxGroups: {},
     } satisfies OfferPdfData
+    const report = {
+      reportNumber: 'LN-2026-0400',
+      reportDate: '01.01.2026',
+      logoDataUri,
+      logoScale: 400,
+      logoSourceWidth: 1,
+      logoSourceHeight: 1,
+      company: { companyName: 'TWIR GmbH' },
+      order: { orderNumber: 'AU-2026-0001' },
+      customer: { name: 'Testkunde GmbH' },
+      preparedBy: 'Test Benutzer',
+      items: [],
+      totalNet: 0,
+      byType: { hours: 0, material: 0, flat: 0 },
+    } satisfies ServiceReportPdfData
 
     expectPdf(await renderOfferPdf(offer))
+    expectPdf(await renderServiceReportPdf(report))
   })
 
   it('rendert eine Mahnung als Node.js-Buffer', async () => {
@@ -327,6 +375,49 @@ describe('PDF-Renderer', () => {
       }],
       totalNet: 100,
       byType: { hours: 100, material: 0, flat: 0 },
+    } satisfies ServiceReportPdfData
+
+    expectPdf(await renderServiceReportPdf(data))
+  })
+
+  it('rendert einen mehrseitigen Leistungsnachweis mit Positionen zwischen zwei Textbereichen', async () => {
+    const paragraph = (text: string): RichTextNode => ({
+      type: 'doc',
+      content: Array.from({ length: 10 }, () => ({
+        type: 'paragraph',
+        content: [{ type: 'text', text }],
+      })),
+    })
+    const description = encodeOfferText({
+      version: 1,
+      positionsAfterSectionId: 'scope',
+      sections: [
+        { id: 'scope', title: 'Bereich 1', content: paragraph('Ausführliche Leistungsbeschreibung mit Word-Tabellenkontext.') },
+        { id: 'after', title: 'Bereich 2', content: paragraph('Weiterer übernommener Inhalt.') },
+        { id: 'confidentiality', title: 'Verschwiegenheitspflicht', content: paragraph('Vertraulicher Schlussinhalt.') },
+      ],
+    })
+    const items = Array.from({ length: 30 }, (_, index) => ({
+      position: index + 1,
+      type: 'hours' as const,
+      description: `Leistungsposition ${index + 1}`,
+      quantity: 1,
+      unit: 'Std.',
+      unitPrice: 100,
+      netAmount: 100,
+      notes: 'Mehrzeilige Beschreibung für einen stabilen Seitenumbruch.',
+    }))
+    const data = {
+      reportNumber: 'LN-2026-MULTI',
+      reportDate: '01.01.2026',
+      description,
+      company: { companyName: 'TWIR GmbH' },
+      order: { orderNumber: 'AU-2026-0001' },
+      customer: { name: 'Testkunde GmbH' },
+      preparedBy: 'Test Benutzer',
+      items,
+      totalNet: 3000,
+      byType: { hours: 3000, material: 0, flat: 0 },
     } satisfies ServiceReportPdfData
 
     expectPdf(await renderServiceReportPdf(data))

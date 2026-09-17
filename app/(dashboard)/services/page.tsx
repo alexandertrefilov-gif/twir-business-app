@@ -70,13 +70,12 @@ export default async function ServicesPage({ searchParams }: { searchParams: Pro
                   <th>Datum</th>
                   {user.role !== 'EMPLOYEE' && <th>Erfasst von</th>}
                   <th className="num text-right">Pos.</th>
-                  <th className="num text-right">Netto</th>
                   <th className="text-right">Aktion</th>
                 </tr>
               </thead>
               <tbody>
                 {result.reports.length === 0 && (
-                  <tr><td colSpan={user.role === 'EMPLOYEE' ? 8 : 9} className="text-center py-12 text-sm text-muted-foreground">
+                  <tr><td colSpan={user.role === 'EMPLOYEE' ? 7 : 8} className="text-center py-12 text-sm text-muted-foreground">
                     {search ? 'Keine Ergebnisse.' : 'Noch keine Leistungen erfasst.'}
                   </td></tr>
                 )}
@@ -103,9 +102,6 @@ export default async function ServicesPage({ searchParams }: { searchParams: Pro
                       <td className="text-sm text-muted-foreground">{r.createdByName}</td>
                     )}
                     <td className="num text-right mono text-xs">{r.itemCount}</td>
-                    <td className="num text-right mono text-sm font-500">
-                      {r.totalNet.toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
-                    </td>
                     <td>
                       {canDelete && isTestDeleteEnabled() && (
                         <RecordDeleteButton id={r.id} type="serviceReport" />

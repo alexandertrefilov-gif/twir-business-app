@@ -11,6 +11,8 @@ import {
   createServiceReport,
   updateServiceReport,
   deleteServiceReport,
+  finalizeServiceReport,
+  markServiceReportSent,
 } from '@/lib/services/service-report.service'
 import type { RoleName } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
@@ -122,5 +124,30 @@ export async function deleteServiceReportAction(reportId: string): Promise<Actio
     return { success: true }
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
+  }
+}
+
+export async function finalizeServiceReportAction(reportId: string): Promise<ActionState> {
+  await requirePermission(Resource.SERVICE_REPORT, Action.UPDATE)
+  const actor = await getActor()
+  try {
+    await finalizeServiceReport(reportId, actor.userId, actor.userEmail)
+    revalidatePath(`/services/${reportId}`)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Finalisierung fehlgeschlagen' }
+  }
+}
+
+export async function markServiceReportSentAction(reportId: string): Promise<ActionState> {
+  await requirePermission(Resource.SERVICE_REPORT, Action.UPDATE)
+  const { userId, userEmail } = await getActor()
+  try {
+    await markServiceReportSent(reportId, userId, userEmail)
+    revalidatePath(`/services/${reportId}`)
+    revalidatePath('/services')
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Versandstatus konnte nicht gespeichert werden.' }
   }
 }

@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Fragment, type ReactNode } from 'react'
 import { OrderPdfDialog } from '@/components/orders/OrderPdfDialog'
 import { OfferPdfDialog } from '@/components/offers/OfferPdfDialog'
+import { ServiceReportPdfDialog } from '@/components/service-reports/ServiceReportPdfDialog'
 import { DocumentPrintButton } from '@/components/documents/DocumentPrintButton'
 import type { BusinessProcessData } from '@/lib/services/business-process.service'
 import { deriveBusinessProcessStages, derivePurchaseOrderIndicatorState, deriveWorkflowIndicatorState, isBusinessProcessCompleted, type ProcessStageKey, type ProcessStageState, type WorkflowIndicatorState } from '@/lib/workflow/business-process'
@@ -129,9 +130,10 @@ export function BusinessProcessWorkflow({ process, currentDocument, activeStage,
                       <div key={document.id} className="space-y-2 text-xs">
                         <div><span className="mono font-500">{document.number}</span><span className="ml-1.5 text-muted-foreground">{statusLabels[document.status] ?? document.status}{document.type && document.type !== 'STANDARD' ? ` · ${invoiceTypeLabels[document.type] ?? document.type}` : ''}</span></div>
                         <DocumentActions stageKey={stage.key} documentId={document.id} offerCopyHref={offerCopyHref} />
-                        {stage.key === 'order' && <DocumentLifecycle
+                        {(stage.key === 'order' || stage.key === 'serviceReport') && <DocumentLifecycle
+                          stageKey={stage.key}
                           document={document}
-                          canUpdate={permissions.updateOrder}
+                          canUpdate={stage.key === 'order' ? permissions.updateOrder : permissions.updateServiceReport}
                           hasCustomerPurchaseOrder={Boolean(process.customerPurchaseOrder)}
                         />}
                         {stage.key === 'invoice' && <InvoiceLifecycle status={document.status} />}
@@ -191,15 +193,18 @@ function InvoiceLifecycle({ status }: { status: string }) {
   </div>
 }
 
-function DocumentLifecycle({ document, canUpdate, hasCustomerPurchaseOrder }: {
+function DocumentLifecycle({ stageKey, document, canUpdate, hasCustomerPurchaseOrder }: {
+  stageKey: 'order' | 'serviceReport'
   document: BusinessProcessData['serviceReports'][number]
   canUpdate: boolean
   hasCustomerPurchaseOrder: boolean
 }) {
   const sent = Boolean(document.sentAt)
   const confirmed = Boolean(document.confirmedAt)
+  const canSend = stageKey === 'order' || document.status === 'FINALIZED'
   return <div className="space-y-1.5 pt-1 text-xs">
     <p className="text-emerald-700">✓ Erstellt</p>
+    {stageKey === 'serviceReport' && <p className={document.status === 'FINALIZED' ? 'text-emerald-700' : 'text-muted-foreground'}>{document.status === 'FINALIZED' ? '✓ Finalisiert' : '○ Noch nicht finalisiert'}</p>}
     <p className={sent ? 'text-emerald-700' : 'text-muted-foreground'}>{sent ? '✓ Versendet' : '○ Noch nicht versendet'}</p>
     {sent && <p className={confirmed ? 'text-emerald-700' : 'text-amber-800'}>{confirmed
       ? document.confirmationType === 'NOT_REQUIRED' ? '✓ Bestätigung nicht erforderlich' : '✓ Bestätigt'
@@ -207,9 +212,10 @@ function DocumentLifecycle({ document, canUpdate, hasCustomerPurchaseOrder }: {
     {confirmed && document.confirmationType && <p className="text-muted-foreground">{ORDER_CONFIRMATION_TYPE_LABELS[document.confirmationType as OrderConfirmationType] ?? document.confirmationType}</p>}
     {confirmed && document.confirmationNote && <p className="whitespace-pre-wrap text-muted-foreground">{document.confirmationNote}</p>}
     {document.confirmationDocuments?.map(file => <a key={file.id} className="block break-all text-blue-700 hover:underline" href={`/api/documents/${file.id}/download?disposition=inline`} target="_blank" rel="noreferrer">Bestätigung öffnen: {file.originalName}</a>)}
-    {canUpdate && <DocumentLifecycleControls id={document.id} sent={sent}
+    {canUpdate && canSend && <DocumentLifecycleControls type={stageKey} id={document.id} sent={sent} confirmed={confirmed}
       hasCustomerPurchaseOrder={hasCustomerPurchaseOrder} confirmationType={document.confirmationType}
       confirmedAt={document.confirmedAt?.toISOString() ?? null} confirmationNote={document.confirmationNote} />}
+    {canUpdate && !canSend && <p className="text-muted-foreground">Vor Versand zuerst finalisieren.</p>}
   </div>
 }
 
@@ -330,6 +336,15 @@ function DocumentActions({ stageKey, documentId, offerCopyHref }: { stageKey: Pr
       <div className="grid w-full grid-cols-2 items-start gap-1.5">
         <OrderPdfDialog orderId={documentId} />
         <Link href={documentHref(stageKey, documentId)} className={`${className} inline-flex items-center justify-center`}>Anzeigen</Link>
+        <DocumentPrintButton pdfUrl={documentPdfHref(stageKey, documentId)} className={className} />
+      </div>
+    )
+  }
+  if (stageKey === 'serviceReport') {
+    return (
+      <div className="grid w-full grid-cols-2 items-start gap-1.5">
+        <Link href={documentHref(stageKey, documentId)} className={`${className} inline-flex items-center justify-center`}>Anzeigen</Link>
+        <ServiceReportPdfDialog reportId={documentId} />
         <DocumentPrintButton pdfUrl={documentPdfHref(stageKey, documentId)} className={className} />
       </div>
     )

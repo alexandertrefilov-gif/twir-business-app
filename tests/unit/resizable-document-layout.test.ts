@@ -54,6 +54,8 @@ describe('verstellbares Dokumentlayout', () => {
     'app/(dashboard)/offers/[id]/edit/page.tsx',
     'app/(dashboard)/orders/[id]/page.tsx',
     'app/(dashboard)/orders/[id]/edit/page.tsx',
+    'app/(dashboard)/services/[id]/page.tsx',
+    'app/(dashboard)/services/[id]/edit/page.tsx',
     'app/(dashboard)/customers/[id]/page.tsx',
   ])('%s verwendet das zentrale Split-Layout', (path) => {
     expect(source(path)).toContain('<BusinessDocumentLayout>')
@@ -66,6 +68,7 @@ describe('verstellbares Dokumentlayout', () => {
     for (const path of [
       'app/(dashboard)/offers/[id]/page.tsx',
       'app/(dashboard)/orders/[id]/page.tsx',
+      'app/(dashboard)/services/[id]/page.tsx',
     ]) {
       expect(source(path)).toContain('overflow-x-auto')
     }

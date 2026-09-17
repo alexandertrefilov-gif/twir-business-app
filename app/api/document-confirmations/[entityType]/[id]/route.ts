@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Action, requirePermission, Resource, toHttpError } from '@/lib/auth/permissions'
 import { saveExternalConfirmation, type ConfirmationOwner } from '@/lib/services/external-confirmation.service'
-import { OrderConfirmationSchema } from '@/lib/validators/order-confirmation.schema'
+import { OrderConfirmationSchema, ServiceReportConfirmationSchema } from '@/lib/validators/order-confirmation.schema'
 
 const owners: Record<string, { owner: ConfirmationOwner; resource: Resource }> = {
   order: { owner: 'order', resource: Resource.ORDER },
+  'service-report': { owner: 'serviceReport', resource: Resource.SERVICE_REPORT },
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ entityType: string; id: string }> }) {
@@ -16,16 +17,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const formData = await request.formData()
     const candidate = formData.get('file')
     const file = candidate instanceof File && candidate.size > 0 ? candidate : null
+    if (config.owner === 'serviceReport' && !file) {
+      return NextResponse.json({ error: 'Bitte wählen Sie eine Datei aus.' }, { status: 422 })
+    }
     const metadataInput = {
       confirmedAt: formData.get('confirmedAt') || undefined,
       confirmationNote: formData.get('confirmationNote') || undefined,
     }
-    const metadata = OrderConfirmationSchema.safeParse({
+    const metadata = config.owner === 'order' ? OrderConfirmationSchema.safeParse({
       confirmationType: formData.get('confirmationType'),
       ...metadataInput,
-    })
+    }) : ServiceReportConfirmationSchema.safeParse(metadataInput)
     if (!metadata.success) return NextResponse.json({ error: metadata.error.issues[0]?.message ?? 'Bestätigung ist ungültig.' }, { status: 422 })
-    if (metadata.data.confirmationType === 'SIGNED_DOCUMENT' && !file) {
+    if ('confirmationType' in metadata.data && metadata.data.confirmationType === 'SIGNED_DOCUMENT' && !file) {
       return NextResponse.json({ error: 'Für diese Bestätigungsart ist ein unterschriebenes Dokument erforderlich.' }, { status: 422 })
     }
     if (file) await requirePermission(Resource.DOCUMENT, Action.CREATE)

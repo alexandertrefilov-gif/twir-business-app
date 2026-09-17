@@ -21,6 +21,8 @@ import type {
   ServiceReportUpdateInput,
 } from '@/lib/validators/service-report.schema'
 import { calcReportItemNet, calcReportTotal } from '@/lib/validators/service-report.schema'
+import { Prisma } from '@prisma/client'
+import { getCompanySnapshot } from '@/lib/services/settings.service'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -150,6 +152,7 @@ export async function getServiceReportById(
       order: {
         include: {
           customer: true,
+          offer: { select: { id: true, offerNumber: true } },
         },
       },
     },
@@ -172,21 +175,39 @@ export async function createServiceReport(
   userId:    string,
   userEmail: string,
 ): Promise<string> {
-  const order = await prisma.order.findUnique({
-    where:  { id: data.orderId, deletedAt: null },
-    select: { id: true, status: true },
-  })
-  if (!order) throw new NotFoundError('Auftrag nicht gefunden')
-
-  if (order.status === 'CANCELLED' || order.status === 'INVOICED') {
-    throw new BusinessRuleError(
-      'Für stornierte oder bereits abgerechnete Aufträge können keine Leistungen erfasst werden.',
-    )
-  }
-
   const totalNet = calcReportTotal(data.items)
 
   return prisma.$transaction(async (tx) => {
+    // Serialisiert Erstellungen für denselben Auftrag. Die Existenzprüfung muss
+    // vor der Nummernvergabe innerhalb derselben Transaktion stattfinden.
+    const lockedOrders = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM orders
+      WHERE id = ${data.orderId}
+        AND deleted_at IS NULL
+      FOR UPDATE
+    `
+    if (lockedOrders.length === 0) throw new NotFoundError('Auftrag nicht gefunden')
+
+    const order = await tx.order.findUnique({
+      where: { id: data.orderId },
+      select: { status: true },
+    })
+    if (!order) throw new NotFoundError('Auftrag nicht gefunden')
+    if (order.status === 'CANCELLED' || order.status === 'INVOICED') {
+      throw new BusinessRuleError(
+        'Für stornierte oder bereits abgerechnete Aufträge können keine Leistungen erfasst werden.',
+      )
+    }
+
+    const existingReport = await tx.serviceReport.findFirst({
+      where: { orderId: data.orderId },
+      select: { id: true },
+    })
+    if (existingReport) {
+      throw new BusinessRuleError('Für diesen Auftrag existiert bereits ein Leistungsnachweis.')
+    }
+
     const reportNumber = await nextNumber(NumberSequenceType.SERVICE_REPORT, tx)
 
     const report = await tx.serviceReport.create({
@@ -206,6 +227,8 @@ export async function createServiceReport(
             quantity:    item.quantity,
             unit:        item.unit,
             unitPrice:   item.unitPrice,
+            discountRate: item.discountRate,
+            taxRate:      item.taxRate,
             netAmount:   calcReportItemNet(item),
             notes:       item.notes ?? null,
           })),
@@ -236,9 +259,10 @@ export async function updateServiceReport(
 ): Promise<void> {
   const existing = await prisma.serviceReport.findUnique({
     where:  { id },
-    select: { id: true, createdById: true, reportNumber: true },
+    select: { id: true, createdById: true, reportNumber: true, status: true },
   })
   if (!existing) throw new NotFoundError('Leistungsnachweis nicht gefunden')
+  if (existing.status === 'FINALIZED') throw new BusinessRuleError('Finalisierte Leistungsnachweise können nicht bearbeitet werden.')
 
   // Employees may only edit their own
   if (userRole === RoleName.EMPLOYEE && existing.createdById !== userId) {
@@ -265,6 +289,8 @@ export async function updateServiceReport(
             quantity:    item.quantity,
             unit:        item.unit,
             unitPrice:   item.unitPrice,
+            discountRate: item.discountRate,
+            taxRate:      item.taxRate,
             netAmount:   calcReportItemNet(item),
             notes:       item.notes ?? null,
           })),
@@ -279,6 +305,42 @@ export async function updateServiceReport(
       entityId:   id,
       newValue:   { totalNet, itemCount: data.items.length },
     })
+  })
+}
+
+export async function finalizeServiceReport(id: string, userId: string, userEmail: string): Promise<void> {
+  const [companySnapshot, fullReport] = await Promise.all([
+    getCompanySnapshot(),
+    prisma.serviceReport.findUnique({ where: { id }, include: { order: { select: { customerSnapshot: true } } } }),
+  ])
+  if (!fullReport) throw new NotFoundError('Leistungsnachweis nicht gefunden')
+  await prisma.$transaction(async (tx) => {
+    const report = await tx.serviceReport.findUnique({ where: { id }, select: { status: true, reportNumber: true } })
+    if (!report) throw new NotFoundError('Leistungsnachweis nicht gefunden')
+    if (report.status !== 'DRAFT') throw new BusinessRuleError('Der Leistungsnachweis ist bereits finalisiert.')
+    await tx.serviceReport.update({ where: { id }, data: { status: 'FINALIZED', finalizedAt: new Date(), customerSnapshot: fullReport.order.customerSnapshot ?? undefined, companySnapshot: companySnapshot as Prisma.InputJsonValue } })
+    await tx.auditLog.create({ data: { userId, userEmail, action: AuditAction.FINALIZE, entityType: 'service_report', entityId: id, oldValue: { status: 'DRAFT' }, newValue: { status: 'FINALIZED', reportNumber: report.reportNumber } } })
+  })
+}
+
+export async function markServiceReportSent(id: string, userId: string, userEmail: string): Promise<void> {
+  await prisma.$transaction(async tx => {
+    const report = await tx.serviceReport.findUnique({
+      where: { id }, select: { status: true, sentAt: true, reportNumber: true },
+    })
+    if (!report) throw new NotFoundError('Leistungsnachweis nicht gefunden')
+    if (report.status !== 'FINALIZED') {
+      throw new BusinessRuleError('Der Leistungsnachweis muss vor dem Versand finalisiert werden.')
+    }
+    if (report.sentAt) return
+    const sentAt = new Date()
+    const updated = await tx.serviceReport.updateMany({ where: { id, sentAt: null }, data: { sentAt } })
+    if (updated.count === 0) return
+    await tx.auditLog.create({ data: {
+      userId, userEmail, action: AuditAction.STATUS_CHANGE,
+      entityType: 'service_report', entityId: id,
+      oldValue: { sentAt: null }, newValue: { sentAt: sentAt.toISOString(), reportNumber: report.reportNumber },
+    } })
   })
 }
 

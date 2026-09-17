@@ -3,9 +3,28 @@
 // renderServiceReportPdf(data) → Buffer
 
 import React from 'react'
-import { Document, Page, Text, View, StyleSheet, renderToBuffer } from '@react-pdf/renderer'
-import { SERVICE_ITEM_TYPE_LABELS } from '@/lib/validators/service-report.schema'
+import { Document, Image as PdfImage, Page, Text, View, StyleSheet, renderToBuffer } from '@react-pdf/renderer'
 import type { ServiceItemType } from '@/lib/validators/service-report.schema'
+import { getCompanyLogoDimensions } from '@/lib/pdf-templates/company-logo'
+import {
+  PDF_BODY_LINE_HEIGHT,
+  PDF_BODY_TEXT_SIZE,
+  PDF_DOCUMENT_FONT_BOLD,
+  PDF_DOCUMENT_FONT_FAMILY,
+  PDF_FOOTER_TEXT_SIZE,
+  PDF_HEADER_HEADING_STYLE,
+  PDF_HEADER_LEFT_COLUMN_STYLE,
+  PDF_HEADER_RIGHT_COLUMN_STYLE,
+  PDF_HEADER_ROW_STYLE,
+  PDF_HEADER_TEXT_STYLE,
+  PDF_LABEL_TEXT_SIZE,
+  PDF_SECTION_TITLE_SIZE,
+  PDF_TABLE_BODY_TEXT_SIZE,
+  PDF_TABLE_HEADER_TEXT_SIZE,
+  PdfSenderAddressDivider,
+} from '@/lib/pdf-templates/document-header'
+import { OfferRichTextPdf } from '@/lib/pdf-templates/offer.template'
+import { buildServiceReportDocumentSections } from '@/lib/documents/service-report-document'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -14,6 +33,10 @@ export interface ServiceReportPdfData {
   reportDate:   string   // 'dd.MM.yyyy'
   title?:       string | null
   description?: string | null
+  logoDataUri?: string
+  logoScale?: number
+  logoSourceWidth?: number
+  logoSourceHeight?: number
 
   company: {
     companyName:  string
@@ -30,6 +53,7 @@ export interface ServiceReportPdfData {
   order: {
     orderNumber: string
     title?:      string | null
+    offerNumber?: string | null
   }
 
   customer: {
@@ -57,23 +81,41 @@ export interface ServiceReportPdfData {
   byType:    Record<ServiceItemType, number>
 }
 
+export function paginateServiceReportItems<T>(items: readonly T[], pageSize = 18): T[][] {
+  const pages: T[][] = []
+  for (let index = 0; index < items.length; index += pageSize) {
+    pages.push(items.slice(index, index + pageSize))
+  }
+  return pages
+}
+
+export function getServiceReportHeaderMetadata(data: ServiceReportPdfData): Array<{ label: string; value: string }> {
+  return [
+    ...(data.company.supplierNumber ? [{ label: 'LN-Nr.', value: data.company.supplierNumber }] : []),
+    { label: 'Datum', value: data.reportDate },
+    { label: 'Auftrag', value: data.order.orderNumber },
+    ...(data.order.offerNumber ? [{ label: 'Angebot', value: data.order.offerNumber }] : []),
+  ]
+}
+
 // ── Styles ────────────────────────────────────────────────────
 
 const S = StyleSheet.create({
-  page:    { fontFamily: 'Helvetica', fontSize: 9, color: '#1a1917', paddingTop: 40, paddingBottom: 50, paddingLeft: 50, paddingRight: 40 },
-  h1:      { fontSize: 13, fontFamily: 'Helvetica-Bold', marginBottom: 4 },
-  h2:      { fontSize: 9,  fontFamily: 'Helvetica-Bold', marginBottom: 6 },
-  label:   { fontSize: 7,  color: '#6b6b80', marginBottom: 2 },
-  small:   { fontSize: 7.5, color: '#6b6b80' },
-  body:    { fontSize: 9, lineHeight: 1.5, color: '#3a3a50' },
-  documentType: { fontSize: 9, fontFamily: 'Helvetica', marginBottom: 10 },
+  page:    { fontFamily: PDF_DOCUMENT_FONT_FAMILY, fontSize: PDF_BODY_TEXT_SIZE, color: '#1a1917', paddingTop: 42, paddingBottom: 54, paddingLeft: 50, paddingRight: 50 },
+  h2:      { fontSize: 13, fontFamily: PDF_DOCUMENT_FONT_BOLD, marginBottom: 6 },
+  label:   { fontSize: PDF_LABEL_TEXT_SIZE, color: '#6b6b80', marginBottom: 2 },
+  small:   { fontSize: PDF_HEADER_TEXT_STYLE.fontSize, color: '#6b6b80', lineHeight: PDF_BODY_LINE_HEIGHT },
+  body:    { fontSize: PDF_BODY_TEXT_SIZE, lineHeight: PDF_BODY_LINE_HEIGHT, color: '#3a3a50' },
+  documentType: { fontSize: PDF_SECTION_TITLE_SIZE, fontFamily: PDF_DOCUMENT_FONT_BOLD, marginBottom: 8 },
 
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
-  metaBox:   { alignItems: 'flex-end' },
-  docNum:    { fontSize: 12, fontFamily: 'Helvetica-Bold', color: '#1e3a5f', marginBottom: 3 },
-
-  infoGrid:  { flexDirection: 'row', gap: 24, marginBottom: 20 },
-  infoCol:   { flex: 1 },
+  headerRow: { ...PDF_HEADER_ROW_STYLE, marginBottom: 18 },
+  logoRow:   { alignItems: 'flex-end', marginBottom: 6 },
+  companyLogo: { objectFit: 'contain' },
+  addressBlock: { ...PDF_HEADER_LEFT_COLUMN_STYLE },
+  addressLine: { fontFamily: PDF_DOCUMENT_FONT_FAMILY, fontSize: PDF_BODY_TEXT_SIZE, lineHeight: PDF_BODY_LINE_HEIGHT },
+  headerText: { ...PDF_HEADER_TEXT_STYLE, color: '#6b6b80' },
+  metaBox:   { ...PDF_HEADER_RIGHT_COLUMN_STYLE },
+  docNum:    { ...PDF_HEADER_HEADING_STYLE, color: '#1e3a5f', marginBottom: 3 },
 
   divider:   { borderTop: '0.5 solid #d8d6d0', marginVertical: 10 },
 
@@ -81,163 +123,131 @@ const S = StyleSheet.create({
   tableRow: { flexDirection: 'row', borderBottom: '0.3 solid #ebe9e4', paddingHorizontal: 5, paddingVertical: 5 },
   tableAlt: { backgroundColor: '#faf9f7' },
 
-  cPos:  { width: '5%' },
+  cPos:  { width: '7%' },
   cType: { width: '14%' },
-  cDesc: { width: '36%' },
-  cQty:  { width: '10%', textAlign: 'right' },
+  cDesc: { width: '73%' },
+  cQty:  { width: '12%', textAlign: 'right' },
   cUnit: { width: '8%',  textAlign: 'right' },
-  cPrice:{ width: '13%', textAlign: 'right' },
-  cNet:  { width: '14%', textAlign: 'right' },
 
-  th:    { fontSize: 7, fontFamily: 'Helvetica-Bold', color: '#6b6b80', textTransform: 'uppercase' },
-  td:    { fontSize: 8.5 },
-  mono:  { fontFamily: 'Courier', fontSize: 8 },
-  bold:  { fontFamily: 'Helvetica-Bold' },
-
-  totals:    { marginTop: 10, alignItems: 'flex-end' },
-  totalsBox: { width: 190 },
-  totRow:    { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 },
+  th:    { fontSize: PDF_TABLE_HEADER_TEXT_SIZE, fontFamily: PDF_DOCUMENT_FONT_BOLD, color: '#6b6b80', textTransform: 'uppercase', paddingHorizontal: 2 },
+  td:    { fontSize: PDF_TABLE_BODY_TEXT_SIZE, lineHeight: PDF_BODY_LINE_HEIGHT, paddingHorizontal: 2 },
+  mono:  { fontFamily: PDF_DOCUMENT_FONT_FAMILY, fontSize: PDF_TABLE_BODY_TEXT_SIZE },
+  bold:  { fontFamily: PDF_DOCUMENT_FONT_BOLD },
 
   sigBox:  { marginTop: 30, flexDirection: 'row', justifyContent: 'space-between' },
   sigLine: { borderTop: '0.5 solid #9a9890', width: 160, paddingTop: 4 },
   sigLabel:{ fontSize: 7.5, color: '#9a9890' },
 
   footer:   { position: 'absolute', bottom: 25, left: 50, right: 40, borderTop: '0.5 solid #d8d6d0', paddingTop: 5, flexDirection: 'row', justifyContent: 'space-between' },
-  footerTxt:{ fontSize: 7, color: '#9a9890', lineHeight: 1.5 },
-  pageNum:  { fontSize: 7, color: '#9a9890' },
+  footerTxt:{ fontSize: PDF_FOOTER_TEXT_SIZE, color: '#9a9890', lineHeight: 1.3 },
+  pageNum:  { fontSize: PDF_FOOTER_TEXT_SIZE, color: '#9a9890' },
 })
 
 // ── Document ──────────────────────────────────────────────────
 
 export function ServiceReportDocument({ data }: { data: ServiceReportPdfData }) {
   const c   = data.company
-  const fmt = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
-
+  const contentSections = buildServiceReportDocumentSections({
+    description: data.description,
+    items: data.items,
+    preparedBy: data.preparedBy,
+    customerName: data.customer.name,
+  })
   return (
     <Document title={`Leistungsnachweis ${data.reportNumber}`} author={c.companyName}>
       <Page size="A4" style={S.page}>
 
         {/* Header */}
+        {data.logoDataUri && (
+          <View style={S.logoRow}>
+            <PdfImage
+              src={data.logoDataUri}
+              style={[
+                S.companyLogo,
+                getCompanyLogoDimensions(
+                  data.logoScale,
+                  data.logoSourceWidth,
+                  data.logoSourceHeight,
+                ),
+              ]}
+            />
+          </View>
+        )}
+        <PdfSenderAddressDivider
+          sender={`${c.companyName}${c.legalForm ? ` ${c.legalForm}` : ''} · ${[c.street, c.houseNumber].filter(Boolean).join(' ')} · ${[c.postalCode, c.city].filter(Boolean).join(' ')}${c.phone ? ` · ${c.phone}` : ''}${c.email ? ` · ${c.email}` : ''}`}
+        />
         <View style={S.headerRow}>
-          <View>
-            <Text style={[S.h1]}>{c.companyName}{c.legalForm ? ` ${c.legalForm}` : ''}</Text>
-            <Text style={S.small}>
-              {[c.street, c.houseNumber].filter(Boolean).join(' ')}  ·  {[c.postalCode, c.city].filter(Boolean).join(' ')}
-              {c.phone ? `  ·  ${c.phone}` : ''}{c.email ? `  ·  ${c.email}` : ''}
-            </Text>
-          </View>
-          <View style={S.metaBox}>
-            <Text style={S.docNum}>Leistungsnachweis {data.reportNumber}</Text>
-            {c.supplierNumber && <Text style={S.small}>LN-Nr.: {c.supplierNumber}</Text>}
-            <Text style={S.small}>Datum: {data.reportDate}</Text>
-            <Text style={S.small}>Auftrag: {data.order.orderNumber}</Text>
-          </View>
-        </View>
-
-        <View style={S.divider} />
-
-        <Text style={S.documentType}>Leistung</Text>
-
-        {/* Info grid */}
-        <View style={S.infoGrid}>
-          <View style={S.infoCol}>
-            <Text style={S.label}>Auftraggeber</Text>
-            <Text style={S.td}>{data.customer.name}</Text>
+          <View style={S.addressBlock}>
+            <Text style={S.addressLine}>{data.customer.name}</Text>
             {(data.customer.street || data.customer.houseNumber) && (
-              <Text style={S.small}>
+              <Text style={S.addressLine}>
                 {[data.customer.street, data.customer.houseNumber].filter(Boolean).join(' ')}
               </Text>
             )}
             {(data.customer.postalCode || data.customer.city) && (
-              <Text style={S.small}>
+              <Text style={S.addressLine}>
                 {[data.customer.postalCode, data.customer.city].filter(Boolean).join(' ')}
               </Text>
             )}
           </View>
-          <View style={S.infoCol}>
-            <Text style={S.label}>Auftrag</Text>
-            <Text style={[S.td, S.mono]}>{data.order.orderNumber}</Text>
-            {data.order.title && <Text style={S.small}>{data.order.title}</Text>}
-          </View>
-          <View style={S.infoCol}>
-            <Text style={S.label}>Berichtsdatum</Text>
-            <Text style={S.td}>{data.reportDate}</Text>
-            <Text style={[S.label, { marginTop: 6 }]}>Erstellt von</Text>
-            <Text style={S.td}>{data.preparedBy}</Text>
+          <View style={S.metaBox}>
+            <Text style={S.docNum}>Leistungsnachweis {data.reportNumber}</Text>
+            {getServiceReportHeaderMetadata(data).map((entry) => (
+              <Text key={entry.label} style={S.headerText}>{entry.label}: {entry.value}</Text>
+            ))}
           </View>
         </View>
 
-        {/* Title + description */}
+        <Text style={S.documentType}>Leistung</Text>
+
+        {/* Title + centrally ordered document content */}
         {data.title && <Text style={[S.h2, { marginBottom: 4 }]}>{data.title}</Text>}
-        {data.description && <Text style={[S.body, { marginBottom: 12 }]}>{data.description}</Text>}
-
-        <View style={S.divider} />
-
-        {/* Table */}
-        <View style={S.tableHdr}>
-          <Text style={[S.cPos,  S.th]}>#</Text>
-          <Text style={[S.cType, S.th]}>Typ</Text>
-          <Text style={[S.cDesc, S.th]}>Beschreibung</Text>
-          <Text style={[S.cQty,  S.th]}>Menge</Text>
-          <Text style={[S.cUnit, S.th]}>Einh.</Text>
-          <Text style={[S.cPrice,S.th]}>Einzelpr.</Text>
-          <Text style={[S.cNet,  S.th]}>Netto</Text>
-        </View>
-
-        {data.items.map((item, idx) => (
-          <View key={idx} style={[S.tableRow, idx % 2 === 1 ? S.tableAlt : {}]}>
-            <Text style={[S.cPos,  S.mono, { color: '#9a9890' }]}>{item.position}</Text>
-            <Text style={[S.cType, S.td,  { fontSize: 7.5 }]}>
-              {SERVICE_ITEM_TYPE_LABELS[item.type] ?? item.type}
-            </Text>
-            <View style={S.cDesc}>
-              <Text style={[S.td, S.bold]}>{item.description}</Text>
-              {item.notes && <Text style={[S.small, { marginTop: 1 }]}>{item.notes}</Text>}
+        {contentSections.map((section) => {
+          if (section.kind === 'richText') {
+            return <View key={section.id} style={{ marginBottom: 12 }}><OfferRichTextPdf value={section.value} /></View>
+          }
+          if (section.kind === 'positions') {
+            return (
+              <React.Fragment key={section.id}>
+                {paginateServiceReportItems(section.items).map((items, pageIndex) => (
+                  <View key={pageIndex} style={{ marginBottom: 12 }} break={pageIndex > 0} wrap={false}>
+                    <View style={S.tableHdr}>
+                      <Text style={[S.th, S.cPos]}>Pos.</Text>
+                      <Text style={[S.th, S.cDesc]}>Leistung / Material</Text>
+                      <Text style={[S.th, S.cQty]}>Menge</Text>
+                      <Text style={[S.th, S.cUnit]}>Einheit</Text>
+                    </View>
+                    {items.map((item, index) => (
+                      <View key={item.position} style={[S.tableRow, index % 2 === 1 ? S.tableAlt : {}]}>
+                        <Text style={[S.td, S.cPos]}>{item.position}</Text>
+                        <View style={S.cDesc}>
+                          <Text style={S.td}>{item.description}</Text>
+                          {item.notes && <Text style={S.small}>{item.notes}</Text>}
+                        </View>
+                        <Text style={[S.td, S.cQty]}>{item.quantity.toLocaleString('de-DE')}</Text>
+                        <Text style={[S.td, S.cUnit]}>{item.unit}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </React.Fragment>
+            )
+          }
+          return (
+            <View key={section.id} style={S.sigBox} minPresenceAhead={70} wrap={false}>
+              <View>
+                <View style={S.sigLine} />
+                <Text style={S.sigLabel}>Ort, Datum, Unterschrift Auftragnehmer</Text>
+                <Text style={[S.sigLabel, { marginTop: 2 }]}>{section.preparedBy}</Text>
+              </View>
+              <View>
+                <View style={S.sigLine} />
+                <Text style={S.sigLabel}>Ort, Datum, Unterschrift Auftraggeber</Text>
+                <Text style={[S.sigLabel, { marginTop: 2 }]}>{section.customerName}</Text>
+              </View>
             </View>
-            <Text style={[S.cQty,  S.mono]}>
-              {item.quantity.toLocaleString('de-DE', { maximumFractionDigits: 3 })}
-            </Text>
-            <Text style={[S.cUnit, S.td]}>{item.unit}</Text>
-            <Text style={[S.cPrice,S.mono]}>
-              {item.unitPrice.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-            </Text>
-            <Text style={[S.cNet,  S.mono, S.bold]}>
-              {item.netAmount.toLocaleString('de-DE', { minimumFractionDigits: 2 })}
-            </Text>
-          </View>
-        ))}
-
-        {/* Totals */}
-        <View style={S.totals}>
-          <View style={S.totalsBox}>
-            {(Object.entries(data.byType) as [ServiceItemType, number][])
-              .filter(([, v]) => v > 0)
-              .map(([type, amount]) => (
-                <View key={type} style={S.totRow}>
-                  <Text style={{ fontSize: 8, color: '#6b6b80' }}>{SERVICE_ITEM_TYPE_LABELS[type]}</Text>
-                  <Text style={[S.mono, { fontSize: 8, color: '#6b6b80' }]}>{fmt(amount)}</Text>
-                </View>
-              ))}
-            <View style={[S.totRow, { borderTop: '0.5 solid #c0bdb8', marginTop: 3, paddingTop: 4 }]}>
-              <Text style={[S.td, S.bold]}>Gesamt netto</Text>
-              <Text style={[S.mono, S.bold, { fontSize: 9.5 }]}>{fmt(data.totalNet)}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Signature block */}
-        <View style={S.sigBox}>
-          <View>
-            <View style={S.sigLine} />
-            <Text style={S.sigLabel}>Ort, Datum, Unterschrift Auftragnehmer</Text>
-            <Text style={[S.sigLabel, { marginTop: 2 }]}>{data.preparedBy}</Text>
-          </View>
-          <View>
-            <View style={S.sigLine} />
-            <Text style={S.sigLabel}>Ort, Datum, Unterschrift Auftraggeber</Text>
-            <Text style={[S.sigLabel, { marginTop: 2 }]}>{data.customer.name}</Text>
-          </View>
-        </View>
+          )
+        })}
 
         {/* Footer */}
         <View style={S.footer} fixed>

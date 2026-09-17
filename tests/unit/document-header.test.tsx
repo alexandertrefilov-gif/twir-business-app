@@ -1,5 +1,7 @@
 import React from 'react'
 import { Text, View } from '@react-pdf/renderer'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   PDF_BODY_LINE_HEIGHT,
@@ -64,6 +66,20 @@ describe('Gemeinsamer PDF-Dokumentheader', () => {
     })
   })
 
+  it.each([
+    'lib/pdf-templates/offer.template.tsx',
+    'lib/pdf-templates/order.template.tsx',
+    'lib/pdf-templates/service-report.template.tsx',
+  ])('verwendet in %s die gemeinsame Header-Geometrie ohne individuellen oberen Abstand', (file) => {
+    const source = readFileSync(resolve(process.cwd(), file), 'utf8')
+
+    expect(source).toContain('PDF_HEADER_ROW_STYLE')
+    expect(source).toContain('PDF_HEADER_LEFT_COLUMN_STYLE')
+    expect(source).toContain('PDF_HEADER_RIGHT_COLUMN_STYLE')
+    expect(source).not.toMatch(/(?:address|addressBlock):\s*\{[^}]*marginTop:\s*8/)
+    expect(source).not.toMatch(/(?:meta|metaBox|headerRight):\s*\{[^}]*paddingTop:\s*[048]/)
+  })
+
   it('rendert zuerst die Absenderadresse und danach eine Vollbreitenlinie', () => {
     const element = PdfSenderAddressDivider({ sender: 'TWIR · Musterstraße 1 · 12345 Musterstadt' })
     const children = React.Children.toArray(element.props.children) as Array<
@@ -80,4 +96,17 @@ describe('Gemeinsamer PDF-Dokumentheader', () => {
     })
   })
 
+  it.each([
+    'lib/pdf-templates/offer.template.tsx',
+    'lib/pdf-templates/service-report.template.tsx',
+  ])('ordnet in %s Logo, Absenderlinie und Empfänger-/Metadatenblock', (file) => {
+    const source = readFileSync(resolve(process.cwd(), file), 'utf8')
+    const logo = source.indexOf('<PdfImage')
+    const senderDivider = source.indexOf('<PdfSenderAddressDivider')
+    const recipientAndMeta = source.indexOf('<View style={S.headerRow}>', senderDivider)
+
+    expect(logo).toBeGreaterThan(-1)
+    expect(senderDivider).toBeGreaterThan(logo)
+    expect(recipientAndMeta).toBeGreaterThan(senderDivider)
+  })
 })

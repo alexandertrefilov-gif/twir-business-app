@@ -103,6 +103,75 @@ describe.skipIf(!RUN_INTEGRATION)(
   },
 )
 
+describe.skipIf(!RUN_INTEGRATION)(
+  'Race Condition — ein Leistungsnachweis pro Auftrag (Integration)',
+  () => {
+    let testPrisma: any
+    let orderId: string
+    let userId: string
+    let customerId: string
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+    beforeAll(async () => {
+      const { PrismaClient } = await import('@prisma/client')
+      testPrisma = new PrismaClient({
+        datasources: { db: { url: process.env.TEST_DATABASE_URL } },
+      })
+      const role = await testPrisma.role.upsert({
+        where: { name: 'ADMIN' },
+        update: {},
+        create: { name: 'ADMIN', displayName: 'Admin' },
+      })
+      const user = await testPrisma.user.create({
+        data: {
+          email: `service-report-race-${suffix}@example.invalid`,
+          passwordHash: 'not-used',
+          firstName: 'Race',
+          lastName: 'Test',
+          roleId: role.id,
+        },
+      })
+      userId = user.id
+      const customer = await testPrisma.customer.create({
+        data: { number: `RACE-${suffix}`, name: 'Race Testkunde' },
+      })
+      customerId = customer.id
+      const order = await testPrisma.order.create({
+        data: {
+          orderNumber: `RACE-AU-${suffix}`,
+          customerId,
+          createdById: userId,
+        },
+      })
+      orderId = order.id
+    })
+
+    afterAll(async () => {
+      if (testPrisma) {
+        if (orderId) await testPrisma.serviceReport.deleteMany({ where: { orderId } })
+        if (orderId) await testPrisma.order.deleteMany({ where: { id: orderId } })
+        if (customerId) await testPrisma.customer.deleteMany({ where: { id: customerId } })
+        if (userId) await testPrisma.user.deleteMany({ where: { id: userId } })
+        await testPrisma.$disconnect()
+      }
+    })
+
+    it('lässt bei parallelen Inserts höchstens einen Leistungsnachweis zu', async () => {
+      const attempts = await Promise.allSettled([
+        testPrisma.serviceReport.create({
+          data: { reportNumber: `RACE-LN-A-${suffix}`, orderId, reportDate: new Date(), createdById: userId },
+        }),
+        testPrisma.serviceReport.create({
+          data: { reportNumber: `RACE-LN-B-${suffix}`, orderId, reportDate: new Date(), createdById: userId },
+        }),
+      ])
+
+      expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1)
+      await expect(testPrisma.serviceReport.count({ where: { orderId } })).resolves.toBe(1)
+    })
+  },
+)
+
 // ── Unit-Version ohne echte DB (immer ausführen) ───────────────
 
 describe('Race Condition — Logik-Simulation (Unit)', () => {
