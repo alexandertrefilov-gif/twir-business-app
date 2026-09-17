@@ -7,6 +7,9 @@ import { getCustomerById } from '@/lib/services/customer.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { DeleteCustomerButton } from '@/components/customers/DeleteCustomerButton'
+import { CustomerBillingAddressActions } from '@/components/customers/CustomerBillingAddressActions'
+import { CustomerDeliveryAddressActions } from '@/components/customers/CustomerDeliveryAddressActions'
+import { CustomerAddressPicker } from '@/components/customers/CustomerAddressPicker'
 import { format }         from 'date-fns'
 import { de }             from 'date-fns/locale'
 
@@ -111,6 +114,36 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
               {!customer.email && !customer.phone && (
                 <p className="text-sm text-muted-foreground">Keine Kontaktdaten hinterlegt.</p>
               )}
+            </InfoCard>
+
+            <InfoCard title={`Rechnungsadressen (${customer.billingAddresses.length})`}>
+              <div className="mb-3 flex justify-end">
+                {canEdit && <CustomerAddressPicker customerId={customer.id} type="BILLING" />}
+              </div>
+              {customer.billingAddresses.length === 0 ? <p className="text-sm text-muted-foreground">Keine alternative Rechnungsadresse hinterlegt. Bei neuen Rechnungen wird die Kunden-Hauptadresse verwendet.</p> : <div className="grid gap-3 sm:grid-cols-2">
+                {customer.billingAddresses.map(address => <div key={address.id} className="rounded-md border border-stone-200 p-3">
+                  <div className="flex items-start justify-between gap-2"><p className="text-sm font-600">{address.label}</p><div className="flex gap-1">{address.isDefault && <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">Standard</span>}<span className={`rounded px-1.5 py-0.5 text-[10px] ${address.isActive ? 'bg-green-50 text-green-700' : 'bg-stone-100 text-stone-600'}`}>{address.isActive ? 'Aktiv' : 'Inaktiv'}</span></div></div>
+                  <address className="mt-2 text-sm not-italic leading-5 text-muted-foreground">{address.companyName}<br />{address.additional && <>{address.additional}<br /></>}{address.contactName && <>{address.contactName}<br /></>}{address.street} {address.houseNumber}<br />{address.postalCode} {address.city}</address>
+                  {canEdit && <Link href={`/customers/${customer.id}/billing-addresses/${address.id}/edit`} className="mt-3 inline-block text-xs text-blue-700">Bearbeiten</Link>}
+                  <CustomerBillingAddressActions customerId={customer.id} addressId={address.id} canDelete={canDelete} canSetDefault={canEdit && address.isActive && !address.isDefault} />
+                </div>)}
+              </div>}
+            </InfoCard>
+
+            <InfoCard title={`Lieferadressen (${customer.deliveryAddresses.length})`}>
+              <div className="mb-3 flex justify-end">
+                {canEdit && <CustomerAddressPicker customerId={customer.id} type="SHIPPING" />}
+              </div>
+              {customer.deliveryAddresses.length === 0 ? <p className="text-sm text-muted-foreground">Keine alternative Lieferadresse hinterlegt.</p> : <div className="grid gap-3 sm:grid-cols-2">
+                {customer.deliveryAddresses.map(address => <div key={address.id} className="rounded-md border border-stone-200 p-3">
+                  <div className="flex items-start justify-between gap-2"><p className="text-sm font-600">{address.label}</p><div className="flex gap-1">{address.isDefault && <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">Standard</span>}<span className={`rounded px-1.5 py-0.5 text-[10px] ${address.isActive ? 'bg-green-50 text-green-700' : 'bg-stone-100 text-stone-600'}`}>{address.isActive ? 'Aktiv' : 'Inaktiv'}</span></div></div>
+                  <address className="mt-2 text-sm not-italic leading-5 text-muted-foreground">{address.companyName}<br />{address.additional && <>{address.additional}<br /></>}{address.contactName && <>{address.contactName}<br /></>}{address.street} {address.houseNumber}<br />{address.postalCode} {address.city}{address.country !== 'DE' && <><br />{address.country}</>}</address>
+                  {address.email && <p className="mt-1 text-xs text-muted-foreground">{address.email}</p>}
+                  {address.phone && <p className="text-xs text-muted-foreground mono">{address.phone}</p>}
+                  {canEdit && <Link href={`/customers/${customer.id}/delivery-addresses/${address.id}/edit`} className="mt-3 inline-block text-xs text-blue-700">Bearbeiten</Link>}
+                  <CustomerDeliveryAddressActions customerId={customer.id} addressId={address.id} isActive={address.isActive} canDelete={canDelete} canUpdate={canEdit} canSetDefault={canEdit && address.isActive && !address.isDefault} />
+                </div>)}
+              </div>}
             </InfoCard>
 
             {/* Ansprechpartner */}

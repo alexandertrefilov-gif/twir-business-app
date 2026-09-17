@@ -136,6 +136,11 @@ export async function getCustomerById(id: string) {
   const customer = await prisma.customer.findUnique({
     where:   { id, deletedAt: null },
     include: {
+      addresses: {
+        where: { deletedAt: null },
+        orderBy: [{ isDefault: 'desc' }, { isActive: 'desc' }, { label: 'asc' }],
+        include: { address: true },
+      },
       contacts: {
         where:   { deletedAt: null },
         orderBy: [{ isPrimary: 'desc' }, { lastName: 'asc' }],
@@ -151,7 +156,12 @@ export async function getCustomerById(id: string) {
   })
 
   if (!customer) throw new NotFoundError('Kunde nicht gefunden')
-  return customer
+  const mapped = customer.addresses.map(assignment => ({ ...assignment.address, ...assignment }))
+  return {
+    ...customer,
+    billingAddresses: mapped.filter(address => address.type === 'BILLING'),
+    deliveryAddresses: mapped.filter(address => address.type === 'SHIPPING'),
+  }
 }
 
 // ── CREATE ───────────────────────────────────────────────────
