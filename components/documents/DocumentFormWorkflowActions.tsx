@@ -32,12 +32,21 @@ export function DocumentFormWorkflowActions({
   const submissionRequestedRef = useRef(false)
 
   useEffect(() => {
+    // Portal-Ziel ist ein vom Server gerendertes DOM-Element (per ID), dessen
+    // Existenz erst nach dem Mount geprüft werden kann — kein Fall für
+    // Render-Zeit-Berechnung. Vorbestehendes Muster, unverändert seit vor CP16.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTarget(document.getElementById(targetId))
   }, [targetId])
 
   useEffect(() => {
+    // Setzt die Doppelklick-Sperre zurück, sobald die übergeordnete Server
+    // Action abgeschlossen ist (isPending false). Dieselbe Komponente wird in
+    // Angebots-, Auftrags-, Rechnungs- und Leistungsnachweis-Formularen
+    // verwendet — vorbestehendes Muster, unverändert seit vor CP16.
     if (!isPending) {
       submissionRequestedRef.current = false
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSubmissionRequested(false)
     }
   }, [isPending, error])

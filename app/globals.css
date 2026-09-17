@@ -1,9 +1,12 @@
 /* app/globals.css */
+/* @import muss laut CSS-Spezifikation allen anderen Regeln vorausgehen —
+   inkl. der von @tailwind expandierten Regeln. Turbopack (Next 16) erzwingt
+   dies strikt, während Webpack es zuvor stillschweigend toleriert hat. */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap');
 
 @layer base {
   :root {

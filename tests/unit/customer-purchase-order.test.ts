@@ -71,16 +71,16 @@ describe('eingehende Kundenbestellungen', () => {
     expect(dialog).toContain('.eml')
   })
 
-  it('hebt das Middleware-Bodylimit an, damit der 20-MB-Upload die Route überhaupt erreicht', () => {
-    // Next.js liest Request-Bodies vollständig ein, sobald middleware.ts greift,
+  it('hebt das Proxy-Bodylimit an, damit der 20-MB-Upload die Route überhaupt erreicht', () => {
+    // Next.js liest Request-Bodies vollständig ein, sobald proxy.ts greift,
     // und kappt sie standardmäßig bei 10 MB (statt sauber abzulehnen wird der
     // multipart-Body abgeschnitten, was in der Route zu einem rohen 500 statt
     // der eigenen 413-Prüfung führt). Ohne diese Anhebung ist der in
     // upload-validator.ts vorgesehene 20-MB-Upload für Kundenbestellungen
     // nicht erreichbar.
     const config = readFileSync(resolve(process.cwd(), 'next.config.mjs'), 'utf8')
-    expect(config).toContain('middlewareClientMaxBodySize')
-    const match = config.match(/middlewareClientMaxBodySize:\s*'(\d+)mb'/)
+    expect(config).toContain('proxyClientMaxBodySize')
+    const match = config.match(/proxyClientMaxBodySize:\s*'(\d+)mb'/)
     expect(match).not.toBeNull()
     expect(Number(match?.[1])).toBeGreaterThan(20)
   })

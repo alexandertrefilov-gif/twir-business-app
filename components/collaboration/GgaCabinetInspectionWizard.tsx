@@ -13,6 +13,13 @@ const STEP_TITLES = [
 
 const PROOF_KINDS = ['Pruefbericht', 'Protokoll', 'Sonstiges'] as const
 
+function CheckToggle({ title, checked, disabled, onToggle }: { title: string; checked: boolean; disabled: boolean; onToggle: () => void }) {
+  return <button type="button" disabled={disabled} onClick={onToggle} className={`flex w-full items-center justify-between rounded-lg border px-4 py-3 text-base disabled:opacity-60 ${checked ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+    <span>{title}</span>
+    <span className="text-sm font-600">{checked ? '✓ Geprüft' : 'Nicht geprüft'}</span>
+  </button>
+}
+
 async function mutate(body: Record<string, unknown>) {
   const response = await fetch('/api/collaboration/workflow', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const result = await response.json()
@@ -68,8 +75,12 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
   const [docKind, setDocKind] = useState<string>('Pruefbericht')
 
   useEffect(() => {
+    // sessionStorage ist während SSR nicht verfügbar — Wiederherstellung des
+    // zuletzt aktiven Schritts kann daher erst nach dem Mount erfolgen.
+    // Vorbestehendes Muster, unverändert seit vor CP16.
     try {
       const stored = window.sessionStorage.getItem(storageKey)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (stored) setStep(Math.min(Math.max(Number(stored) || 0, 0), STEP_TITLES.length - 1))
     } catch { /* private Fenster etc. */ }
   }, [storageKey])
@@ -131,11 +142,6 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
   const inputCls = 'mt-2 w-full rounded-lg border border-stone-300 px-4 py-3 text-base'
   const labelCls = 'block text-sm font-600 text-stone-800'
 
-  const CheckToggle = ({ title }: { title: string }) => <button type="button" disabled={!canInspect || pending} onClick={() => toggleChecklist(title, !checklist[title])} className={`flex w-full items-center justify-between rounded-lg border px-4 py-3 text-base disabled:opacity-60 ${checklist[title] ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
-    <span>{title}</span>
-    <span className="text-sm font-600">{checklist[title] ? '✓ Geprüft' : 'Nicht geprüft'}</span>
-  </button>
-
   return <div>
     {lifecycleWarning && <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">{lifecycleWarning}</div>}
 
@@ -162,7 +168,7 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
           <p className="text-xs font-600 uppercase text-red-800">Noch offene erforderliche Maßnahmen ({recap.openRequiredMeasures.length})</p>
           <ul className="mt-1 list-disc pl-5 text-sm text-red-900">{recap.openRequiredMeasures.map((t) => <li key={t}>{t}</li>)}</ul>
         </div>}
-        <CheckToggle title="Maßnahmen abgeschlossen" />
+        <CheckToggle title="Maßnahmen abgeschlossen" checked={checklist['Maßnahmen abgeschlossen']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Maßnahmen abgeschlossen', !checklist['Maßnahmen abgeschlossen'])} />
       </div>}
 
       {step === 2 && <div className="mt-5 space-y-4">
@@ -171,21 +177,21 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
           <label className="block"><span className={labelCls}>Gemessen am</span><input type="date" value={letztePruefungAm} onChange={(e) => setLetztePruefungAm(e.target.value)} className={inputCls} disabled={!canEditStammdaten} /></label>
         </div>
         {canEditStammdaten && <button disabled={pending} onClick={saveIstVolumenstrom} className="rounded-lg bg-stone-800 px-5 py-3 text-base font-600 text-white disabled:opacity-50">Messwert speichern</button>}
-        <CheckToggle title="Abluft geprüft" />
-        <CheckToggle title="Ist-Volumenstrom dokumentiert" />
+        <CheckToggle title="Abluft geprüft" checked={checklist['Abluft geprüft']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Abluft geprüft', !checklist['Abluft geprüft'])} />
+        <CheckToggle title="Ist-Volumenstrom dokumentiert" checked={checklist['Ist-Volumenstrom dokumentiert']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Ist-Volumenstrom dokumentiert', !checklist['Ist-Volumenstrom dokumentiert'])} />
       </div>}
 
       {step === 3 && <div className="mt-5 space-y-3">
-        <CheckToggle title="Elektro/VDE geprüft" />
-        <CheckToggle title="Potentialausgleich geprüft" />
+        <CheckToggle title="Elektro/VDE geprüft" checked={checklist['Elektro/VDE geprüft']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Elektro/VDE geprüft', !checklist['Elektro/VDE geprüft'])} />
+        <CheckToggle title="Potentialausgleich geprüft" checked={checklist['Potentialausgleich geprüft']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Potentialausgleich geprüft', !checklist['Potentialausgleich geprüft'])} />
       </div>}
 
       {step === 4 && <div className="mt-5 space-y-3">
-        <CheckToggle title="Ex-Anforderungen erfüllt" />
+        <CheckToggle title="Ex-Anforderungen erfüllt" checked={checklist['Ex-Anforderungen erfüllt']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Ex-Anforderungen erfüllt', !checklist['Ex-Anforderungen erfüllt'])} />
       </div>}
 
       {step === 5 && <div className="mt-5 space-y-3">
-        <CheckToggle title="Kennzeichnung geprüft" />
+        <CheckToggle title="Kennzeichnung geprüft" checked={checklist['Kennzeichnung geprüft']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Kennzeichnung geprüft', !checklist['Kennzeichnung geprüft'])} />
       </div>}
 
       {step === 6 && <div className="mt-5 space-y-4">
@@ -214,7 +220,7 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
       {step === 8 && <div className="mt-5 space-y-6">
         <div>
           <h3 className="text-sm font-600 text-stone-800">Interne Freigabe</h3>
-          <CheckToggle title="Dokumentation vollständig" />
+          <CheckToggle title="Dokumentation vollständig" checked={checklist['Dokumentation vollständig']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Dokumentation vollständig', !checklist['Dokumentation vollständig'])} />
           {initial.latestApprovalStatus === 'REQUESTED' && <p className="mt-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Interne Freigabe wurde angefragt und ist noch nicht entschieden.</p>}
           {initial.latestApprovalStatus === 'REJECTED' && <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-900">Die letzte interne Freigabe wurde abgelehnt. Nach Nacharbeit kann hier eine erneute Freigabe angefragt werden.</p>}
           {canApprove && initial.latestApprovalStatus !== 'REQUESTED' && <button disabled={pending} onClick={requestFreigabe} className="mt-2 rounded-lg bg-stone-800 px-6 py-3 text-base font-600 text-white disabled:opacity-50">Interne Freigabe anfordern</button>}

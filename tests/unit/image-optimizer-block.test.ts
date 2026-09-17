@@ -3,11 +3,11 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server'
 import { GET } from '@/app/api/image-optimizer-disabled/route'
-import { config as middlewareConfig } from '@/middleware'
+import { config as proxyConfig } from '@/proxy'
 
 function matchesMiddleware(pathname: string) {
   return unstable_doesMiddlewareMatch({
-    config: middlewareConfig,
+    config: proxyConfig,
     nextConfig: {},
     url: `https://example.test${pathname}`,
   })
@@ -34,7 +34,7 @@ describe('Deaktivierter Next.js Image Optimizer', () => {
   })
 
   it('beschränkt den Middleware-Importgraphen auf Edge-kompatible Einstiegspunkte', () => {
-    const source = readFileSync(resolve(process.cwd(), 'middleware.ts'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'proxy.ts'), 'utf8')
     const imports = [...source.matchAll(/from ['"]([^'"]+)['"]/g)]
       .map((match) => match[1])
 

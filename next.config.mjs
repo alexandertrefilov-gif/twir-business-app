@@ -12,17 +12,14 @@ const sharedConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  eslint: {
-    ignoreDuringBuilds: false,
-  },
 
   experimental: {
-    // Next.js liest den Request-Body vollständig ein, sobald die Middleware
-    // greift (siehe middleware.ts-Matcher). Ohne dieses Limit werden Bodies
+    // Next.js liest den Request-Body vollständig ein, sobald der Proxy
+    // greift (siehe proxy.ts-Matcher). Ohne dieses Limit werden Bodies
     // über 10 MB stillschweigend abgeschnitten — der 20-MB-Upload für
     // Kundenbestellungen (lib/security/upload-validator.ts) würde dann mit
     // einem kaputten multipart-Body statt einer sauberen 413-Antwort scheitern.
-    middlewareClientMaxBodySize: '25mb',
+    proxyClientMaxBodySize: '25mb',
     // Aktiviert next/navigation forbidden()/unauthorized(): eine in einer
     // Server-Component-Seite geworfene ForbiddenError/UnauthorizedError wird
     // dadurch korrekt als 403/401 beantwortet statt als generischer 500-Fehler
