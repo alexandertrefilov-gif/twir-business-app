@@ -6,15 +6,17 @@ import { redirect }         from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions }      from '@/lib/auth/options'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
-import { OfferCreateSchema, OfferUpdateSchema } from '@/lib/validators/offer.schema'
+import { OfferCreateSchema, OfferNumberChangeSchema, OfferUpdateSchema } from '@/lib/validators/offer.schema'
 import {
   createOffer,
   updateOffer,
   deleteOffer,
   changeOfferStatus,
   convertOfferToOrder,
+  changeOfferNumber,
 } from '@/lib/services/offer.service'
 import type { OfferStatus } from '@/types/enums'
+import type { RoleName } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 
 export interface ActionState {
@@ -32,7 +34,8 @@ export interface ActionState {
 async function getActor() {
   const session = await getServerSession(authOptions)
   if (!session?.user) throw new Error('Nicht angemeldet')
-  return { userId: session.user.id, userEmail: session.user.email }
+  const user = session.user as typeof session.user & { role: RoleName }
+  return { userId: user.id, userEmail: user.email, role: user.role }
 }
 
 // ── Parse items from form ────────────────────────────────────
@@ -58,6 +61,7 @@ export async function createOfferAction(
 
   const raw = {
     customerId:  formData.get('customerId'),
+    areaName:    formData.get('areaName')    || null,
     title:       formData.get('title')      || null,
     introText:   formData.get('introText')  || null,
     outroText:   formData.get('outroText')  || null,
@@ -107,6 +111,7 @@ export async function updateOfferAction(
 
   const raw = {
     customerId:  formData.get('customerId'),
+    areaName:    formData.get('areaName')    || null,
     title:       formData.get('title')      || null,
     introText:   formData.get('introText')  || null,
     outroText:   formData.get('outroText')  || null,
@@ -144,6 +149,32 @@ export async function updateOfferAction(
   redirect(`/offers/${offerId}`)
 }
 
+export async function changeOfferNumberAction(
+  offerId: string,
+  offerNumber: string,
+): Promise<ActionState> {
+  await requirePermission(Resource.OFFER, Action.UPDATE)
+  const { userId, userEmail } = await getActor()
+  const result = OfferNumberChangeSchema.safeParse({ offerNumber })
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.error.issues[0]?.message ?? 'Angebotsnummer ist ungültig.',
+      fieldErrors: result.error.flatten().fieldErrors,
+    }
+  }
+
+  try {
+    await changeOfferNumber(offerId, result.data.offerNumber, userId, userEmail)
+    revalidatePath('/offers')
+    revalidatePath(`/offers/${offerId}`)
+    revalidatePath(`/offers/${offerId}/edit`)
+    return { success: true }
+  } catch (error: unknown) {
+    return { success: false, error: error instanceof Error ? error.message : 'Angebotsnummer konnte nicht geändert werden.' }
+  }
+}
+
 // ── STATUS CHANGE ─────────────────────────────────────────────
 
 export async function changeOfferStatusAction(
@@ -179,7 +210,7 @@ export async function convertToOrderAction(offerId: string): Promise<ActionState
   revalidatePath('/offers')
   revalidatePath(`/offers/${offerId}`)
   revalidatePath('/orders')
-  redirect(`/orders/${orderId}`)
+  redirect(`/orders/${orderId}/edit`)
 }
 
 // ── DELETE ───────────────────────────────────────────────────

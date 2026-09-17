@@ -73,11 +73,7 @@ export function normalizeWordHtml(html: string): string {
 
     if (element instanceof HTMLTableCellElement) {
       const width = sourceStyle.width || element.getAttribute('width')
-      const height = sourceStyle.height ||
-        element.getAttribute('height') ||
-        element.closest('tr')?.style.height
       if (width && !width.includes('%')) styles.push(`width: ${width}`)
-      if (height) styles.push(`height: ${height}`)
     }
     if (element instanceof HTMLTableElement) {
       styles.push('width: 100%', 'max-width: 100%', 'table-layout: fixed')
@@ -93,8 +89,7 @@ export function normalizeWordHtml(html: string): string {
         name === 'colspan' ||
         name === 'rowspan' ||
         name === 'colwidth' ||
-        name === 'width' ||
-        name === 'height'
+        name === 'width'
       ) continue
       element.removeAttribute(attribute.name)
     }

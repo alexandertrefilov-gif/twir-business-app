@@ -139,6 +139,8 @@ export async function getCompanySnapshot() {
     logoPath:          s.logoPath,
     logoStorageKey:    s.logoStorageKey,
     logoScale,
+    logoWidth:         s.logoWidth,
+    logoHeight:        s.logoHeight,
   }
 }
 

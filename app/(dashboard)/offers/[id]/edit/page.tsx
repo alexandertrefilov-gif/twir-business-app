@@ -6,7 +6,9 @@ import { OfferForm }       from '@/components/offers/OfferForm'
 import { getOfferById }    from '@/lib/services/offer.service'
 import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { prisma }          from '@/lib/db/prisma'
-import { updateOfferAction } from '../../actions'
+import { changeOfferNumberAction, updateOfferAction } from '../../actions'
+import { BusinessDocumentLayout, BusinessDocumentSidebar, BusinessWorkflowPlaceholder } from '@/components/documents/BusinessDocumentLayout'
+import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -14,7 +16,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
   try {
     const o = await getOfferById(id)
-    return { title: `${o.offerNumber} bearbeiten` }
+    return { title: `${offerNumberForDisplay(o.offerNumber)} bearbeiten` }
   } catch {
     return { title: 'Angebot bearbeiten' }
   }
@@ -43,6 +45,7 @@ export default async function EditOfferPage({ params }: { params: Promise<{ id: 
   })
 
   const boundAction = updateOfferAction.bind(null, offer.id)
+  const boundNumberAction = changeOfferNumberAction.bind(null, offer.id)
 
   // Prepare defaults from existing data
   const itemDefaults = offer.items.map((item, idx) => ({
@@ -58,21 +61,27 @@ export default async function EditOfferPage({ params }: { params: Promise<{ id: 
   return (
     <div>
       <PageHeader
-        title={`${offer.offerNumber} bearbeiten`}
+        sticky
+        title={`${offerNumberForDisplay(offer.offerNumber)} bearbeiten`}
         breadcrumbs={[
           { label: 'Angebote',  href: '/offers' },
-          { label: offer.offerNumber, href: `/offers/${offer.id}` },
+          { label: offerNumberForDisplay(offer.offerNumber), href: `/offers/${offer.id}` },
           { label: 'Bearbeiten' },
         ]}
       />
-      <div className="p-6 max-w-4xl">
-        <OfferForm
-          mode="edit"
-          offerId={offer.id}
+      <div className="p-4 sm:p-6">
+        <BusinessDocumentLayout>
+          <div className="min-w-0">
+            <OfferForm
+              mode="edit"
+              offerId={offer.id}
+              offerNumber={offer.offerNumber}
+              changeNumberAction={boundNumberAction}
           customers={customers}
           action={boundAction}
           defaults={{
             customerId: offer.customerId,
+            areaName:   offer.areaName   ?? undefined,
             title:      offer.title      ?? undefined,
             introText:  offer.introText  ?? undefined,
             outroText:  offer.outroText  ?? undefined,
@@ -80,7 +89,16 @@ export default async function EditOfferPage({ params }: { params: Promise<{ id: 
             validUntil: offer.validUntil?.toISOString().slice(0, 10),
             items:      itemDefaults,
           }}
-        />
+            />
+          </div>
+          <BusinessDocumentSidebar sticky>
+            <BusinessWorkflowPlaceholder message="Der vollständige Geschäftsvorgang-Workflow steht an dieser Stelle noch nicht zur Verfügung.">
+              <p className="mb-3 text-sm font-600 text-foreground">Status: Entwurf</p>
+              <p className="mb-3 text-sm text-muted-foreground">{offerNumberForDisplay(offer.offerNumber)}</p>
+              <div id="document-edit-workflow-actions" />
+            </BusinessWorkflowPlaceholder>
+          </BusinessDocumentSidebar>
+        </BusinessDocumentLayout>
       </div>
     </div>
   )

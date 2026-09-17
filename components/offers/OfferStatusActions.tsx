@@ -3,7 +3,7 @@
 // Rendert die richtigen Aktions-Buttons je nach aktuellem Angebots-Status.
 // Nutzt ConfirmDialog aus Phase 3 (shared).
 
-import { useState, useTransition } from 'react'
+import { forwardRef, useRef, useState, type ButtonHTMLAttributes } from 'react'
 import { useRouter }               from 'next/navigation'
 import { ConfirmDialog }           from '@/components/shared/ConfirmDialog'
 import {
@@ -22,20 +22,36 @@ interface OfferStatusActionsProps {
   canEdit:     boolean
   canDelete:   boolean
   canConvert:  boolean  // role: ORDER create
+  showConversion?: boolean
+  compactDecision?: boolean
 }
 
 export function OfferStatusActions({
   offerId, status, totalGross, offerNumber, canEdit, canDelete, canConvert,
+  showConversion = true,
+  compactDecision = false,
 }: OfferStatusActionsProps) {
   const router            = useRouter()
   const [error, setError] = useState<string | null>(null)
-  const [, startT]        = useTransition()
+  const statusChangePending = useRef(false)
 
   async function doStatusChange(toStatus: OfferStatus) {
+    if (statusChangePending.current) return
+    statusChangePending.current = true
     setError(null)
-    const res = await changeOfferStatusAction(offerId, toStatus)
-    if (!res.success) setError(res.error ?? 'Fehler')
-    else router.refresh()
+    try {
+      const res = await changeOfferStatusAction(offerId, toStatus)
+      if (!res.success) {
+        setError(res.error ?? 'Statuswechsel fehlgeschlagen.')
+        return
+      }
+      if (res.error) setError(res.error)
+      router.refresh()
+    } catch {
+      setError('Statuswechsel fehlgeschlagen. Bitte versuchen Sie es erneut.')
+    } finally {
+      statusChangePending.current = false
+    }
   }
 
   const fmt = totalGross.toLocaleString('de-DE', {
@@ -46,7 +62,7 @@ export function OfferStatusActions({
   return (
     <div className="space-y-3">
       {error && (
-        <div className="p-2.5 rounded bg-red-50 border border-red-200 text-xs text-red-700">
+        <div role="alert" className="p-2.5 rounded bg-red-50 border border-red-200 text-xs text-red-700">
           {error}
         </div>
       )}
@@ -83,7 +99,7 @@ export function OfferStatusActions({
 
       {/* SENT actions */}
       {status === 'SENT' && (
-        <>
+        <div className={compactDecision ? 'grid w-full grid-cols-1 gap-2' : 'space-y-3'}>
           <ConfirmDialog
             title="Angebot als angenommen markieren?"
             description={`„${offerNumber}" (${fmt}) wird auf ANGENOMMEN gesetzt. Die Umwandlung in einen Auftrag wird danach möglich.`}
@@ -106,24 +122,12 @@ export function OfferStatusActions({
             onConfirm={() => doStatusChange('EXPIRED' as OfferStatus)}
             trigger={<ActionButton label="Abgelaufen" variant="secondary" icon="clock" />}
           />
-        </>
+        </div>
       )}
 
       {/* ACCEPTED actions */}
-      {status === 'ACCEPTED' && canConvert && (
-        <ConfirmDialog
-          title="In Auftrag umwandeln?"
-          description={`„${offerNumber}" (${fmt}) wird in einen neuen Auftrag umgewandelt. Die Positionen werden übernommen. Diese Aktion kann nicht rückgängig gemacht werden.`}
-          confirmLabel="Auftrag anlegen"
-          onConfirm={async () => {
-            const res = await convertToOrderAction(offerId)
-            if (!res.success) setError(res.error ?? 'Fehler')
-            // redirect happens inside action on success
-          }}
-          trigger={
-            <ActionButton label="In Auftrag umwandeln" variant="convert" icon="arrow" />
-          }
-        />
+      {status === 'ACCEPTED' && canConvert && showConversion && (
+        <OfferConvertAction offerId={offerId} offerNumber={offerNumber} totalGross={totalGross} />
       )}
 
       {/* Terminal states */}
@@ -136,15 +140,41 @@ export function OfferStatusActions({
   )
 }
 
+export function OfferConvertAction({ offerId, offerNumber, totalGross }: {
+  offerId: string
+  offerNumber: string
+  totalGross: number
+}) {
+  const [error, setError] = useState<string | null>(null)
+  const total = totalGross.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
+  return (
+    <div className="space-y-2">
+      {error && <p className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">{error}</p>}
+      <ConfirmDialog
+        title="In Auftrag umwandeln?"
+        description={`„${offerNumber}" (${total}) wird vollständig mit Textbereichen, Positionen und Schlussangaben in einen neuen Auftrag übernommen. Nicht benötigte Karten können anschließend im Auftrag entfernt werden. Diese Aktion kann nicht rückgängig gemacht werden.`}
+        confirmLabel="Auftrag anlegen"
+        onConfirm={async () => {
+          const res = await convertToOrderAction(offerId)
+          if (!res.success) setError(res.error ?? 'Fehler')
+        }}
+        trigger={<ActionButton label="In Auftrag umwandeln" variant="convert" icon="arrow" />}
+      />
+    </div>
+  )
+}
+
 // ── Action primitives ─────────────────────────────────────────
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'success' | 'convert'
 
-function ActionButton({
-  label, variant, icon,
-}: {
-  label: string; variant: Variant; icon: string
-}) {
+const ActionButton = forwardRef<HTMLButtonElement, {
+  label: string
+  variant: Variant
+  icon: string
+} & ButtonHTMLAttributes<HTMLButtonElement>>(function ActionButton({
+  label, variant, icon, className = '', ...buttonProps
+}, ref) {
   const styles: Record<Variant, string> = {
     primary:   'bg-blue-700 hover:bg-blue-800 text-white border-transparent',
     secondary: 'bg-white hover:bg-stone-50 text-foreground border-stone-200',
@@ -154,14 +184,16 @@ function ActionButton({
   }
   return (
     <button
+      {...buttonProps}
+      ref={ref}
       type="button"
-      className={`w-full flex items-center gap-2 h-9 px-4 rounded-md border text-sm font-500 transition-colors ${styles[variant]}`}
+      className={`flex min-h-9 w-full items-center justify-start gap-2 rounded-md border px-4 py-2 text-left text-sm font-500 leading-tight transition-colors ${styles[variant]} ${className}`}
     >
       <BtnIcon name={icon} />
       {label}
     </button>
   )
-}
+})
 
 function ActionLink({ href, label, variant, icon }: { href: string; label: string; variant: Variant; icon: string }) {
   const styles: Record<Variant, string> = {

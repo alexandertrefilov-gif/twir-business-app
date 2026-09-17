@@ -43,6 +43,7 @@ import NewOfferPage from '@/app/(dashboard)/offers/new/page'
 
 interface CopyDefaults {
   customerId?: string
+  areaName?: string
   title?: string
   introText?: string
   outroText?: string
@@ -63,9 +64,20 @@ type ElementWithChildren = React.ReactElement<{ children?: React.ReactNode }>
 type FormElement = React.ReactElement<{ defaults: CopyDefaults }>
 
 function getFormDefaults(page: ElementWithChildren) {
-  const children = React.Children.toArray(page.props.children) as ElementWithChildren[]
-  const formContainer = children[1]
-  const form = formContainer.props.children as FormElement
+  function findForm(node: React.ReactNode): FormElement | undefined {
+    for (const child of React.Children.toArray(node)) {
+      if (!React.isValidElement(child)) continue
+      const element = child as ElementWithChildren
+      if (typeof element.type === 'function' && element.type.name === 'OfferForm') {
+        return element as FormElement
+      }
+      const nested = findForm(element.props.children)
+      if (nested) return nested
+    }
+  }
+
+  const form = findForm(page)
+  if (!form) throw new Error('OfferForm nicht gefunden')
   return form.props.defaults
 }
 
@@ -93,6 +105,7 @@ describe('Angebot kopieren', () => {
       id: 'offer-1',
       offerNumber: 'AN-2026-0001',
       customerId: 'customer-1',
+      areaName: 'Technischer Gebäudebetrieb',
       title: 'Wartungsangebot',
       introText: 'Einleitung',
       outroText: 'Abschluss',
@@ -130,6 +143,7 @@ describe('Angebot kopieren', () => {
 
     expect(getFormDefaults(page)).toEqual({
       customerId: 'customer-1',
+      areaName: 'Technischer Gebäudebetrieb',
       title: 'Wartungsangebot',
       introText: 'Einleitung',
       outroText: 'Abschluss',

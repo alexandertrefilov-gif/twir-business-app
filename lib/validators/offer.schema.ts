@@ -36,6 +36,7 @@ export type OfferItemInput = z.infer<typeof OfferItemSchema>
 
 export const OfferCreateSchema = z.object({
   customerId:  z.string().uuid('Bitte Kunde auswählen'),
+  areaName:    z.string().trim().max(200).optional().nullable(),
   title:       z.string().max(200).optional().nullable(),
   introText:   z.preprocess(
     (value) => typeof value === 'string' ? canonicalizeOfferTextValue(value) : value,
@@ -55,8 +56,13 @@ export const OfferCreateSchema = z.object({
 
 export const OfferUpdateSchema = OfferCreateSchema
 
+export const OfferNumberChangeSchema = z.object({
+  offerNumber: z.string().trim().min(1, 'Angebotsnummer ist erforderlich').max(40),
+})
+
 export type OfferCreateInput = z.infer<typeof OfferCreateSchema>
 export type OfferUpdateInput = z.infer<typeof OfferUpdateSchema>
+export type OfferNumberChangeInput = z.infer<typeof OfferNumberChangeSchema>
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -64,11 +70,14 @@ export function calcItemAmounts(item: {
   quantity: number
   unitPrice: number
   taxRate:  number
+  discountRate?: number
 }) {
-  const net   = Math.round(item.quantity * item.unitPrice * 100) / 100
+  const subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
+  const discountAmount = Math.round(subtotal * (item.discountRate ?? 0) / 100 * 100) / 100
+  const net   = Math.round((subtotal - discountAmount) * 100) / 100
   const tax   = Math.round(net * item.taxRate / 100 * 100) / 100
   const gross = Math.round((net + tax) * 100) / 100
-  return { netAmount: net, taxAmount: tax, grossAmount: gross }
+  return { subtotal, discountAmount, netAmount: net, taxAmount: tax, grossAmount: gross }
 }
 
 export function calcOfferTotals(items: OfferItemInput[]) {

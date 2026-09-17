@@ -5,6 +5,7 @@ import {
   encodeOfferText,
   isValidOfferTextValue,
   offerIntroToOrderDescription,
+  offerProjectDesignation,
   richTextToPlainText,
   type OfferTextDocument,
 } from '@/lib/offers/rich-text'
@@ -46,6 +47,25 @@ const document: OfferTextDocument = {
 }
 
 describe('strukturierte Angebotstexte', () => {
+  it('behandelt einfache Zeilenumbrüche als kompakte Umbrüche im selben Absatz', () => {
+    const decoded = decodeOfferText('Erste Fließtextzeile\nZweite Fließtextzeile\nDritte Fließtextzeile')
+    const blocks = decoded.sections[0].content.content ?? []
+
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].content?.map((node) => node.type)).toEqual([
+      'text', 'hardBreak', 'text', 'hardBreak', 'text',
+    ])
+  })
+
+  it('behält Leerzeilen als echte Absatztrennung bei', () => {
+    const decoded = decodeOfferText('Erster Absatz\nmit zweiter Zeile\n\nZweiter Absatz')
+    const blocks = decoded.sections[0].content.content ?? []
+
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].content?.some((node) => node.type === 'hardBreak')).toBe(true)
+    expect(blocks[1].content?.map((node) => node.text).join('')).toBe('Zweiter Absatz')
+  })
+
   it('speichert und liest kontrolliertes Editor-JSON', () => {
     const value = encodeOfferText(document)
 
@@ -54,6 +74,27 @@ describe('strukturierte Angebotstexte', () => {
     expect(richTextToPlainText(value)).toBe(
       'Leistungsumfang\nProfessioneller Angebotstext\nPosition',
     )
+  })
+
+  it('liest ausschließlich den Wert hinter dem Projekt-Label aus dem Angebots-Rich-Text', () => {
+    const value = encodeOfferText({
+      version: 1,
+      sections: [{
+        id: 'project',
+        title: '',
+        content: { type: 'doc', content: [
+          { type: 'paragraph', content: [{ type: 'text', text: 'Thema: GGA Lagerplanung' }] },
+          { type: 'paragraph', content: [{ type: 'text', text: 'Projekt:', marks: [{ type: 'bold' }] }] },
+          { type: 'paragraph', content: [{ type: 'text', text: 'Ki_02_003 – Umstellung von Geb. 2 nach Geb. 7 Versuchsgießerei ISH' }] },
+        ] },
+      }],
+    })
+
+    expect(offerProjectDesignation(value)).toBe(
+      'Ki_02_003 – Umstellung von Geb. 2 nach Geb. 7 Versuchsgießerei ISH',
+    )
+    expect(offerProjectDesignation('Projekt:\nKi_02_004 – Umbau')).toBe('Ki_02_004 – Umbau')
+    expect(offerProjectDesignation('Thema: GGA Lagerplanung')).toBeNull()
   })
 
   it('entfernt unbekannte optische Word-Attribute vor dem Speichern', () => {
@@ -227,6 +268,7 @@ describe('strukturierte Angebotstexte', () => {
     expect(offerIntroToOrderDescription('   ')).toBeNull()
     expect(offerIntroToOrderDescription('A'.repeat(3_001))).toHaveLength(3_000)
   })
+
 
   it('weist Script-Knoten und freie Attribute serverseitig zurück', () => {
     const malicious = `TWIR_OFFER_RICH_TEXT_V1:${JSON.stringify({

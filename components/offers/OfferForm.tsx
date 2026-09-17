@@ -6,11 +6,12 @@
 // - JSON-Serialisierung für Server Action
 // - Kundenselektor
 
-import { useActionState, useMemo, useState } from 'react'
+import { useActionState, useMemo, useRef, useState } from 'react'
 import { useRouter }        from 'next/navigation'
-import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
 import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEditor'
+import { OfferNumberEditor } from '@/components/offers/OfferNumberEditor'
 import type { ActionState } from '@/app/(dashboard)/offers/actions'
+import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -33,9 +34,12 @@ interface ItemRow {
 interface OfferFormProps {
   mode:      'create' | 'edit'
   offerId?:  string
+  offerNumber?: string
+  changeNumberAction?: (offerNumber: string) => Promise<ActionState>
   customers: CustomerOption[]
   defaults?: {
     customerId?: string
+    areaName?:    string
     title?:      string
     introText?:  string
     outroText?:  string
@@ -44,6 +48,7 @@ interface OfferFormProps {
     items?:      ItemRow[]
   }
   action: (prev: ActionState, formData: FormData) => Promise<ActionState>
+  createLabel?: string
 }
 
 // ── Constants ─────────────────────────────────────────────────
@@ -73,9 +78,10 @@ const todayStr = () => new Date().toISOString().slice(0, 10)
 
 const INIT: ActionState = {}
 
-export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormProps) {
-  const [state, formAction] = useActionState(action, INIT)
+export function OfferForm({ mode, offerNumber, changeNumberAction, customers, defaults = {}, action, createLabel = 'Angebot anlegen' }: OfferFormProps) {
+  const [state, formAction, isPending] = useActionState(action, INIT)
   const router = useRouter()
+  const formRef = useRef<HTMLFormElement>(null)
   const [customerId, setCustomerId] = useState(defaults.customerId ?? '')
 
   const [items, setItems] = useState<ItemRow[]>(
@@ -155,7 +161,7 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
   const fe = state.fieldErrors ?? {}
 
   return (
-    <form action={formAction} className="offer-standard-font space-y-4">
+    <form ref={formRef} action={formAction} className="offer-standard-font space-y-4">
       <input type="hidden" name="itemsJson" value={serializedItems} />
 
       {/* Global error */}
@@ -172,6 +178,12 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
       <div className="form-section">
         <h2 className="form-section-title">Angebotskopf</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          {mode === 'edit' && offerNumber && changeNumberAction && (
+            <div className="sm:col-span-2">
+              <OfferNumberEditor offerNumber={offerNumber} action={changeNumberAction} />
+            </div>
+          )}
 
           {/* Kunde */}
           <div className="sm:col-span-2">
@@ -193,6 +205,20 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
               ))}
             </select>
             {fe.customerId && <p className="field-error">{fe.customerId[0]}</p>}
+          </div>
+
+          {/* Bereich / Oberprojekt */}
+          <div className="sm:col-span-2">
+            <label className="field-label" htmlFor="areaName">Bereich / Oberprojekt</label>
+            <input
+              id="areaName" name="areaName" type="text"
+              defaultValue={defaults.areaName ?? ''}
+              placeholder="z. B. GGA Lagerplanung"
+              aria-describedby="areaName-hint"
+              className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+            />
+            <p id="areaName-hint" className="field-hint">Dient der gemeinsamen Gruppierung des Geschäftsvorgangs im Dokumentenarchiv.</p>
+            {fe.areaName && <p className="field-error">{fe.areaName[0]}</p>}
           </div>
 
           {/* Betreff */}
@@ -418,21 +444,15 @@ export function OfferForm({ mode, customers, defaults = {}, action }: OfferFormP
         </p>
       </div>
 
-      {/* ── Actions ── */}
-      <div className="flex items-center justify-end gap-3 pb-6">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="h-9 px-4 rounded-md border border-stone-200 bg-white text-sm font-500 text-foreground hover:bg-stone-50 transition-colors"
-        >
-          Abbrechen
-        </button>
-        <FormSubmitButton
-          idleLabel={mode === 'create' ? 'Angebot anlegen' : 'Änderungen speichern'}
-          pendingLabel={mode === 'create' ? 'Wird angelegt…' : 'Wird gespeichert…'}
-          className="h-9 px-5 rounded-md bg-blue-700 hover:bg-blue-800 text-white text-sm font-500 disabled:opacity-50 transition-colors"
-        />
-      </div>
+      <DocumentFormWorkflowActions
+        formRef={formRef}
+        isPending={isPending}
+        error={state.error}
+        targetId={mode === 'create' ? DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID : undefined}
+        idleLabel={mode === 'create' ? createLabel : 'Änderungen speichern'}
+        pendingLabel={mode === 'create' ? 'Wird angelegt…' : 'Wird gespeichert…'}
+        onCancel={() => router.back()}
+      />
     </form>
   )
 }

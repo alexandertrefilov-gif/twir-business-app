@@ -233,6 +233,7 @@ export const INVOICE_TYPE_LABELS: Record<InvoiceType, string> = {
 export const AuditAction = {
   CREATE:             'CREATE',
   UPDATE:             'UPDATE',
+  OFFER_NUMBER_CHANGE:'OFFER_NUMBER_CHANGE',
   DELETE:             'DELETE',
   STATUS_CHANGE:      'STATUS_CHANGE',
   FINALIZE:           'FINALIZE',

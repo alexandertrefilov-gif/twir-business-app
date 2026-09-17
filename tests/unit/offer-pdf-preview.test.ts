@@ -7,6 +7,9 @@ vi.mock('@/lib/auth/options', () => ({ authOptions: {} }))
 vi.mock('@/lib/services/offer-pdf.service', () => ({
   getOfferPdfData: vi.fn().mockResolvedValue({
     offerNumber: 'AN-2026-0001',
+    logoScale: 300,
+    logoSourceWidth: 1200,
+    logoSourceHeight: 600,
   }),
 }))
 vi.mock('@/lib/pdf-templates/offer.template', () => ({
@@ -14,10 +17,12 @@ vi.mock('@/lib/pdf-templates/offer.template', () => ({
 }))
 
 import { getOfferPdfData } from '@/lib/services/offer-pdf.service'
+import { renderOfferPdf } from '@/lib/pdf-templates/offer.template'
 import { GET } from '@/app/api/offers/[id]/preview/route'
 
 const mockedGetServerSession = vi.mocked(getServerSession)
 const mockedGetOfferPdfData = vi.mocked(getOfferPdfData)
+const mockedRenderOfferPdf = vi.mocked(renderOfferPdf)
 
 function sessionFor(role: RoleName) {
   return {
@@ -51,6 +56,11 @@ describe('Angebot-PDF-Vorschau', () => {
       'inline; filename="AN-2026-0001.pdf"',
     )
     expect(mockedGetOfferPdfData).toHaveBeenCalledWith('offer-1')
+    expect(mockedRenderOfferPdf).toHaveBeenCalledWith(expect.objectContaining({
+      logoScale: 300,
+      logoSourceWidth: 1200,
+      logoSourceHeight: 600,
+    }))
   })
 
   it('verweigert EMPLOYEE ohne offer:read die Vorschau vor dem Datenzugriff', async () => {

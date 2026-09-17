@@ -29,6 +29,8 @@ export interface OfferTextSection {
 export interface OfferTextDocument {
   version: 1
   sections: OfferTextSection[]
+  positionsAfterSectionId?: string | null
+  positionsEnabled?: boolean
 }
 
 const NODE_TYPES = new Set([
@@ -57,12 +59,17 @@ export function emptyRichTextDocument(text = ''): OfferTextDocument {
 }
 
 function plainTextDocument(text: string): RichTextNode {
-  const lines = text ? text.split(/\r?\n/) : ['']
+  const paragraphs = text ? text.split(/(?:\r?\n){2,}/) : ['']
   return {
     type: 'doc',
-    content: lines.map((line) => ({
+    content: paragraphs.map((paragraph) => ({
       type: 'paragraph',
-      content: line ? [{ type: 'text', text: line }] : undefined,
+      content: paragraph
+        ? paragraph.split(/\r?\n/).flatMap((line, index) => [
+            ...(index > 0 ? [{ type: 'hardBreak' } as RichTextNode] : []),
+            ...(line ? [{ type: 'text', text: line } as RichTextNode] : []),
+          ])
+        : undefined,
     })),
   }
 }
@@ -124,6 +131,9 @@ export function canonicalizeOfferTextValue(value: string): string {
 }
 
 export function isOfferTextDocumentEmpty(document: OfferTextDocument): boolean {
+  // Für Leistungsnachweise ist auch eine reine Positionskarte oder deren
+  // explizite Abwesenheit persistente Dokumentstruktur.
+  if (document.positionsEnabled !== undefined) return false
   return !document.sections.some((section) =>
     section.title.trim() || hasText(section.content) || hasNodeType(section.content, 'table'))
 }
@@ -148,6 +158,35 @@ export function richTextToPlainText(value?: string | null): string {
     .join('\n\n')
 }
 
+/**
+ * Reads the semantic value displayed after the "Projekt:" label in an offer's
+ * stored intro rich text. The label and value may share a paragraph (including
+ * a hard break) or occupy two consecutive blocks.
+ */
+export function offerProjectDesignation(value?: string | null): string | null {
+  const document = decodeOfferText(value)
+  const blocks = document.sections.flatMap((section) => [
+    ...(section.title.trim() ? [section.title.trim()] : []),
+    ...(section.content.content ?? []).map((node) => nodeText(node).trim()).filter(Boolean),
+  ])
+
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex += 1) {
+    const lines = blocks[blockIndex].split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      const match = /^Projekt\s*:\s*(.*)$/i.exec(lines[lineIndex])
+      if (!match) continue
+      const inlineValue = match[1].trim()
+      if (inlineValue) return inlineValue
+      const nextLine = lines[lineIndex + 1]?.trim()
+      if (nextLine) return nextLine
+      const nextBlock = blocks.slice(blockIndex + 1).find((block) => block.trim())
+      return nextBlock?.trim() || null
+    }
+  }
+
+  return null
+}
+
 export function offerIntroToOrderDescription(value?: string | null): string | null {
   const firstSection = decodeOfferText(value).sections[0]
   const description = firstSection
@@ -155,6 +194,23 @@ export function offerIntroToOrderDescription(value?: string | null): string | nu
     : ''
   if (!description) return null
   return description.slice(0, 3_000)
+}
+
+export function offerToOrderDescription(
+  introText?: string | null,
+  outroText?: string | null,
+  hasPositions = false,
+): string | null {
+  const introSections = introText ? decodeOfferText(introText).sections : []
+  const outroSections = outroText ? decodeOfferText(outroText).sections : []
+  const sections = [...introSections, ...outroSections]
+  if (sections.length === 0 && !hasPositions) return null
+  return encodeOfferText({
+    version: 1,
+    sections,
+    positionsAfterSectionId: introSections.at(-1)?.id ?? null,
+    positionsEnabled: hasPositions,
+  })
 }
 
 export function getTableColumnPercentages(table: RichTextNode): number[] {
@@ -345,7 +401,13 @@ function isEditorNodeShape(value: unknown): value is RichTextNode {
 
 function isOfferTextDocument(value: unknown): value is OfferTextDocument {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.sections)) return false
-  if (value.sections.length < 1 || value.sections.length > 20) return false
+  if (value.sections.length > 20) return false
+  if (value.positionsEnabled !== undefined && typeof value.positionsEnabled !== 'boolean') return false
+  if (
+    value.positionsAfterSectionId !== undefined &&
+    value.positionsAfterSectionId !== null &&
+    (typeof value.positionsAfterSectionId !== 'string' || value.positionsAfterSectionId.length > 100)
+  ) return false
 
   return value.sections.every((section) => {
     if (!isRecord(section)) return false

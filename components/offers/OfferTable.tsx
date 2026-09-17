@@ -10,6 +10,7 @@ import { OFFER_STATUS_LABELS } from '@/types/enums'
 import { format } from 'date-fns'
 import { de }     from 'date-fns/locale'
 import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
+import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 
 interface OfferTableProps {
   offers:     OfferListItem[]
@@ -20,6 +21,7 @@ interface OfferTableProps {
   statusFilter: string
   canDelete: boolean
   canDeleteAllStatuses: boolean
+  canCopy: boolean
 }
 
 const STATUS_OPTIONS = [
@@ -28,7 +30,7 @@ const STATUS_OPTIONS = [
 ]
 
 export function OfferTable({
-  offers, total, page, totalPages, search, statusFilter, canDelete, canDeleteAllStatuses,
+  offers, total, page, totalPages, search, statusFilter, canDelete, canDeleteAllStatuses, canCopy,
 }: OfferTableProps) {
   const router     = useRouter()
   const pathname   = usePathname()
@@ -85,14 +87,17 @@ export function OfferTable({
               <SortTh label="Datum"    field="offerDate"   params={params} nav={nav} />
               <th>Gültig bis</th>
               <th>Status</th>
-              <SortTh label="Brutto"   field="totalGross"  params={params} nav={nav} className="text-right" />
-              <th className="text-right">Aktion</th>
+              <SortTh label="Brutto" field="totalGross" params={params} nav={nav} align="right" />
+              <th className="w-px whitespace-nowrap text-left">
+                <span className="flex justify-start">Aktion</span>
+              </th>
+              <th className="w-px whitespace-nowrap text-center">Löschen</th>
             </tr>
           </thead>
           <tbody>
             {offers.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center py-12 text-sm text-muted-foreground">
+                <td colSpan={9} className="text-center py-12 text-sm text-muted-foreground">
                   {search || statusFilter
                     ? 'Keine Angebote für den gewählten Filter.'
                     : 'Noch keine Angebote angelegt.'}
@@ -111,10 +116,10 @@ export function OfferTable({
                   className="cursor-pointer group"
                   onClick={() => router.push(`/offers/${o.id}`)}
                 >
-                  <td>
-                    <span className="mono text-xs font-500 text-foreground">{o.offerNumber}</span>
+                  <td className="whitespace-nowrap">
+                    <span className="mono text-xs font-500 text-foreground">{offerNumberForDisplay(o.offerNumber)}</span>
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     <Link
                       href={`/customers/${o.customerId}`}
                       className="text-sm text-blue-700 hover:underline"
@@ -123,17 +128,17 @@ export function OfferTable({
                       {o.customerName}
                     </Link>
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     <span className="text-sm text-foreground truncate block max-w-[200px]">
                       {o.title ?? <span className="text-muted-foreground italic">Kein Betreff</span>}
                     </span>
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     <span className="mono text-xs">
                       {format(new Date(o.offerDate), 'dd.MM.yyyy', { locale: de })}
                     </span>
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     {o.validUntil ? (
                       <span className={`mono text-xs ${isExpired ? 'text-red-600' : ''}`}>
                         {format(new Date(o.validUntil), 'dd.MM.yyyy', { locale: de })}
@@ -143,10 +148,10 @@ export function OfferTable({
                       <span className="text-muted-foreground">–</span>
                     )}
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     <OfferStatusBadge status={o.status} size="sm" />
                   </td>
-                  <td className="text-right">
+                  <td className="whitespace-nowrap text-right">
                     <span className="mono text-sm font-500">
                       {o.totalGross.toLocaleString('de-DE', {
                         style:    'currency',
@@ -154,7 +159,17 @@ export function OfferTable({
                       })}
                     </span>
                   </td>
-                  <td onClick={(event) => event.stopPropagation()}>
+                  <td className="w-px whitespace-nowrap" onClick={(event) => event.stopPropagation()}>
+                    {canCopy && (
+                      <Link
+                        href={`/offers/new?copy=${o.id}`}
+                        className="inline-flex h-8 items-center justify-center rounded-md border border-stone-200 bg-white px-2.5 text-xs font-500 text-blue-700 hover:bg-stone-50"
+                      >
+                        Kopieren
+                      </Link>
+                    )}
+                  </td>
+                  <td className="w-px whitespace-nowrap text-center" onClick={(event) => event.stopPropagation()}>
                     {canDelete && (canDeleteAllStatuses || o.status === 'DRAFT') && (
                       <RecordDeleteButton id={o.id} type="offer" />
                     )}
@@ -187,21 +202,21 @@ export function OfferTable({
 // ── Helpers ───────────────────────────────────────────────────
 
 function SortTh({
-  label, field, params, nav, className = '',
+  label, field, params, nav, align = 'left',
 }: {
   label: string; field: string
   params: URLSearchParams
   nav: (u: Record<string, string | number>) => void
-  className?: string
+  align?: 'left' | 'right'
 }) {
   const active = params.get('sort') === field
   const order  = active ? (params.get('order') === 'asc' ? 'desc' : 'asc') : 'asc'
   return (
     <th
-      className={`cursor-pointer select-none hover:text-foreground ${className}`}
+      className={`cursor-pointer select-none hover:text-foreground ${align === 'right' ? 'text-right' : ''}`}
       onClick={() => nav({ sort: field, order, page: 1 })}
     >
-      <span className="flex items-center gap-1">
+      <span className={`flex items-center gap-1 ${align === 'right' ? 'justify-end' : ''}`}>
         {label}
         {active && (
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>

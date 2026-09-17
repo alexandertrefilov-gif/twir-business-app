@@ -68,6 +68,7 @@ export default async function OffersPage({
             statusFilter={status}
             canDelete={canDelete && isTestDeleteEnabled()}
             canDeleteAllStatuses={isTestDeleteEnabled()}
+            canCopy={canCreate}
           />
         </div>
       </div>

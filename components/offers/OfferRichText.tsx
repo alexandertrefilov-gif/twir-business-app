@@ -1,19 +1,40 @@
-import { Fragment, type CSSProperties, type ReactNode } from 'react'
+import React, { Fragment, type CSSProperties, type ReactNode } from 'react'
 import {
   decodeOfferText,
   getTableColumnPercentages,
   type RichTextMark,
   type RichTextNode,
 } from '@/lib/offers/rich-text'
+import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 
-export function OfferRichText({ value }: { value?: string | null }) {
+export function OfferRichText({
+  value,
+  sectionCards = false,
+}: {
+  value?: string | null
+  sectionCards?: boolean
+}) {
   const document = decodeOfferText(value)
   const hasContent = document.sections.some((section) =>
     section.title || nodeHasText(section.content) || nodeHasTable(section.content))
   if (!hasContent) return null
 
+  if (sectionCards) {
+    return (
+      <div data-rich-text-section-cards className="w-full min-w-0 max-w-full space-y-4">
+        {document.sections.map((section) => (
+          <DocumentSectionCard key={section.id} title={section.title || undefined}>
+            <div className="offer-rich-output w-full min-w-0 max-w-full">
+              <RichNodes nodes={section.content.content ?? []} />
+            </div>
+          </DocumentSectionCard>
+        ))}
+      </div>
+    )
+  }
+
   return (
-    <div className="offer-rich-output space-y-5">
+    <div className="offer-rich-output w-full min-w-0 max-w-full space-y-5">
       {document.sections.map((section) => (
         <section key={section.id}>
           {section.title && <h2>{section.title}</h2>}
@@ -64,8 +85,8 @@ function RichNodeView({ node }: { node: RichTextNode }): ReactNode {
 function RichTable({ node }: { node: RichTextNode }) {
   const columnPercentages = getTableColumnPercentages(node)
   return (
-    <div className="w-full max-w-full overflow-x-auto">
-      <table>
+    <div className="w-full min-w-0 max-w-full overflow-x-auto">
+      <table className="box-border w-full max-w-full table-fixed">
         <colgroup>
           {columnPercentages.map((percentage, index) => (
             <col key={index} style={{ width: `${percentage}%` }} />
@@ -123,9 +144,6 @@ function cellStyle(node: RichTextNode): CSSProperties {
   return {
     backgroundColor,
     color: isDarkCellColor(backgroundColor) ? '#ffffff' : undefined,
-    height: typeof node.attrs?.rowHeight === 'number'
-      ? `${node.attrs.rowHeight}px`
-      : undefined,
   }
 }
 

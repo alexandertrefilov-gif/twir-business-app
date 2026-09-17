@@ -14,6 +14,22 @@ import {
   type RichTextMark,
   type RichTextNode,
 } from '@/lib/offers/rich-text'
+import { getCompanyLogoDimensions } from '@/lib/pdf-templates/company-logo'
+import {
+  PDF_BODY_LINE_HEIGHT,
+  PDF_BODY_TEXT_SIZE,
+  PDF_DOCUMENT_FONT_BOLD,
+  PDF_DOCUMENT_FONT_FAMILY,
+  PDF_FOOTER_TEXT_SIZE,
+  PDF_HEADER_TEXT_STYLE,
+  PDF_HEADER_LEFT_COLUMN_STYLE,
+  PDF_HEADER_RIGHT_COLUMN_STYLE,
+  PDF_HEADER_ROW_STYLE,
+  PDF_SECTION_TITLE_SIZE,
+  PDF_TABLE_BODY_TEXT_SIZE,
+  PDF_TABLE_HEADER_TEXT_SIZE,
+  PdfSenderAddressDivider,
+} from '@/lib/pdf-templates/document-header'
 import { normalizeWordFontSize } from '@/lib/offers/word-paste'
 
 const A4_WIDTH_POINTS = 595.28
@@ -26,6 +42,31 @@ export const OFFER_CONTENT_WIDTH_POINTS =
   A4_WIDTH_POINTS - OFFER_PAGE_LEFT_PADDING - OFFER_PAGE_RIGHT_PADDING
 const RICH_TABLE_PAGE_BUDGET_POINTS = 400
 
+export const OFFER_RICH_PARAGRAPH_STYLE = {
+  fontSize: PDF_BODY_TEXT_SIZE,
+  lineHeight: PDF_BODY_LINE_HEIGHT,
+  color: '#3a3a50',
+  marginBottom: 5,
+} as const
+
+export const OFFER_RICH_SECTION_TITLE_STYLE = {
+  fontSize: PDF_SECTION_TITLE_SIZE,
+  fontFamily: PDF_DOCUMENT_FONT_BOLD,
+  color: '#1e3a5f',
+  marginBottom: 5,
+} as const
+
+export const OFFER_HEADER_TEXT_STYLE = {
+  ...PDF_HEADER_TEXT_STYLE,
+} as const
+
+export const OFFER_DOCUMENT_NUMBER_STYLE = {
+  ...OFFER_HEADER_TEXT_STYLE,
+  fontFamily: PDF_DOCUMENT_FONT_BOLD,
+  color: '#1e3a5f',
+  marginBottom: 0,
+} as const
+
 // ── Typen ─────────────────────────────────────────────────────
 
 export interface OfferPdfData {
@@ -37,6 +78,8 @@ export interface OfferPdfData {
   outroText?:   string | null
   logoDataUri?: string
   logoScale?: number
+  logoSourceWidth?: number
+  logoSourceHeight?: number
 
   company: {
     companyName: string
@@ -92,25 +135,22 @@ export interface OfferPdfData {
   taxGroups:  Record<string, number>
 }
 
-export function getOfferLogoDimensions(scale = 140) {
-  const safeScale = Math.min(200, Math.max(50, scale))
-  const width = 110 * safeScale / 100
-  const height = 55 * safeScale / 100
-  const pageFit = Math.min(1, 420 / width, 240 / height)
-  return {
-    width: width * pageFit,
-    height: height * pageFit,
-  }
+export function getOfferLogoDimensions(
+  scale = 140,
+  sourceWidth = 2,
+  sourceHeight = 1,
+) {
+  return getCompanyLogoDimensions(scale, sourceWidth, sourceHeight)
 }
 
 // ── Styles ────────────────────────────────────────────────────
 
 const S = StyleSheet.create({
   page: {
-    fontFamily:  'Helvetica',
-    fontSize:    9,
+    fontFamily:  PDF_DOCUMENT_FONT_FAMILY,
+    fontSize:    PDF_BODY_TEXT_SIZE,
     color:       '#1a1917',
-    paddingTop:  28,
+    paddingTop:  42,
     // Platz für fünf Footerzeilen plus kompakter Abstand oberhalb der Linie.
     paddingBottom: OFFER_PAGE_BOTTOM_PADDING,
     paddingLeft: 50,
@@ -118,100 +158,73 @@ const S = StyleSheet.create({
   },
   // Header
   headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 32,
+    ...PDF_HEADER_ROW_STYLE,
+    marginBottom: 20,
   },
-  logoAddressRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  logoRow: {
     alignItems: 'flex-end',
-    gap: 18,
-    borderBottom: '1 solid #9f9c95',
-    paddingBottom: 2,
-    marginBottom: 4,
+    marginBottom: 6,
   },
   headerRight: {
-    width: 210,
-    alignItems: 'flex-end',
-    paddingTop: 8,
+    ...PDF_HEADER_RIGHT_COLUMN_STYLE,
   },
   companyLogo: {
-    width: 110,
-    height: 80,
     objectFit: 'contain',
   },
   companyName: {
     fontSize: 14,
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: PDF_DOCUMENT_FONT_BOLD,
     marginBottom: 3,
   },
   companyDetail: {
-    fontSize: 8,
+    fontSize: PDF_BODY_TEXT_SIZE,
     color:    '#6b6b80',
-    lineHeight: 1.5,
-  },
-  // Sender line above address
-  senderSmall: {
-    flex: 1,
-    fontSize: 7,
-    color:    '#6b6b80',
+    lineHeight: PDF_BODY_LINE_HEIGHT,
   },
   // Address block
   addressBlock: {
-    marginTop: 8,
+    ...PDF_HEADER_LEFT_COLUMN_STYLE,
   },
   addressLine: {
-    fontSize: 9,
-    lineHeight: 1.5,
+    ...OFFER_HEADER_TEXT_STYLE,
   },
   // Doc meta
   docMeta: {
+    ...OFFER_HEADER_TEXT_STYLE,
     alignItems: 'flex-end',
-    fontSize: 9,
     color: '#6b6b80',
-    lineHeight: 1.5,
   },
   docNumber: {
-    fontSize: 9,
-    fontFamily: 'Helvetica-Bold',
-    color: '#1e3a5f',
-    marginBottom: 0,
+    ...OFFER_DOCUMENT_NUMBER_STYLE,
   },
   introText: {
-    fontSize: 9,
-    lineHeight: 1.6,
+    fontSize: PDF_BODY_TEXT_SIZE,
+    lineHeight: PDF_BODY_LINE_HEIGHT,
     color: '#3a3a50',
     marginBottom: 16,
   },
   richSection: { marginBottom: 14 },
   documentType: {
-    fontSize: 12,
-    fontFamily: 'Helvetica-Bold',
+    fontSize: 13,
+    fontFamily: PDF_DOCUMENT_FONT_BOLD,
     marginBottom: 10,
   },
   richSectionTitle: {
-    fontSize: 12,
-    fontFamily: 'Helvetica-Bold',
-    color: '#1e3a5f',
-    marginBottom: 8,
+    ...OFFER_RICH_SECTION_TITLE_STYLE,
   },
   richHeading: {
-    fontSize: 12,
-    fontFamily: 'Helvetica-Bold',
+    fontSize: PDF_SECTION_TITLE_SIZE,
+    fontFamily: PDF_DOCUMENT_FONT_BOLD,
     color: '#1e3a5f',
     marginTop: 8,
     marginBottom: 6,
   },
   richParagraph: {
-    fontSize: 11,
-    lineHeight: 1.35,
-    color: '#3a3a50',
-    marginBottom: 6,
+    ...OFFER_RICH_PARAGRAPH_STYLE,
   },
   richQuote: {
-    fontSize: 11,
-    lineHeight: 1.5,
+    fontSize: PDF_BODY_TEXT_SIZE,
+    lineHeight: PDF_BODY_LINE_HEIGHT,
     color: '#4b5563',
     backgroundColor: '#f5f7fa',
     borderLeft: '2 solid #93b4d8',
@@ -235,12 +248,12 @@ const S = StyleSheet.create({
     borderRight: '1 solid #68645d',
     borderBottom: '1 solid #68645d',
     padding: 4,
-    fontSize: 11,
-    lineHeight: 1.4,
+    fontSize: PDF_TABLE_BODY_TEXT_SIZE,
+    lineHeight: PDF_BODY_LINE_HEIGHT,
   },
   richTableHeader: {
     backgroundColor: '#f0f3f6',
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: PDF_DOCUMENT_FONT_BOLD,
   },
   // Table
   tableHeader: {
@@ -259,30 +272,32 @@ const S = StyleSheet.create({
   tableRowAlt: {
     backgroundColor: '#faf9f7',
   },
-  colPos:   { width: '6%' },
-  colDesc:  { width: '36%' },
-  colQty:   { width: '10%', textAlign: 'right' },
+  colPos:   { width: '5%' },
+  colDesc:  { width: '29%' },
+  colQty:   { width: '9%', textAlign: 'right' },
   colUnit:  { width: '8%',  textAlign: 'right' },
   colPrice: { width: '14%', textAlign: 'right' },
-  colTax:   { width: '8%',  textAlign: 'right' },
-  colNet:   { width: '14%', textAlign: 'right' },
-  colGross: { width: '14%', textAlign: 'right' },
+  colTax:   { width: '9%',  textAlign: 'right' },
+  colNet:   { width: '13%', textAlign: 'right' },
+  colGross: { width: '13%', textAlign: 'right' },
   thText: {
-    fontSize: 7,
-    fontFamily: 'Helvetica-Bold',
+    fontSize: PDF_TABLE_HEADER_TEXT_SIZE,
+    fontFamily: PDF_DOCUMENT_FONT_BOLD,
     color: '#6b6b80',
     textTransform: 'uppercase',
+    paddingHorizontal: 1,
   },
   tdText: {
-    fontSize: 8.5,
-    lineHeight: 1.4,
+    fontSize: PDF_TABLE_BODY_TEXT_SIZE,
+    lineHeight: PDF_BODY_LINE_HEIGHT,
+    paddingHorizontal: 1,
   },
   tdMono: {
-    fontSize: 8,
-    fontFamily: 'Helvetica',
+    fontSize: PDF_TABLE_BODY_TEXT_SIZE,
+    fontFamily: PDF_DOCUMENT_FONT_FAMILY,
   },
   tdBold: {
-    fontFamily: 'Helvetica-Bold',
+    fontFamily: PDF_DOCUMENT_FONT_BOLD,
   },
   // Totals
   totalsSection: {
@@ -297,19 +312,19 @@ const S = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 2.5,
   },
-  totalsLabel: { fontSize: 8.5, color: '#3a3a50' },
-  totalsValue: { fontSize: 8.5, fontFamily: 'Helvetica' },
+  totalsLabel: { fontSize: PDF_BODY_TEXT_SIZE, color: '#3a3a50' },
+  totalsValue: { fontSize: PDF_BODY_TEXT_SIZE, fontFamily: PDF_DOCUMENT_FONT_FAMILY },
   totalsDivider: {
     borderTop: '0.5 solid #c0bdb8',
     marginVertical: 3,
   },
-  totalsBoldLabel: { fontSize: 9.5, fontFamily: 'Helvetica-Bold' },
-  totalsBoldValue: { fontSize: 9.5, fontFamily: 'Helvetica-Bold' },
+  totalsBoldLabel: { fontSize: PDF_BODY_TEXT_SIZE, fontFamily: PDF_DOCUMENT_FONT_BOLD },
+  totalsBoldValue: { fontSize: PDF_BODY_TEXT_SIZE, fontFamily: PDF_DOCUMENT_FONT_BOLD },
   // Outro
   outroText: {
     marginTop: 20,
-    fontSize: 9,
-    lineHeight: 1.6,
+    fontSize: PDF_BODY_TEXT_SIZE,
+    lineHeight: PDF_BODY_LINE_HEIGHT,
     color: '#3a3a50',
   },
   // Footer
@@ -327,7 +342,7 @@ const S = StyleSheet.create({
     justifyContent: 'space-between',
   },
   footerText: {
-    fontSize: 7,
+    fontSize: PDF_FOOTER_TEXT_SIZE,
     color: '#9a9890',
     lineHeight: 1.6,
   },
@@ -336,7 +351,7 @@ const S = StyleSheet.create({
   },
   footerRightText: {
     width: '48%',
-    fontSize: 7,
+    fontSize: PDF_FOOTER_TEXT_SIZE,
     color: '#9a9890',
     lineHeight: 1.6,
   },
@@ -344,7 +359,7 @@ const S = StyleSheet.create({
     position: 'absolute',
     right: 0,
     bottom: -10,
-    fontSize: 7,
+    fontSize: PDF_FOOTER_TEXT_SIZE,
     color: '#9a9890',
   },
 })
@@ -353,7 +368,15 @@ const S = StyleSheet.create({
 
 export function OfferDocument({ data }: { data: OfferPdfData }) {
   const c   = data.company
-  const paginatedIntro = getPaginatedRichTable(data.introText)
+  const logoDimensions = getOfferLogoDimensions(
+    data.logoScale,
+    data.logoSourceWidth,
+    data.logoSourceHeight,
+  )
+  const paginatedIntro = getPaginatedRichTable(
+    data.introText,
+    tableBudgetForLogoHeight(data.logoDataUri ? logoDimensions.height : 0),
+  )
 
   if (paginatedIntro) {
     return (
@@ -415,29 +438,34 @@ function OfferHeader({ data }: { data: OfferPdfData }) {
   const c = data.company
   return (
     <>
-      <View style={S.logoAddressRow}>
-        <Text style={S.senderSmall}>
-          {c.companyName} TB · {[c.street, c.houseNumber].filter(Boolean).join(' ')} · {[c.postalCode, c.city].filter(Boolean).join(' ')}
-        </Text>
-        {data.logoDataUri && (
+      {data.logoDataUri && (
+        <View style={S.logoRow}>
           <PdfImage
             src={data.logoDataUri}
-            style={[S.companyLogo, getOfferLogoDimensions(data.logoScale)]}
+            style={[
+              S.companyLogo,
+              getOfferLogoDimensions(
+                data.logoScale,
+                data.logoSourceWidth,
+                data.logoSourceHeight,
+              ),
+            ]}
           />
-        )}
-      </View>
+        </View>
+      )}
+      <PdfSenderAddressDivider
+        sender={`${c.companyName} TB · ${[c.street, c.houseNumber].filter(Boolean).join(' ')} · ${[c.postalCode, c.city].filter(Boolean).join(' ')}`}
+      />
       <View style={S.headerRow}>
-        <View style={{ flex: 1 }}>
-          <View style={S.addressBlock}>
+        <View style={S.addressBlock}>
             {getOfferRecipientLines(data.customer).map((line, index) => (
               <Text key={index} style={S.addressLine}>{line}</Text>
             ))}
             {data.customer.vatId && (
-              <Text style={[S.addressLine, { color: '#6b6b80', marginTop: 4, fontSize: 7.5 }]}>
+              <Text style={[S.addressLine, { color: '#6b6b80', marginTop: 4 }]}>
                 USt-IdNr.: {data.customer.vatId}
               </Text>
             )}
-          </View>
         </View>
         <View style={S.headerRight}>
           <View style={S.docMeta}>
@@ -464,7 +492,7 @@ function OfferCommercialBody({ data }: { data: OfferPdfData }) {
         <Text style={[S.colDesc, S.thText]}>Beschreibung</Text>
         <Text style={[S.colQty, S.thText]}>Menge</Text>
         <Text style={[S.colUnit, S.thText]}>Einh.</Text>
-        <Text style={[S.colPrice, S.thText]}>Einzelpr.</Text>
+        <Text style={[S.colPrice, S.thText]}>Einzelpreis</Text>
         <Text style={[S.colTax, S.thText]}>MwSt.</Text>
         <Text style={[S.colNet, S.thText]}>Netto</Text>
         <Text style={[S.colGross, S.thText]}>Brutto</Text>
@@ -474,7 +502,7 @@ function OfferCommercialBody({ data }: { data: OfferPdfData }) {
           <Text style={[S.colPos, S.tdText, { color: '#9a9890' }]}>{item.position}</Text>
           <View style={S.colDesc}>
             <Text style={[S.tdText, S.tdBold]}>{item.description}</Text>
-            {item.notes && <Text style={[S.tdText, { color: '#6b6b80', fontSize: 7.5 }]}>{item.notes}</Text>}
+            {item.notes && <Text style={[S.tdText, { color: '#6b6b80' }]}>{item.notes}</Text>}
           </View>
           <Text style={[S.colQty, S.tdMono]}>{item.quantity.toLocaleString('de-DE', { maximumFractionDigits: 3 })}</Text>
           <Text style={[S.colUnit, S.tdText]}>{item.unit}</Text>
@@ -614,7 +642,7 @@ function formatCompanyPhone(phone: string): string {
   return phone
 }
 
-function OfferRichTextPdf({ value }: { value?: string | null }) {
+export function OfferRichTextPdf({ value }: { value?: string | null }) {
   if (!value) return null
   const document = decodeOfferText(value)
 
@@ -622,7 +650,7 @@ function OfferRichTextPdf({ value }: { value?: string | null }) {
     <>
       {document.sections.map((section) => (
         <React.Fragment key={section.id}>
-          {section.title && <Text style={S.richSectionTitle}>{section.title}</Text>}
+          {section.title && <Text style={S.richSectionTitle} minPresenceAhead={28}>{section.title}</Text>}
           <PdfBlocks nodes={section.content.content ?? []} />
         </React.Fragment>
       ))}
@@ -640,7 +668,7 @@ function PdfBlocks({ nodes }: { nodes: RichTextNode[] }) {
             return (
               <Text key={index} style={[S.richParagraph, textAlign]}>
                 {(node.content?.length ?? 0) > 0
-                  ? <PdfInline nodes={node.content ?? []} legacyPixelFontSize={11} />
+                  ? <PdfInline nodes={node.content ?? []} legacyPixelFontSize={PDF_BODY_TEXT_SIZE} />
                   : '\u00A0'}
               </Text>
             )
@@ -649,6 +677,7 @@ function PdfBlocks({ nodes }: { nodes: RichTextNode[] }) {
               <Text
                 key={index}
                 style={[S.richHeading, headingSpacing(node), textAlign]}
+                minPresenceAhead={28}
               >
                 <PdfInline
                   nodes={node.content ?? []}
@@ -660,7 +689,7 @@ function PdfBlocks({ nodes }: { nodes: RichTextNode[] }) {
           case 'blockquote':
             return (
               <Text key={index} style={S.richQuote}>
-                <PdfInline nodes={node.content ?? []} legacyPixelFontSize={11} />
+                <PdfInline nodes={node.content ?? []} legacyPixelFontSize={PDF_BODY_TEXT_SIZE} />
               </Text>
             )
           case 'bulletList':
@@ -670,7 +699,7 @@ function PdfBlocks({ nodes }: { nodes: RichTextNode[] }) {
                 {(node.content ?? []).map((item, itemIndex) => (
                   <Text key={itemIndex} style={S.richParagraph}>
                     {node.type === 'bulletList' ? '• ' : `${itemIndex + 1}. `}
-                    <PdfInline nodes={item.content ?? []} legacyPixelFontSize={11} />
+                    <PdfInline nodes={item.content ?? []} legacyPixelFontSize={PDF_BODY_TEXT_SIZE} />
                   </Text>
                 ))}
               </View>
@@ -701,15 +730,15 @@ function PdfBlocks({ nodes }: { nodes: RichTextNode[] }) {
 
 function headingSpacing(node: RichTextNode) {
   const fontSize = headingFontSize(node)
-  if (fontSize === 14) return { fontSize, marginTop: 10, marginBottom: 8 }
-  if (fontSize === 11) return { fontSize, marginTop: 6, marginBottom: 5 }
+  if (fontSize === 13) return { fontSize, marginTop: 9, marginBottom: 6 }
+  if (fontSize === 10.5) return { fontSize, marginTop: 5, marginBottom: 4 }
   return { fontSize, marginTop: 8, marginBottom: 6 }
 }
 
-function headingFontSize(node: RichTextNode): 11 | 12 | 14 {
+function headingFontSize(node: RichTextNode): 10.5 | 12 | 13 {
   const level = Number(node.attrs?.level ?? 2)
-  if (level === 1) return 14
-  if (level === 3) return 11
+  if (level === 1) return 13
+  if (level === 3) return 10.5
   return 12
 }
 
@@ -730,7 +759,18 @@ interface PaginatedRichTable {
   pages: PdfTablePage[]
 }
 
-function getPaginatedRichTable(value?: string | null): PaginatedRichTable | null {
+export function tableBudgetForLogoHeight(logoHeight: number): number {
+  const defaultLogoHeight = 77
+  return Math.max(
+    180,
+    RICH_TABLE_PAGE_BUDGET_POINTS - Math.max(0, logoHeight - defaultLogoHeight),
+  )
+}
+
+function getPaginatedRichTable(
+  value?: string | null,
+  pageBudget = RICH_TABLE_PAGE_BUDGET_POINTS,
+): PaginatedRichTable | null {
   if (!value) return null
   const document = decodeOfferText(value)
   const blocks = document.sections.flatMap((section) => [
@@ -749,7 +789,7 @@ function getPaginatedRichTable(value?: string | null): PaginatedRichTable | null
   const table = blocks[tableIndex]
   if (!table) return null
   const columnWidths = getPdfTableColumnWidths(table)
-  const pages = paginatePdfTable(table, columnWidths)
+  const pages = paginatePdfTable(table, columnWidths, pageBudget)
   if (pages.length < 2 || pages.some((page) => page.hasOversizedRow)) return null
   return {
     beforeTable: blocks.slice(0, tableIndex),
@@ -828,10 +868,7 @@ export function estimatePdfTableRowHeight(
       0,
     )
     const contentHeight = lineCount * 11 * 1.4 + 8
-    const requestedHeight = typeof cell.attrs?.rowHeight === 'number'
-      ? cell.attrs.rowHeight * 0.75
-      : 0
-    maximum = Math.max(maximum, contentHeight, requestedHeight)
+    maximum = Math.max(maximum, contentHeight)
   }
   return maximum
 }
@@ -899,7 +936,11 @@ function PdfTablePageView({
   columnWidths: number[]
 }) {
   return (
-    <View style={S.richTable} wrap={page.hasOversizedRow}>
+    <View
+      style={S.richTable}
+      wrap={page.hasOversizedRow}
+      minPresenceAhead={page.hasOversizedRow ? 32 : undefined}
+    >
       {[...page.headerRows, ...page.bodyRows].map((row, rowIndex) => (
         <PdfTableRow
           key={rowIndex}
@@ -930,9 +971,6 @@ function pdfTableCellSize(
           flexShrink: 0,
         }
       : {}),
-    minHeight: typeof cell.attrs?.rowHeight === 'number'
-      ? cell.attrs.rowHeight * 0.75
-      : undefined,
   }
 }
 
@@ -1015,7 +1053,7 @@ function pdfMarkStyle(
 ) {
   const types = new Set(marks.map((mark) => mark.type))
   const textStyle = marks.find((mark) => mark.type === 'textStyle')?.attrs
-  const family = typeof textStyle?.fontFamily === 'string' ? textStyle.fontFamily : 'Helvetica'
+  const family = typeof textStyle?.fontFamily === 'string' ? textStyle.fontFamily : 'Arial'
   const fontFamily = pdfFontFamily(
     family,
     forceBold || types.has('bold'),
@@ -1063,10 +1101,10 @@ function pdfFontFamily(family: string, bold: boolean, italic: boolean) {
     ? 'Times'
     : family === 'Courier New'
       ? 'Courier'
-      : 'Helvetica'
+      : PDF_DOCUMENT_FONT_FAMILY
   if (base === 'Times') return bold && italic ? 'Times-BoldItalic' : bold ? 'Times-Bold' : italic ? 'Times-Italic' : 'Times-Roman'
   if (base === 'Courier') return bold && italic ? 'Courier-BoldOblique' : bold ? 'Courier-Bold' : italic ? 'Courier-Oblique' : 'Courier'
-  return bold && italic ? 'Helvetica-BoldOblique' : bold ? 'Helvetica-Bold' : italic ? 'Helvetica-Oblique' : 'Helvetica'
+  return bold && italic ? 'Helvetica-BoldOblique' : bold ? PDF_DOCUMENT_FONT_BOLD : italic ? 'Helvetica-Oblique' : PDF_DOCUMENT_FONT_FAMILY
 }
 
 function pdfTextAlign(

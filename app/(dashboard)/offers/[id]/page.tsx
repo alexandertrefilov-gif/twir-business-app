@@ -2,18 +2,19 @@
 import type { Metadata }    from 'next'
 import { notFound }         from 'next/navigation'
 import Link                 from 'next/link'
-import { PageHeader }       from '@/components/shared/PageHeader'
-import { OfferStatusBadge } from '@/components/offers/OfferStatusBadge'
 import { OfferStatusActions } from '@/components/offers/OfferStatusActions'
 import { OfferRichText }      from '@/components/offers/OfferRichText'
 import { getOfferById }     from '@/lib/services/offer.service'
 import { hasPermission, requirePermission, Resource, Action } from '@/lib/auth/permissions'
-import { calcOfferTotals }  from '@/lib/validators/offer.schema'
 import { format }           from 'date-fns'
 import { de }               from 'date-fns/locale'
 import type { OfferStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { getSupplierNumber } from '@/lib/services/settings.service'
+import { BusinessDocumentLayout, BusinessDocumentSidebar, BusinessWorkflowPlaceholder } from '@/components/documents/BusinessDocumentLayout'
+import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
+import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
+import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -21,7 +22,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
   try {
     const o = await getOfferById(id)
-    return { title: o.offerNumber }
+    return { title: offerNumberForDisplay(o.offerNumber) }
   } catch {
     return { title: 'Angebot' }
   }
@@ -38,11 +39,11 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
     notFound()
   }
 
-  const [canEdit, canCopy, canDelete, canConvert] = await Promise.all([
+  const [canEdit, canDelete, canConvert, canCopy] = await Promise.all([
     hasPermission(Resource.OFFER, Action.UPDATE),
-    hasPermission(Resource.OFFER, Action.CREATE),
     hasPermission(Resource.OFFER, Action.DELETE),
     hasPermission(Resource.ORDER, Action.CREATE),
+    hasPermission(Resource.OFFER, Action.CREATE),
   ])
 
   // Compute per-item amts and totals from stored values
@@ -66,8 +67,6 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
   const totalTax   = offer.totalTax.toNumber()
   const totalGross = offer.totalGross.toNumber()
 
-  const isLocked  = offer.status !== 'DRAFT'
-  const canEditNow = canEdit && !isLocked
   const supplierNumber = await getSupplierNumber()
 
   const fmt = (n: number) =>
@@ -75,113 +74,65 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
 
   return (
     <div>
-      <PageHeader
-        title={offer.offerNumber}
-        description={offer.title ?? undefined}
-        supplierNumber={supplierNumber}
-        documentType="Angebot"
-        breadcrumbs={[
-          { label: 'Angebote', href: '/offers' },
-          { label: offer.offerNumber },
-        ]}
-        actions={
-          <div className="flex items-center gap-2">
-            <OfferStatusBadge status={offer.status} />
-            <a
-              href={`/api/offers/${offer.id}/preview`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-blue-200 bg-blue-50 text-sm font-500 text-blue-700 hover:bg-blue-100 transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5A3.375 3.375 0 0010.125 2.25H8.25m0 12.75h7.5m-7.5 3h4.5M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.625a9 9 0 00-9-9z" />
-              </svg>
-              PDF-Vorschau
-            </a>
-            {canCopy && (
-              <Link
-                href={`/offers/new?copy=${offer.id}`}
-                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 7.5V6A2.25 2.25 0 0110.5 3.75h6A2.25 2.25 0 0118.75 6v6A2.25 2.25 0 0116.5 14.25H15M6 8.25h6A2.25 2.25 0 0114.25 10.5v6A2.25 2.25 0 0112 18.75H6A2.25 2.25 0 013.75 16.5v-6A2.25 2.25 0 016 8.25z"/>
-                </svg>
-                Kopieren
-              </Link>
-            )}
-            {canEditNow && (
-              <Link
-                href={`/offers/${offer.id}/edit`}
-                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-stone-200 bg-white text-sm font-500 hover:bg-stone-50 transition-colors"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/>
-                </svg>
-                Bearbeiten
-              </Link>
-            )}
-          </div>
-        }
-      />
-
-      <div className="offer-standard-font p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-          {/* ── Main content (2/3) ── */}
-          <div className="lg:col-span-2 space-y-4">
-
-            {/* Customer + dates */}
-            <div className="card-base p-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                <div>
-                  <p className="text-[11px] font-600 uppercase tracking-wider text-muted-foreground mb-2">Empfänger</p>
-                  <Link
-                    href={`/customers/${offer.customerId}`}
-                    className="font-600 text-sm text-blue-700 hover:underline"
-                  >
+      <BusinessDocumentHeader
+        title={offerNumberForDisplay(offer.offerNumber)}
+        description={offer.title}
+        titleId="offer-detail-title"
+        detailsLabel="Kunden- und Auftragsdaten"
+      >
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
+                <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
+                <dd className="mt-0.5">
+                  <Link href={`/customers/${offer.customerId}`} className="text-sm font-600 text-blue-700 hover:underline">
                     {offer.customer.name}
                   </Link>
                   {(offer.customer.street || offer.customer.city) && (
-                    <address className="not-italic text-sm text-muted-foreground mt-1 leading-5">
+                    <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
                       {offer.customer.street} {offer.customer.houseNumber}<br />
                       {offer.customer.postalCode} {offer.customer.city}
                     </address>
                   )}
-                  {offer.customer.vatId && (
-                    <p className="text-xs text-muted-foreground mono mt-1">{offer.customer.vatId}</p>
-                  )}
-                </div>
-                <div className="space-y-3">
-                  <MetaItem label="Angebotsdatum"
-                    value={format(new Date(offer.offerDate), 'dd. MMMM yyyy', { locale: de })} />
-                  {offer.validUntil && (
-                    <MetaItem label="Gültig bis"
-                      value={format(new Date(offer.validUntil), 'dd. MMMM yyyy', { locale: de })} />
-                  )}
-                  {offer.sentAt && (
-                    <MetaItem label="Versendet am"
-                      value={format(new Date(offer.sentAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
-                  )}
-                  {offer.acceptedAt && (
-                    <MetaItem label="Angenommen am"
-                      value={format(new Date(offer.acceptedAt), 'dd.MM.yyyy', { locale: de })} />
-                  )}
-                </div>
+                  {offer.customer.vatId && <p className="mt-1 text-xs text-muted-foreground mono">{offer.customer.vatId}</p>}
+                </dd>
               </div>
-            </div>
+
+              <MetaItem label="Angebotsdatum"
+                value={format(new Date(offer.offerDate), 'dd. MMMM yyyy', { locale: de })} />
+              {offer.validUntil && <MetaItem label="Gültig bis"
+                value={format(new Date(offer.validUntil), 'dd. MMMM yyyy', { locale: de })} />}
+              {offer.sentAt && <MetaItem label="Versendet am"
+                value={format(new Date(offer.sentAt), 'dd.MM.yyyy HH:mm', { locale: de })} />}
+              {offer.acceptedAt && <div className="xl:col-start-4 xl:row-start-2">
+                <MetaItem label="Angenommen am"
+                  value={format(new Date(offer.acceptedAt), 'dd.MM.yyyy', { locale: de })} />
+              </div>}
+              {offer.order && <div className="xl:col-start-2 xl:row-start-2">
+                <MetaItem label="Auftragsdatum"
+                  value={format(new Date(offer.order.orderDate), 'dd. MMMM yyyy', { locale: de })} />
+              </div>}
+              {offer.order?.completedAt && <div className="xl:col-start-3 xl:row-start-2">
+                <MetaItem label="Abgeschlossen"
+                  value={format(new Date(offer.order.completedAt), 'dd.MM.yyyy', { locale: de })} />
+              </div>}
+            </dl>
+      </BusinessDocumentHeader>
+
+      <div className="offer-standard-font p-6">
+        <BusinessDocumentLayout>
+
+          {/* ── Main content (2/3) ── */}
+          <div className="min-w-0 space-y-4">
 
             {/* Intro text */}
             {offer.introText && (
-              <div className="card-base p-5">
+              <DocumentSectionCard title="Thema und Beschreibung">
                 <OfferRichText value={offer.introText} />
-              </div>
+              </DocumentSectionCard>
             )}
 
             {/* Items table */}
-            <div className="card-base overflow-hidden">
-              <div className="px-5 py-3 border-b border-stone-100">
-                <h2 className="text-sm font-600">Positionen ({items.length})</h2>
-              </div>
+            <DocumentSectionCard title={`Positionen (${items.length})`} flush>
               <div className="overflow-x-auto">
                 <table className="data-table">
                   <thead>
@@ -233,43 +184,24 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
                   </div>
                 </div>
               </div>
-            </div>
+            </DocumentSectionCard>
 
             {/* Outro text */}
             {offer.outroText && (
-              <div className="card-base p-5">
+              <DocumentSectionCard title="Ergänzende Informationen">
                 <OfferRichText value={offer.outroText} />
-              </div>
-            )}
-
-            {/* Linked order */}
-            {offer.order && (
-              <div className="card-base p-4 flex items-center gap-3">
-                <svg className="w-5 h-5 text-violet-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/>
-                </svg>
-                <div>
-                  <p className="text-sm text-muted-foreground">Umgewandelt in Auftrag</p>
-                  <Link
-                    href={`/orders/${offer.order.id}`}
-                    className="text-sm font-600 text-blue-700 hover:underline mono"
-                  >
-                    {offer.order.orderNumber}
-                  </Link>
-                </div>
-              </div>
+              </DocumentSectionCard>
             )}
 
           </div>
 
           {/* ── Sidebar (1/3) ── */}
-          <div className="space-y-4">
-
-            {/* Status workflow */}
-            <div className="card-base p-4">
-              <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground mb-3">
-                Workflow
-              </p>
+          <BusinessDocumentSidebar sticky>
+            <BusinessWorkflowPlaceholder message="Der vollständige Geschäftsvorgang-Workflow steht an dieser Stelle noch nicht zur Verfügung.">
+              <p className="mb-3 text-sm font-600 text-foreground">Status: {offer.status}</p>
+              {canCopy && (
+                <Link href={`/offers/new?copy=${offer.id}`} className="mb-3 inline-block text-sm text-blue-700 hover:underline">Als Vorlage kopieren</Link>
+              )}
               <OfferStatusActions
                 offerId={offer.id}
                 status={offer.status as OfferStatus}
@@ -279,18 +211,21 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
                 canDelete={canDelete && isTestDeleteEnabled()}
                 canConvert={canConvert}
               />
-            </div>
+            </BusinessWorkflowPlaceholder>
 
             {/* Meta */}
             <div className="card-base p-4 space-y-3">
               <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground">
                 Details
               </p>
-              <MetaItem label="Angebotsnummer" value={offer.offerNumber} mono />
+              <MetaItem label="Angebotsnummer" value={offerNumberForDisplay(offer.offerNumber)} mono />
               <MetaItem label="Angelegt von"
                 value={`${offer.createdBy.firstName} ${offer.createdBy.lastName}`} />
               <MetaItem label="Angelegt am"
                 value={format(new Date(offer.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+              <MetaItem label="Letzte Änderung"
+                value={format(new Date(offer.updatedAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+              {supplierNumber && <MetaItem label="Lieferantennummer" value={supplierNumber} mono />}
               {offer.status === 'DRAFT' && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
                   Entwurf — noch nicht versendet
@@ -298,8 +233,8 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
               )}
             </div>
 
-          </div>
-        </div>
+          </BusinessDocumentSidebar>
+        </BusinessDocumentLayout>
       </div>
     </div>
   )

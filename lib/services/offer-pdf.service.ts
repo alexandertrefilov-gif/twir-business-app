@@ -1,18 +1,18 @@
 import { format } from 'date-fns'
 import type { OfferPdfData } from '@/lib/pdf-templates/offer.template'
 import { getOfferById } from '@/lib/services/offer.service'
-import {
-  getCompanySnapshot,
-  hasValidCompanyLogoSignature,
-} from '@/lib/services/settings.service'
-import fs from 'fs/promises'
-import path from 'path'
+import { getCompanySnapshot } from '@/lib/services/settings.service'
+import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.service'
 
 export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
-  const [offer, company] = await Promise.all([
+  const [offer, liveCompany] = await Promise.all([
     getOfferById(offerId),
     getCompanySnapshot(),
   ])
+  const company = (offer.companySnapshot as typeof liveCompany | null) ?? liveCompany
+  const archivedCustomer = offer.customerSnapshot as Partial<typeof offer.customer> | null
+  const customer = archivedCustomer ?? offer.customer
+  const logo = await loadCompanyLogoForPdf(company.logoStorageKey ?? company.logoPath)
 
   const items = offer.items.map((item) => ({
     position: item.position,
@@ -41,16 +41,18 @@ export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
     title: offer.title,
     introText: offer.introText,
     outroText: offer.outroText,
-    logoDataUri: await loadCompanyLogo(company.logoPath),
+    logoDataUri: logo?.dataUri,
     logoScale: company.logoScale,
+    logoSourceWidth: logo?.width ?? company.logoWidth ?? undefined,
+    logoSourceHeight: logo?.height ?? company.logoHeight ?? undefined,
     company,
     customer: {
-      name: offer.customer.name,
-      street: offer.customer.street,
-      houseNumber: offer.customer.houseNumber,
-      postalCode: offer.customer.postalCode,
-      city: offer.customer.city,
-      vatId: offer.customer.vatId,
+      name: customer.name ?? offer.customer.name,
+      street: customer.street,
+      houseNumber: customer.houseNumber,
+      postalCode: customer.postalCode,
+      city: customer.city,
+      vatId: customer.vatId,
       contactSalutation: primaryContact?.salutation,
       contactFirstName: primaryContact?.firstName,
       contactLastName: primaryContact?.lastName,
@@ -61,30 +63,5 @@ export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
     totalTax: offer.totalTax.toNumber(),
     totalGross: offer.totalGross.toNumber(),
     taxGroups,
-  }
-}
-
-async function loadCompanyLogo(storageKey?: string | null): Promise<string | undefined> {
-  if (!storageKey || (process.env.STORAGE_DRIVER ?? 'local') !== 'local') return undefined
-
-  const storageRoot = path.resolve(process.env.STORAGE_LOCAL_PATH ?? './storage/documents')
-  const logoPath = path.resolve(storageRoot, storageKey)
-  if (!logoPath.startsWith(`${storageRoot}${path.sep}`)) return undefined
-
-  const extension = path.extname(logoPath).toLowerCase()
-  const mimeType = extension === '.png'
-    ? 'image/png'
-    : extension === '.jpg' || extension === '.jpeg'
-      ? 'image/jpeg'
-      : null
-  if (!mimeType) return undefined
-
-  try {
-    const buffer = await fs.readFile(logoPath)
-    if (buffer.length > 2 * 1024 * 1024) return undefined
-    if (!hasValidCompanyLogoSignature(buffer, mimeType)) return undefined
-    return `data:${mimeType};base64,${buffer.toString('base64')}`
-  } catch {
-    return undefined
   }
 }
