@@ -1,6 +1,7 @@
 // components/shared/PageHeader.tsx
 import React from 'react'
 import Link from 'next/link'
+import { StickyDocumentPageHeader } from '@/components/documents/StickyDocumentPageHeader'
 
 interface Breadcrumb {
   label: string
@@ -12,8 +13,11 @@ interface PageHeaderProps {
   description?: string
   breadcrumbs?: Breadcrumb[]
   actions?:     React.ReactNode
+  badges?:      React.ReactNode
+  aside?:       React.ReactNode
   supplierNumber?: string | null
   documentType?: string
+  sticky?: boolean
 }
 
 export function PageHeader({
@@ -21,11 +25,17 @@ export function PageHeader({
   description,
   breadcrumbs,
   actions,
+  badges,
+  aside,
   supplierNumber,
   documentType,
+  sticky = false,
 }: PageHeaderProps) {
-  return (
-    <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-stone-200 bg-white">
+  const content = (
+    <div className={`gap-4 border-b border-stone-200 bg-white px-4 py-4 sm:px-6 ${aside
+      ? 'grid grid-cols-1 lg:grid-cols-[minmax(260px,0.8fr)_minmax(0,2fr)] lg:items-start'
+      : 'flex flex-col lg:flex-row lg:items-start lg:justify-between'
+    }`}>
       <div className="min-w-0">
         {breadcrumbs && breadcrumbs.length > 0 && (
           <nav className="flex items-center gap-1.5 mb-1.5 text-xs text-muted-foreground">
@@ -50,9 +60,11 @@ export function PageHeader({
         {documentType && (
           <p className="mt-2 text-sm font-400 text-foreground">{documentType}</p>
         )}
+        {badges && <div className="mt-2 flex flex-wrap items-center gap-2">{badges}</div>}
       </div>
-      {(actions || supplierNumber) && (
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
+      {(aside || actions || supplierNumber) && (
+        <div className={`flex w-full min-w-0 flex-col gap-1.5 ${aside ? '' : 'lg:w-auto lg:max-w-[520px] lg:items-end'}`}>
+          {aside}
           {actions && (
             <div className="flex items-center gap-2">
               {actions}
@@ -67,4 +79,6 @@ export function PageHeader({
       )}
     </div>
   )
+
+  return sticky ? <StickyDocumentPageHeader>{content}</StickyDocumentPageHeader> : content
 }

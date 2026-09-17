@@ -20,7 +20,8 @@ import {
 } from '@/lib/auth/permissions'
 import type { OfferCreateInput, OfferUpdateInput } from '@/lib/validators/offer.schema'
 import { calcItemAmounts, calcOfferTotals } from '@/lib/validators/offer.schema'
-import { offerIntroToOrderDescription } from '@/lib/offers/rich-text'
+import { offerToOrderDescription } from '@/lib/offers/rich-text'
+import { getCompanySnapshot } from '@/lib/services/settings.service'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -57,6 +58,29 @@ export interface OfferListItem {
   createdAt:   Date
 }
 
+export interface ParsedOfferNumber {
+  period: number
+  sequence: number
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Parses the established offer format: PREFIX YYMMNN (for example AN 260703). */
+export function parseOfferNumber(value: string, prefix: string): ParsedOfferNumber | null {
+  const match = value.match(new RegExp(`^${escapeRegExp(prefix)} ([0-9]{2})(0[1-9]|1[0-2])([0-9]{2,})$`))
+  if (!match) return null
+
+  const sequence = Number(match[3])
+  if (!Number.isSafeInteger(sequence) || sequence < 1) return null
+
+  return {
+    period: (2000 + Number(match[1])) * 100 + Number(match[2]),
+    sequence,
+  }
+}
+
 // ── LIST ─────────────────────────────────────────────────────
 
 export async function getOffers(params: OfferListParams = {}): Promise<OfferListResult> {
@@ -77,6 +101,7 @@ export async function getOffers(params: OfferListParams = {}): Promise<OfferList
     ...(search && {
       OR: [
         { offerNumber: { contains: search, mode: 'insensitive' } },
+        { areaName:    { contains: search, mode: 'insensitive' } },
         { title:       { contains: search, mode: 'insensitive' } },
         { customer: { name: { contains: search, mode: 'insensitive' } } },
       ],
@@ -93,6 +118,7 @@ export async function getOffers(params: OfferListParams = {}): Promise<OfferList
         id:          true,
         offerNumber: true,
         status:      true,
+        areaName:    true,
         title:       true,
         customerId:  true,
         offerDate:   true,
@@ -146,7 +172,7 @@ export async function getOfferById(id: string) {
       },
       items:     { orderBy: { position: 'asc' } },
       createdBy: { select: { firstName: true, lastName: true, email: true } },
-      order:     { select: { id: true, orderNumber: true, status: true } },
+      order:     { select: { id: true, orderNumber: true, status: true, orderDate: true, completedAt: true } },
     },
   })
   if (!offer) throw new NotFoundError('Angebot nicht gefunden')
@@ -175,6 +201,7 @@ export async function createOffer(
         offerNumber,
         customerId:  data.customerId,
         status:      OfferStatus.DRAFT,
+        areaName:    data.areaName    ?? null,
         title:       data.title       ?? null,
         introText:   data.introText   ?? null,
         outroText:   data.outroText   ?? null,
@@ -209,7 +236,7 @@ export async function createOffer(
       action:     AuditAction.CREATE,
       entityType: 'offer',
       entityId:   offer.id,
-      newValue:   { offerNumber, customerId: data.customerId, status: OfferStatus.DRAFT },
+      newValue:   { offerNumber, customerId: data.customerId, areaName: data.areaName ?? null, status: OfferStatus.DRAFT },
     })
 
     return offer.id
@@ -246,6 +273,7 @@ export async function updateOffer(
       where: { id },
       data: {
         customerId:  data.customerId,
+        areaName:    data.areaName   ?? null,
         title:       data.title      ?? null,
         introText:   data.introText  ?? null,
         outroText:   data.outroText  ?? null,
@@ -279,12 +307,120 @@ export async function updateOffer(
       action:     AuditAction.UPDATE,
       entityType: 'offer',
       entityId:   id,
-      newValue:   { totalNet: totals.totalNet, totalGross: totals.totalGross, itemCount: data.items.length },
+      newValue:   { areaName: data.areaName ?? null, totalNet: totals.totalNet, totalGross: totals.totalGross, itemCount: data.items.length },
     })
   })
 }
 
+// ── MANUAL NUMBER CHANGE (only DRAFT) ───────────────────────
+
+export async function changeOfferNumber(
+  id: string,
+  requestedNumber: string,
+  userId: string,
+  userEmail: string,
+): Promise<void> {
+  const newNumber = requestedNumber.trim()
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const offer = await tx.offer.findUnique({
+        where: { id, deletedAt: null },
+        select: { id: true, offerNumber: true, status: true, order: { select: { id: true } } },
+      })
+      if (!offer) throw new NotFoundError('Angebot nicht gefunden')
+      if (offer.status !== OfferStatus.DRAFT || offer.order) {
+        throw new BusinessRuleError('Die Angebotsnummer kann nur bei einem Entwurf geändert werden.')
+      }
+      if (offer.offerNumber === newNumber) {
+        return
+      }
+
+      const settings = await tx.companySetting.findFirst({ select: { offerPrefix: true } })
+      const prefix = settings?.offerPrefix || 'AN'
+      const parsed = parseOfferNumber(newNumber, prefix)
+      if (!parsed) {
+        throw new BusinessRuleError(`Ungültiges Format. Erwartet wird ${prefix} YYMMNN, z. B. ${prefix} 260701.`)
+      }
+
+      const sequence = await tx.numberSequence.findUnique({
+        where: { type_year: { type: NumberSequenceType.OFFER, year: parsed.period } },
+        select: { lastNumber: true },
+      })
+      if (!sequence || parsed.sequence > sequence.lastNumber) {
+        throw new BusinessRuleError('Diese Nummer wurde vom automatischen Nummernkreis noch nicht erreicht.')
+      }
+
+      const activeConflict = await tx.offer.findFirst({
+        where: { offerNumber: newNumber, deletedAt: null, id: { not: id } },
+        select: { id: true },
+      })
+      if (activeConflict) {
+        throw new BusinessRuleError('Diese Angebotsnummer ist bereits vergeben.')
+      }
+
+      await tx.offer.update({ where: { id }, data: { offerNumber: newNumber } })
+      await buildAuditLogCreate(tx, {
+        userId,
+        userEmail,
+        action: AuditAction.OFFER_NUMBER_CHANGE,
+        entityType: 'offer',
+        entityId: id,
+        oldValue: { offerNumber: offer.offerNumber },
+        newValue: { offerNumber: newNumber },
+      })
+    })
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new BusinessRuleError('Diese Angebotsnummer ist bereits vergeben.')
+    }
+    throw error
+  }
+}
+
 // ── STATUS TRANSITION ─────────────────────────────────────────
+
+export async function acceptOfferInTransaction(
+  tx: Prisma.TransactionClient,
+  id: string,
+  userId: string,
+  userEmail: string,
+): Promise<boolean> {
+  const offer = await tx.offer.findUnique({
+    where: { id, deletedAt: null },
+    select: { status: true },
+  })
+  if (!offer) throw new NotFoundError('Angebot nicht gefunden')
+
+  if (offer.status === OfferStatus.ACCEPTED) return false
+  if (!isOfferTransitionAllowed(offer.status as OfferStatus, OfferStatus.ACCEPTED)) {
+    throw new BusinessRuleError(
+      `Statuswechsel von „${offer.status}" nach „${OfferStatus.ACCEPTED}" ist nicht erlaubt.`,
+    )
+  }
+
+  const acceptedAt = new Date()
+  const updated = await tx.offer.updateMany({
+    where: { id, deletedAt: null, status: offer.status },
+    data: { status: OfferStatus.ACCEPTED, acceptedAt },
+  })
+  if (updated.count === 0) {
+    const current = await tx.offer.findUnique({ where: { id }, select: { status: true } })
+    if (current?.status === OfferStatus.ACCEPTED) return false
+    throw new BusinessRuleError('Der Angebotsstatus wurde zwischenzeitlich geändert.')
+  }
+
+  await buildAuditLogCreate(tx, {
+    userId,
+    userEmail,
+    action: AuditAction.STATUS_CHANGE,
+    entityType: 'offer',
+    entityId: id,
+    oldValue: { status: offer.status },
+    newValue: { status: OfferStatus.ACCEPTED },
+  })
+  return true
+}
 
 export async function changeOfferStatus(
   id:        string,
@@ -292,6 +428,11 @@ export async function changeOfferStatus(
   userId:    string,
   userEmail: string,
 ): Promise<void> {
+  if (toStatus === OfferStatus.ACCEPTED) {
+    await prisma.$transaction(tx => acceptOfferInTransaction(tx, id, userId, userEmail))
+    return
+  }
+
   const offer = await prisma.offer.findUnique({
     where:  { id, deletedAt: null },
     include: { customer: true },
@@ -314,13 +455,13 @@ export async function changeOfferStatus(
   }> = {}
 
   if (toStatus === OfferStatus.SENT)     timestamps.sentAt     = new Date()
-  if (toStatus === OfferStatus.ACCEPTED) timestamps.acceptedAt = new Date()
   if (toStatus === OfferStatus.REJECTED) timestamps.rejectedAt = new Date()
   if (toStatus === OfferStatus.EXPIRED)  timestamps.expiredAt  = new Date()
 
   // Beim Versenden: Kundendaten einfrieren
   const customerSnapshot =
     toStatus === OfferStatus.SENT ? buildCustomerSnapshot(offer.customer) : undefined
+  const companySnapshot = toStatus === OfferStatus.SENT ? await getCompanySnapshot() : undefined
 
   await prisma.$transaction(async (tx) => {
     await tx.offer.update({
@@ -331,6 +472,7 @@ export async function changeOfferStatus(
         ...(customerSnapshot && {
           customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
         }),
+        ...(companySnapshot && { companySnapshot: companySnapshot as Prisma.InputJsonValue }),
       },
     })
 
@@ -372,10 +514,11 @@ export async function convertOfferToOrder(
       data: {
         orderNumber,
         customerId:       offer.customerId,
+        projectId:        offer.projectId,
         offerId:          offer.id,
         status:           OrderStatus.OPEN,
         title:            offer.title,
-        description:      offerIntroToOrderDescription(offer.introText),
+        description:      offerToOrderDescription(offer.introText, offer.outroText, offer.items.length > 0),
         customerSnapshot: customerSnapshot as Prisma.InputJsonValue,
         totalNet:         offer.totalNet,
         totalTax:         offer.totalTax,
@@ -397,6 +540,21 @@ export async function convertOfferToOrder(
         },
       },
     })
+
+    const customerPurchaseOrder = await tx.customerPurchaseOrder.findUnique({
+      where: { offerId },
+      select: { id: true },
+    })
+    if (customerPurchaseOrder) {
+      await tx.customerPurchaseOrder.update({
+        where: { id: customerPurchaseOrder.id },
+        data: { orderId: order.id },
+      })
+      await tx.document.updateMany({
+        where: { customerPurchaseOrderId: customerPurchaseOrder.id, deletedAt: null },
+        data: { orderId: order.id },
+      })
+    }
 
     await tx.offer.update({
       where: { id: offerId },
