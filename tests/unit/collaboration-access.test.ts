@@ -216,3 +216,74 @@ describe('getVisibleCollaborationMemberships (GGA-04.3)', () => {
     expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ projectId: { in: ['p1'] } }) }))
   })
 })
+
+// GGA-04.4: getVisibleCollaborationTasks/-ChecklistItems/-Blockers hatten
+// denselben projectId-Filter-IDOR wie getVisibleCollaborationMemberships
+// (GGA-04.3) — bestätigt in drei weiteren Funktionen mit identischem Muster
+// (siehe PROJECT_MAP → Invariante 12). Dieselbe rollenagnostische Begründung:
+// requireCollaborationProjectAccess() genügt, weil auch der ungefilterte
+// Zweig bereits auf alle eigenen Mitgliedschaften unabhängig von der Rolle
+// scoped. Volle Rollenmatrix + kombinierter Cross-Function-Regressionstest
+// laufen als Integrationstest gegen eine echte DB, siehe
+// tests/integration/gga-cabinet-db.test.ts → "GGA-04.4".
+describe('getVisibleCollaborationTasks/-ChecklistItems/-Blockers (GGA-04.4)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  function asUser(userId: string) {
+    auth.getServerSession.mockResolvedValue({ user: { id: userId, email: `${userId}@example.test`, authScope: 'COLLABORATION' } })
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: userId, status: 'ACTIVE', deletedAt: null } as never)
+  }
+
+  const cases = [
+    { name: 'getVisibleCollaborationTasks', model: 'collaborationTask' as const },
+    { name: 'getVisibleCollaborationChecklistItems', model: 'collaborationChecklistItem' as const },
+    { name: 'getVisibleCollaborationBlockers', model: 'collaborationBlocker' as const },
+  ]
+
+  for (const { name, model } of cases) {
+    it(`${name}: prüft Mitgliedschaft am gefilterten Projekt, bevor Daten geladen werden`, async () => {
+      asUser('u1')
+      const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+      findFirst.mockResolvedValueOnce({ id: 'm1', role: 'COLLAB_MEMBER', project: { id: 'p1', name: 'Projekt A' } } as never)
+      const modelFindMany = vi.mocked(prisma[model].findMany)
+      modelFindMany.mockResolvedValueOnce([] as never)
+      const membershipFindMany = vi.mocked(prisma.collaborationMembership.findMany)
+      membershipFindMany.mockResolvedValueOnce([{ project: { id: 'p1' } }] as never)
+      const service = await import('@/lib/services/collaboration-phase2.service')
+      const fn = service[name as keyof typeof service] as (filters?: { projectId?: string }) => Promise<unknown>
+      await expect(fn({ projectId: 'p1' })).resolves.toEqual([])
+      expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ userId: 'u1', projectId: 'p1', active: true }) }))
+    })
+
+    it(`${name}: cross-project IDOR — NotFoundError statt Daten eines fremden Projekts, kein Daten-findMany danach`, async () => {
+      asUser('u1')
+      vi.mocked(prisma.collaborationMembership.findFirst).mockResolvedValueOnce(null)
+      const modelFindMany = vi.mocked(prisma[model].findMany)
+      const service = await import('@/lib/services/collaboration-phase2.service')
+      const fn = service[name as keyof typeof service] as (filters?: { projectId?: string }) => Promise<unknown>
+      await expect(fn({ projectId: 'fremdes-projekt' })).rejects.toBeInstanceOf(NotFoundError)
+      expect(modelFindMany).not.toHaveBeenCalled()
+    })
+
+    it(`${name}: unbekannte projectId — dieselbe NotFoundError, kein Existenz-Leak`, async () => {
+      asUser('u1')
+      vi.mocked(prisma.collaborationMembership.findFirst).mockResolvedValueOnce(null)
+      const service = await import('@/lib/services/collaboration-phase2.service')
+      const fn = service[name as keyof typeof service] as (filters?: { projectId?: string }) => Promise<unknown>
+      await expect(fn({ projectId: 'nicht-existent' })).rejects.toThrow('Projekt nicht gefunden')
+    })
+
+    it(`${name}: ohne projectId — unverändertes Scoping, kein zusätzlicher Access-Check`, async () => {
+      asUser('u1')
+      const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+      const membershipFindMany = vi.mocked(prisma.collaborationMembership.findMany)
+      membershipFindMany.mockResolvedValueOnce([{ project: { id: 'p1' } }] as never)
+      const modelFindMany = vi.mocked(prisma[model].findMany)
+      modelFindMany.mockResolvedValueOnce([] as never)
+      const service = await import('@/lib/services/collaboration-phase2.service')
+      const fn = service[name as keyof typeof service] as (filters?: { projectId?: string }) => Promise<unknown>
+      await expect(fn()).resolves.toEqual([])
+      expect(findFirst).not.toHaveBeenCalled()
+    })
+  }
+})

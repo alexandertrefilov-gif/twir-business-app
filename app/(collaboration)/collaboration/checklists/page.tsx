@@ -1,10 +1,16 @@
+import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
 import { getVisibleCollaborationChecklistItems } from '@/lib/services/collaboration-phase2.service'
 import { getVisibleCollaborationProjects } from '@/lib/services/collaboration-project.service'
 export default async function CollaborationChecklistsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams
   const value = (key: string) => typeof params[key] === 'string' ? params[key] as string : undefined
   const completedFilter = value('completed')
-  const items = await getVisibleCollaborationChecklistItems({ projectId: value('project'), completed: completedFilter === '1' ? true : completedFilter === '0' ? false : undefined, mine: value('mine') === '1' })
+  let items: Awaited<ReturnType<typeof getVisibleCollaborationChecklistItems>>
+  try {
+    items = await getVisibleCollaborationChecklistItems({ projectId: value('project'), completed: completedFilter === '1' ? true : completedFilter === '0' ? false : undefined, mine: value('mine') === '1' })
+  } catch (error) {
+    handleCollaborationPageError(error)
+  }
   const projects = await getVisibleCollaborationProjects()
   return <div><h1 className="text-3xl font-600 tracking-tight">Checklisten</h1><p className="mt-2 text-sm text-muted-foreground">Checklistenpunkte aus freigegebenen Projekten.</p><form className="mt-6 flex flex-wrap gap-2 rounded-xl border border-stone-200 bg-white p-4"><select name="project" defaultValue={value('project') ?? ''} className="rounded border border-stone-300 px-2 py-1.5 text-sm"><option value="">Alle Projekte</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select><select name="completed" defaultValue={value('completed') ?? ''} className="rounded border border-stone-300 px-2 py-1.5 text-sm"><option value="">Alle</option><option value="0">Offen</option><option value="1">Erledigt</option></select><label className="flex items-center gap-2 px-2 text-sm"><input type="checkbox" name="mine" value="1" defaultChecked={value('mine') === '1'} /> Meine Checklistenpunkte</label><button className="rounded bg-stone-800 px-3 py-1.5 text-sm text-white">Filtern</button></form><div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm"><table className="min-w-full text-left text-sm"><thead className="border-b border-stone-200 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-5 py-3">Punkt</th><th className="px-5 py-3">Projekt / Phase</th><th className="px-5 py-3">Verantwortlich</th><th className="px-5 py-3">Status</th></tr></thead><tbody className="divide-y divide-stone-100">{items.map((item) => <tr key={item.id}><td className="px-5 py-3"><p className="font-600">{item.title}</p><p className="text-xs text-muted-foreground">{item.isRequired ? 'Erforderlich' : 'Optional'}</p></td><td className="px-5 py-3">{item.project.name} · {item.stage.title}</td><td className="px-5 py-3">{item.responsibleMembership?.user ? `${item.responsibleMembership.user.firstName} ${item.responsibleMembership.user.lastName}` : 'Nicht zugewiesen'}</td><td className="px-5 py-3">{item.completed ? '✓ Erledigt' : '○ Offen'}</td></tr>)}</tbody></table>{items.length === 0 && <p className="px-5 py-8 text-sm text-muted-foreground">Keine Checklistenpunkte vorhanden.</p>}</div></div>
 }

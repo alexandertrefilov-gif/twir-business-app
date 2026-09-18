@@ -52,6 +52,19 @@ export async function getCollaborationPhase2Project(projectId: string) {
 
 export async function getVisibleCollaborationTasks(filters?: { projectId?: string; status?: string; priority?: string; overdue?: boolean; mine?: boolean }) {
   const { userId } = await requireCollaborationSession()
+  // GGA-04.4: bei explizitem projectId-Filter muss die Mitgliedschaft am
+  // GENAU DIESEM Projekt geprüft werden — sonst kann jeder eingeloggte
+  // Collaboration-Nutzer über eine fremde projectId (z. B. /collaboration/
+  // tasks?project=<fremde-id>) Aufgaben eines Projekts lesen, dem er nicht
+  // angehört. requireCollaborationProjectAccess() ist absichtlich
+  // rollenagnostisch (wie schon bei getVisibleCollaborationMemberships,
+  // siehe GGA-04.3 / PROJECT_MAP → Invariante 12) — dieselbe Funktion
+  // scopt auch ohne Filter bereits auf alle eigenen Mitgliedschaften,
+  // unabhängig von der Rolle; eine strengere Prüfung nur im Filter-Zweig
+  // wäre inkonsistent zu diesem unveränderten Verhalten.
+  if (filters?.projectId) {
+    await requireCollaborationProjectAccess(userId, filters.projectId)
+  }
   const projects = await prisma.collaborationMembership.findMany({
     where: { userId, active: true, project: { active: true, deletedAt: null } },
     select: { project: { select: { id: true, name: true } } },
@@ -279,6 +292,11 @@ export async function transitionCollaborationStage(stageId: string, target: stri
 // Projekte, in denen der aktuelle Benutzer Mitglied ist.
 export async function getVisibleCollaborationChecklistItems(filters?: { projectId?: string; completed?: boolean; mine?: boolean }) {
   const { userId } = await requireCollaborationSession()
+  // GGA-04.4: siehe getVisibleCollaborationTasks — derselbe projectId-Filter-
+  // IDOR und dieselbe rollenagnostische Begründung (PROJECT_MAP → Invariante 12).
+  if (filters?.projectId) {
+    await requireCollaborationProjectAccess(userId, filters.projectId)
+  }
   const memberships = await prisma.collaborationMembership.findMany({ where: { userId, active: true, project: { active: true, deletedAt: null } }, select: { project: { select: { id: true } } } })
   const projectIds = memberships.map(({ project }) => project.id)
   return prisma.collaborationChecklistItem.findMany({
@@ -290,6 +308,11 @@ export async function getVisibleCollaborationChecklistItems(filters?: { projectI
 
 export async function getVisibleCollaborationBlockers(filters?: { projectId?: string; status?: string }) {
   const { userId } = await requireCollaborationSession()
+  // GGA-04.4: siehe getVisibleCollaborationTasks — derselbe projectId-Filter-
+  // IDOR und dieselbe rollenagnostische Begründung (PROJECT_MAP → Invariante 12).
+  if (filters?.projectId) {
+    await requireCollaborationProjectAccess(userId, filters.projectId)
+  }
   const memberships = await prisma.collaborationMembership.findMany({ where: { userId, active: true, project: { active: true, deletedAt: null } }, select: { project: { select: { id: true } } } })
   const projectIds = memberships.map(({ project }) => project.id)
   return prisma.collaborationBlocker.findMany({

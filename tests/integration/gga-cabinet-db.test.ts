@@ -29,6 +29,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
 
   let projectAId = '', projectBId = ''
   let stageKonzeptId = '', stagePlanungId = '', stageUmsetzungId = '', stageAbnahmeId = ''
+  let stageKonzeptBId = ''
   let membershipManagerId = ''
 
   function asManager() { auth.getServerSession.mockResolvedValue({ user: { id: managerUserId, email: managerEmail, authScope: 'COLLABORATION' } }) }
@@ -74,6 +75,11 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     stageUmsetzungId = stageUmsetzung.id
     const stageAbnahme = await db.collaborationProjectStage.create({ data: { projectId: projectAId, code: 'ABNAHME', title: 'Abnahme', sequence: 4, weight: 25 } })
     stageAbnahmeId = stageAbnahme.id
+    // GGA-04.4: Stage in Projekt B — nur zum Anlegen fremder Task-/Checklisten-
+    // Fixtures für den projectId-Filter-IDOR-Test benötigt (CollaborationTask/
+    // -ChecklistItem verlangen zwingend eine stageId).
+    const stageKonzeptB = await db.collaborationProjectStage.create({ data: { projectId: projectBId, code: 'KONZEPT', title: 'Konzept B', sequence: 1, weight: 10 } })
+    stageKonzeptBId = stageKonzeptB.id
 
     cabinetService = await import('@/lib/services/gga-cabinet.service')
     phase2Service = await import('@/lib/services/collaboration-phase2.service')
@@ -483,6 +489,115 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
       asManager()
       const memberships = await phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })
       expect(memberships.some((m) => m.project.id === projectBId)).toBe(false)
+    })
+  })
+
+  // ── GGA-04.4: getVisibleCollaborationTasks/-ChecklistItems/-Blockers — projectId-Filter-IDOR geschlossen ──
+  describe('GGA-04.4: Tasks/Checklisten/Blocker-IDOR über projectId-Filter geschlossen', () => {
+    let taskAId = '', checklistAId = '', blockerAId = ''
+    let taskBId = '', checklistBId = '', blockerBId = ''
+
+    beforeAll(async () => {
+      const taskA = await db.collaborationTask.create({ data: { projectId: projectAId, stageId: stagePlanungId, title: `${marker}-044-TaskA` } })
+      taskAId = taskA.id
+      const checklistA = await db.collaborationChecklistItem.create({ data: { projectId: projectAId, stageId: stagePlanungId, title: `${marker}-044-ChecklistA` } })
+      checklistAId = checklistA.id
+      const blockerA = await db.collaborationBlocker.create({ data: { projectId: projectAId, title: `${marker}-044-BlockerA` } })
+      blockerAId = blockerA.id
+
+      const taskB = await db.collaborationTask.create({ data: { projectId: projectBId, stageId: stageKonzeptBId, title: `${marker}-044-TaskB` } })
+      taskBId = taskB.id
+      const checklistB = await db.collaborationChecklistItem.create({ data: { projectId: projectBId, stageId: stageKonzeptBId, title: `${marker}-044-ChecklistB` } })
+      checklistBId = checklistB.id
+      const blockerB = await db.collaborationBlocker.create({ data: { projectId: projectBId, title: `${marker}-044-BlockerB` } })
+      blockerBId = blockerB.id
+    })
+
+    afterAll(async () => {
+      await db.collaborationTask.deleteMany({ where: { id: { in: [taskAId, taskBId].filter(Boolean) } } })
+      await db.collaborationChecklistItem.deleteMany({ where: { id: { in: [checklistAId, checklistBId].filter(Boolean) } } })
+      await db.collaborationBlocker.deleteMany({ where: { id: { in: [blockerAId, blockerBId].filter(Boolean) } } })
+    })
+
+    const scenarios = [
+      {
+        name: 'getVisibleCollaborationTasks',
+        call: (filters?: { projectId?: string }) => phase2Service.getVisibleCollaborationTasks(filters),
+        ownId: () => taskAId, foreignId: () => taskBId,
+      },
+      {
+        name: 'getVisibleCollaborationChecklistItems',
+        call: (filters?: { projectId?: string }) => phase2Service.getVisibleCollaborationChecklistItems(filters),
+        ownId: () => checklistAId, foreignId: () => checklistBId,
+      },
+      {
+        name: 'getVisibleCollaborationBlockers',
+        call: (filters?: { projectId?: string }) => phase2Service.getVisibleCollaborationBlockers(filters),
+        ownId: () => blockerAId, foreignId: () => blockerBId,
+      },
+    ]
+
+    for (const { name, call, ownId, foreignId } of scenarios) {
+      describe(name, () => {
+        it('1) eigenes Projekt erlaubt', async () => {
+          asManager()
+          const rows = await call({ projectId: projectAId }) as { id: string }[]
+          expect(rows.some((r) => r.id === ownId())).toBe(true)
+        })
+
+        it('2) fremdes Projekt verboten (Cross-Project-IDOR)', async () => {
+          asManager()
+          await expect(call({ projectId: projectBId })).rejects.toThrow('nicht gefunden')
+        })
+
+        it('3) unbekannte projectId verboten (kein Existenz-Leak)', async () => {
+          asManager()
+          await expect(call({ projectId: 'does-not-exist' })).rejects.toThrow('nicht gefunden')
+        })
+
+        it('4) OPERATOR erhält für das eigene Projekt weiterhin Daten (konsistent mit unverändertem ungefiltertem Scoping)', async () => {
+          asProjectAOperator()
+          const rows = await call({ projectId: projectAId }) as { project: { id: string } }[]
+          expect(rows.every((r) => r.project.id === projectAId)).toBe(true)
+        })
+
+        it('5) COLLAB_VIEWER erhält für das eigene Projekt Daten', async () => {
+          asViewer()
+          const rows = await call({ projectId: projectAId }) as { project: { id: string } }[]
+          expect(rows.every((r) => r.project.id === projectAId)).toBe(true)
+        })
+
+        it('6) COLLAB_MEMBER erhält für das eigene Projekt Daten', async () => {
+          asCollabMember()
+          const rows = await call({ projectId: projectAId }) as { project: { id: string } }[]
+          expect(rows.every((r) => r.project.id === projectAId)).toBe(true)
+        })
+
+        it('7) INTERNAL_PLANNER (interner Editor) erhält für das eigene Projekt Daten', async () => {
+          asPlanner()
+          const rows = await call({ projectId: projectAId }) as { project: { id: string } }[]
+          expect(rows.every((r) => r.project.id === projectAId)).toBe(true)
+        })
+
+        it('8) Aufruf ohne projectId behält sein bisheriges Scoping (nur Projekt B des Outsiders)', async () => {
+          asOutsider()
+          const rows = await call() as { project: { id: string } }[]
+          expect(rows.every((r) => r.project.id === projectBId)).toBe(true)
+        })
+
+        it('9) projectId-Filter liefert ausschließlich Daten dieses einen Projekts', async () => {
+          asManager()
+          const rows = await call({ projectId: projectAId }) as { id: string }[]
+          expect(rows.some((r) => r.id === foreignId())).toBe(false)
+        })
+      })
+    }
+
+    it('kombinierter Regressionstest: ein Benutzer aus Projekt A erhält über keinen der drei Query-Parameter Daten aus Projekt B', async () => {
+      asManager()
+      await expect(phase2Service.getVisibleCollaborationTasks({ projectId: projectBId })).rejects.toThrow('nicht gefunden')
+      await expect(phase2Service.getVisibleCollaborationChecklistItems({ projectId: projectBId })).rejects.toThrow('nicht gefunden')
+      await expect(phase2Service.getVisibleCollaborationBlockers({ projectId: projectBId })).rejects.toThrow('nicht gefunden')
     })
   })
 })

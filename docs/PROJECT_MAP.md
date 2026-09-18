@@ -174,10 +174,10 @@ Runtime-Image heraus.
     diese `projectId` anwenden, bevor Daten zurückgegeben werden — ein
     ungeprüfter `projectId`-Parameter ist ein eigenständiges IDOR-Muster,
     unabhängig davon, ob dieselbe Funktion im ungefilterten Fall bereits
-    korrekt auf die `projectIds` der eigenen Mitgliedschaften scoped (siehe
-    GGA-04.3, `getVisibleCollaborationMemberships`). Bekannte, zum Zeitpunkt
-    von GGA-04.3 noch NICHT behobene Instanzen desselben Musters:
-    `getVisibleCollaborationTasks`, `getVisibleCollaborationChecklistItems`,
-    `getVisibleCollaborationBlockers` (Aufrufstellen: `/collaboration/tasks`,
+    korrekt auf die `projectIds` der eigenen Mitgliedschaften scoped. Gilt für
+    alle fünf `getVisibleCollaboration*`-Funktionen mit `projectId`-Filter:
+    `getVisibleCollaborationMemberships` (GGA-04.3), `getVisibleCollaborationTasks`,
+    `getVisibleCollaborationChecklistItems`, `getVisibleCollaborationBlockers`
+    (GGA-04.4) — Aufrufstellen: `/collaboration/team`, `/collaboration/tasks`,
     `/collaboration/checklists`, `/collaboration/blockers`, jeweils über
-    `?project=<id>`).
+    `?project=<id>`. Alle fünf sind geschlossen; keine bekannte offene Instanz.
