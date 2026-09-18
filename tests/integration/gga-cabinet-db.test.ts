@@ -23,6 +23,9 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
   let viewerUserId = '', viewerEmail = ''
   let outsiderUserId = '', outsiderEmail = ''
   let projectAOperatorUserId = '', projectAOperatorEmail = ''
+  // GGA-04.3: COLLAB_MEMBER-Mitglied von Projekt A — Rollenmatrix für
+  // getVisibleCollaborationMemberships() deckte diese Rolle bisher nicht ab.
+  let collabMemberUserId = '', collabMemberEmail = ''
 
   let projectAId = '', projectBId = ''
   let stageKonzeptId = '', stagePlanungId = '', stageUmsetzungId = '', stageAbnahmeId = ''
@@ -34,6 +37,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
   function asOutsider() { auth.getServerSession.mockResolvedValue({ user: { id: outsiderUserId, email: outsiderEmail, authScope: 'COLLABORATION' } }) }
   // GGA-04.1: OPERATOR-Mitglied von Projekt A — für den Security-Regressionstest.
   function asProjectAOperator() { auth.getServerSession.mockResolvedValue({ user: { id: projectAOperatorUserId, email: projectAOperatorEmail, authScope: 'COLLABORATION' } }) }
+  function asCollabMember() { auth.getServerSession.mockResolvedValue({ user: { id: collabMemberUserId, email: collabMemberEmail, authScope: 'COLLABORATION' } }) }
 
   beforeAll(async () => {
     const { PrismaClient } = await import('@prisma/client')
@@ -46,6 +50,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     const viewer = await mk('viewer'); viewerUserId = viewer.id; viewerEmail = viewer.email
     const outsider = await mk('outsider'); outsiderUserId = outsider.id; outsiderEmail = outsider.email
     const projectAOperator = await mk('projA-operator'); projectAOperatorUserId = projectAOperator.id; projectAOperatorEmail = projectAOperator.email
+    const collabMember = await mk('collab-member'); collabMemberUserId = collabMember.id; collabMemberEmail = collabMember.email
 
     const projectA = await db.collaborationProject.create({ data: { projectNumber: `${marker}-A`, name: 'GGA Cabinet Test Projekt A', active: true } })
     projectAId = projectA.id
@@ -59,6 +64,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     // outsider ist NUR Mitglied von Projekt B, nicht A
     await db.collaborationMembership.create({ data: { projectId: projectBId, userId: outsiderUserId, role: 'COLLAB_MANAGER' } })
     await db.collaborationMembership.create({ data: { projectId: projectAId, userId: projectAOperatorUserId, role: 'OPERATOR' } })
+    await db.collaborationMembership.create({ data: { projectId: projectAId, userId: collabMemberUserId, role: 'COLLAB_MEMBER' } })
 
     const stageKonzept = await db.collaborationProjectStage.create({ data: { projectId: projectAId, code: 'KONZEPT', title: 'Konzept', sequence: 1, weight: 10 } })
     stageKonzeptId = stageKonzept.id
@@ -75,7 +81,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
 
   afterAll(async () => {
     if (!db) return
-    const allUserIds = [managerUserId, plannerUserId, viewerUserId, outsiderUserId, projectAOperatorUserId].filter(Boolean)
+    const allUserIds = [managerUserId, plannerUserId, viewerUserId, outsiderUserId, projectAOperatorUserId, collabMemberUserId].filter(Boolean)
     await db.auditLog.deleteMany({ where: { userId: { in: allUserIds } } })
     for (const projectId of [projectAId, projectBId].filter(Boolean)) {
       await db.collaborationDocument.deleteMany({ where: { projectId } })
@@ -420,6 +426,63 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     it('L) eine Rolle ohne jede Mitgliedschaft in Projekt A kann dort keine interne Aufgabe anlegen (Cross-Project-Mutation bleibt verboten)', async () => {
       asOutsider() // COLLAB_MANAGER, aber nur Mitglied von Projekt B
       await expect(phase2Service.createCollaborationTask(stagePlanungId, { title: 'Cross-Project-Angriff' })).rejects.toThrow('nicht gefunden')
+    })
+  })
+
+  // ── GGA-04.3: getVisibleCollaborationMemberships() — projectId-Filter-IDOR geschlossen ──
+  describe('GGA-04.3: Mitgliedschafts-IDOR über projectId-Filter geschlossen', () => {
+    it('1) Same-project: ein Mitglied von Projekt A sieht die Mitgliederliste von Projekt A', async () => {
+      asManager()
+      const memberships = await phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })
+      expect(memberships.length).toBeGreaterThan(0)
+      expect(memberships.every((m) => m.project.id === projectAId)).toBe(true)
+    })
+
+    it('2) Cross-Project-IDOR: ein Nutzer aus Projekt B kann die Mitgliederliste von Projekt A nicht über die projectId lesen', async () => {
+      asOutsider() // COLLAB_MANAGER, aber nur Mitglied von Projekt B
+      await expect(phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })).rejects.toThrow('nicht gefunden')
+    })
+
+    it('3) unbekannte projectId: dieselbe NotFoundError wie bei einem fremden, aber existierenden Projekt — kein Leak über Existenz', async () => {
+      asManager()
+      await expect(phase2Service.getVisibleCollaborationMemberships({ projectId: 'does-not-exist' })).rejects.toThrow('nicht gefunden')
+    })
+
+    it('4) OPERATOR kann weiterhin die Mitgliederliste des eigenen Projekts lesen (bereits autorisierte Aufrufstelle cabinets/[id] darf nicht brechen)', async () => {
+      asProjectAOperator()
+      const memberships = await phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })
+      expect(memberships.every((m) => m.project.id === projectAId)).toBe(true)
+    })
+
+    it('5) COLLAB_VIEWER kann die Mitgliederliste des eigenen Projekts lesen', async () => {
+      asViewer()
+      const memberships = await phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })
+      expect(memberships.every((m) => m.project.id === projectAId)).toBe(true)
+    })
+
+    it('6) COLLAB_MEMBER kann die Mitgliederliste des eigenen Projekts lesen', async () => {
+      asCollabMember()
+      const memberships = await phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })
+      expect(memberships.every((m) => m.project.id === projectAId)).toBe(true)
+    })
+
+    it('7) ein interner Editor (INTERNAL_PLANNER) kann die Mitgliederliste des eigenen Projekts lesen', async () => {
+      asPlanner()
+      const memberships = await phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })
+      expect(memberships.every((m) => m.project.id === projectAId)).toBe(true)
+    })
+
+    it('8) Aufruf ohne projectId behält sein bisheriges Scoping auf die eigenen Mitgliedschaften (Projekt B des Outsiders, nicht Projekt A)', async () => {
+      asOutsider()
+      const memberships = await phase2Service.getVisibleCollaborationMemberships()
+      expect(memberships.length).toBeGreaterThan(0)
+      expect(memberships.every((m) => m.project.id === projectBId)).toBe(true)
+    })
+
+    it('9) projectId-Filter liefert ausschließlich Memberships dieses einen Projekts, keine aus anderen sichtbaren Projekten', async () => {
+      asManager()
+      const memberships = await phase2Service.getVisibleCollaborationMemberships({ projectId: projectAId })
+      expect(memberships.some((m) => m.project.id === projectBId)).toBe(false)
     })
   })
 })

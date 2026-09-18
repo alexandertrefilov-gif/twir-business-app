@@ -160,3 +160,59 @@ describe('editorRoles (GGA-04.2: P0-A)', () => {
     expect(editorRoles).toEqual(['COLLAB_MANAGER', 'INTERNAL_PLANNER', 'EXTERNAL_PLANNER', 'PARTNER'])
   })
 })
+
+// GGA-04.3: getVisibleCollaborationMemberships() prüfte bei explizitem
+// projectId-Filter bislang nicht, ob der aktuelle Nutzer Mitglied dieses
+// Projekts ist — /collaboration/team?project=<fremde-id> konnte damit Namen/
+// Rollen eines fremden Projekts offenlegen. Die volle Rollenmatrix
+// (OPERATOR/VIEWER/MEMBER/interner Editor, same-project, cross-project,
+// unbekannte projectId, ohne projectId) läuft als Integrationstest gegen
+// eine echte DB, siehe tests/integration/gga-cabinet-db.test.ts → "GGA-04.3".
+describe('getVisibleCollaborationMemberships (GGA-04.3)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  function asUser(userId: string) {
+    auth.getServerSession.mockResolvedValue({ user: { id: userId, email: `${userId}@example.test`, authScope: 'COLLABORATION' } })
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: userId, status: 'ACTIVE', deletedAt: null } as never)
+  }
+
+  it('same-project: prüft Mitgliedschaft am gefilterten Projekt, bevor die Liste geladen wird', async () => {
+    asUser('u1')
+    const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+    findFirst.mockResolvedValueOnce({ id: 'm1', role: 'COLLAB_MEMBER', project: { id: 'p1', name: 'Projekt A' } } as never)
+    const findMany = vi.mocked(prisma.collaborationMembership.findMany)
+    findMany.mockResolvedValueOnce([{ id: 'm1', role: 'COLLAB_MEMBER', project: { id: 'p1', name: 'Projekt A' }, user: { id: 'u1', firstName: 'A', lastName: 'B', email: 'u1@example.test' } }] as never)
+    const { getVisibleCollaborationMemberships } = await import('@/lib/services/collaboration-phase2.service')
+    await expect(getVisibleCollaborationMemberships({ projectId: 'p1' })).resolves.toHaveLength(1)
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ userId: 'u1', projectId: 'p1', active: true }) }))
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ projectId: 'p1' }) }))
+  })
+
+  it('cross-project IDOR: NotFoundError statt Mitgliederliste eines fremden Projekts — kein findMany-Aufruf danach', async () => {
+    asUser('u1')
+    vi.mocked(prisma.collaborationMembership.findFirst).mockResolvedValueOnce(null)
+    const findMany = vi.mocked(prisma.collaborationMembership.findMany)
+    const { getVisibleCollaborationMemberships } = await import('@/lib/services/collaboration-phase2.service')
+    await expect(getVisibleCollaborationMemberships({ projectId: 'fremdes-projekt' })).rejects.toBeInstanceOf(NotFoundError)
+    expect(findMany).not.toHaveBeenCalled()
+  })
+
+  it('unbekannte projectId: dieselbe NotFoundError wie bei einem fremden, existierenden Projekt (kein Existenz-Leak)', async () => {
+    asUser('u1')
+    vi.mocked(prisma.collaborationMembership.findFirst).mockResolvedValueOnce(null)
+    const { getVisibleCollaborationMemberships } = await import('@/lib/services/collaboration-phase2.service')
+    await expect(getVisibleCollaborationMemberships({ projectId: 'nicht-existent' })).rejects.toThrow('Projekt nicht gefunden')
+  })
+
+  it('ohne projectId: unverändertes Scoping auf die eigenen Mitgliedschaften — kein zusätzlicher Access-Check', async () => {
+    asUser('u1')
+    const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+    const findMany = vi.mocked(prisma.collaborationMembership.findMany)
+    findMany.mockResolvedValueOnce([{ project: { id: 'p1' } }] as never)
+    findMany.mockResolvedValueOnce([] as never)
+    const { getVisibleCollaborationMemberships } = await import('@/lib/services/collaboration-phase2.service')
+    await expect(getVisibleCollaborationMemberships()).resolves.toEqual([])
+    expect(findFirst).not.toHaveBeenCalled()
+    expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: expect.objectContaining({ projectId: { in: ['p1'] } }) }))
+  })
+})

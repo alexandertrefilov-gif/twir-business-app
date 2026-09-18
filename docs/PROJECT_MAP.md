@@ -168,3 +168,16 @@ Runtime-Image heraus.
     `resolveCollaborationBlocker()` muss für Blocker mit UND ohne `stageId`
     dieselbe `editorRoles`-Prüfung erzwingen — COLLAB_VIEWER darf über den
     `stageId === null`-Zweig niemals Schreibrechte erhalten (siehe GGA-04.2).
+12. Eine `getVisibleCollaboration*`-Funktion, die einen optionalen
+    `projectId`-Filterparameter entgegennimmt (`collaboration-phase2.service.ts`),
+    muss bei gesetztem Filter `requireCollaborationProjectAccess` auf GENAU
+    diese `projectId` anwenden, bevor Daten zurückgegeben werden — ein
+    ungeprüfter `projectId`-Parameter ist ein eigenständiges IDOR-Muster,
+    unabhängig davon, ob dieselbe Funktion im ungefilterten Fall bereits
+    korrekt auf die `projectIds` der eigenen Mitgliedschaften scoped (siehe
+    GGA-04.3, `getVisibleCollaborationMemberships`). Bekannte, zum Zeitpunkt
+    von GGA-04.3 noch NICHT behobene Instanzen desselben Musters:
+    `getVisibleCollaborationTasks`, `getVisibleCollaborationChecklistItems`,
+    `getVisibleCollaborationBlockers` (Aufrufstellen: `/collaboration/tasks`,
+    `/collaboration/checklists`, `/collaboration/blockers`, jeweils über
+    `?project=<id>`).

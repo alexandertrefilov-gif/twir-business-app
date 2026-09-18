@@ -301,10 +301,29 @@ export async function getVisibleCollaborationBlockers(filters?: { projectId?: st
 
 export async function getVisibleCollaborationMemberships(filters?: { projectId?: string }) {
   const { userId } = await requireCollaborationSession()
+  // GGA-04.3: bei explizitem projectId-Filter muss die Mitgliedschaft am
+  // GENAU DIESEM Projekt geprüft werden — sonst kann jeder eingeloggte
+  // Collaboration-Nutzer über eine fremde projectId (z. B. /collaboration/
+  // team?project=<fremde-id>) Namen/Rollen eines Projekts lesen, dem er
+  // nicht angehört. requireCollaborationProjectAccess() ist absichtlich
+  // rollenagnostisch (siehe PROJECT_MAP → Invariante 10) — dieselbe
+  // Funktion wird bereits von der internen Schrank-Detailseite mit einer
+  // bereits autorisierten projectId aufgerufen (jede dort ankommende Rolle,
+  // auch OPERATOR, muss weiterhin funktionieren) und /collaboration/team
+  // ist nicht als ausschließlich intern dokumentiert — eine Rollenprüfung
+  // (requireInternalCollaborationProjectAccess) wäre hier zu strikt.
+  if (filters?.projectId) {
+    await requireCollaborationProjectAccess(userId, filters.projectId)
+    return prisma.collaborationMembership.findMany({
+      where: { active: true, projectId: filters.projectId },
+      orderBy: [{ role: 'asc' }],
+      include: { project: { select: { id: true, name: true } }, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
+    })
+  }
   const memberships = await prisma.collaborationMembership.findMany({ where: { userId, active: true, project: { active: true, deletedAt: null } }, select: { project: { select: { id: true } } } })
   const projectIds = memberships.map(({ project }) => project.id)
   return prisma.collaborationMembership.findMany({
-    where: { active: true, projectId: filters?.projectId ? { equals: filters.projectId } : { in: projectIds } },
+    where: { active: true, projectId: { in: projectIds } },
     orderBy: [{ role: 'asc' }],
     include: { project: { select: { id: true, name: true } }, user: { select: { id: true, firstName: true, lastName: true, email: true } } },
   })
