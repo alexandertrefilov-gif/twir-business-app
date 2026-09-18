@@ -274,7 +274,7 @@ export function deriveCabinetStatus(cabinet: GgaCabinetSnapshot, now = new Date(
     if (pruefstatus === 'BEANSTANDET') return 'Beanstandung nachbessern'
     if (betreiberbeanstandung) return 'Beanstandung bearbeiten'
     if (betreiberfreigabeAusstehend) return 'Betreiberentscheidung abwarten'
-    if (freigabeOffen) return 'Betreiberfreigabe anfordern'
+    if (freigabeOffen) return 'Interne Freigabe anfordern'
     if (pruefstatus === 'NICHT_GEPLANT') return 'Prüfung planen'
     if (pruefstatus === 'GEPLANT') return 'Prüfung durchführen'
     return 'Keine offenen Punkte'

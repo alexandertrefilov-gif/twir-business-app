@@ -224,6 +224,9 @@ describe('deriveCabinetStatus — Lebenszyklus-Stufe (BESTAND→PLANUNG→UMSETZ
     }))
     expect(status.freigabeOffen).toBe(true)
     expect(status.pruefungOffen).toBe(false)
+    // GGA-03.1: freigabeOffen betrifft ausschließlich die interne Freigabe,
+    // der Text darf sie nie mit der externen Betreiberfreigabe verwechseln.
+    expect(status.naechsteAktion).toBe('Interne Freigabe anfordern')
   })
 
   it('nacharbeitErforderlich: letzte Freigabe wurde abgelehnt — Cabinet bleibt offen, nie automatisch bestanden', () => {
@@ -252,6 +255,85 @@ function fertigesCabinet(overrides: Partial<GgaCabinetSnapshot> = {}): GgaCabine
     ...overrides,
   })
 }
+
+// GGA-03.1: naechsteAktion() gab für freigabeOffen (interne Freigabe) fälschlich
+// den Betreiber-Text zurück. Fix betrifft ausschließlich diese eine Textzeile;
+// die Priorisierung/Ableitung selbst ist unverändert (siehe bestehende Tests
+// oben für Blocker-/Maßnahmen-/Checklisten-Priorität, Lebenszyklus, Nacharbeit).
+describe('deriveCabinetStatus — naechsteAktion(): interne Freigabe vs. Betreiberfreigabe (GGA-03.1)', () => {
+  it('A) interne Prüfung abgeschlossen, keine entschiedene interne Freigabe → "Interne Freigabe anfordern"', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+      checklistItems: [{ id: 'c1', title: 'Elektro/VDE geprüft', completed: true, isRequired: true, sequence: 1, stageCode: 'ABNAHME' }],
+    }))
+    expect(status.freigabeOffen).toBe(true)
+    expect(status.betreiberfreigabeAusstehend).toBe(false)
+    expect(status.naechsteAktion).toBe('Interne Freigabe anfordern')
+  })
+
+  // B) HINWEIS zur Abweichung von der Checkpoint-Vorgabe: laut Auftrag sollte
+  // betreiberfreigabeAusstehend weiterhin "Betreiberfreigabe anfordern"
+  // liefern. Das entspricht nicht dem tatsächlichen, unveränderten Code (auch
+  // vor diesem Fix nicht) — betreiberfreigabeAusstehend lieferte und liefert
+  // "Betreiberentscheidung abwarten" (Zeile "if (betreiberfreigabeAusstehend)
+  // return 'Betreiberentscheidung abwarten'"). "Betreiberfreigabe anfordern"
+  // war ausschließlich der fehlerhafte Text von freigabeOffen (jetzt behoben)
+  // sowie unabhängig davon ein Button-Label in
+  // GgaCabinetInspectionWizard.tsx für den Zustand NICHT_ANGEFORDERT. Diese
+  // Regression testet deshalb bewusst den tatsächlich korrekten, unveränderten
+  // Text — siehe Abschlussbericht.
+  it('B) interne Freigabe bestanden, Betreiberfreigabe angefordert und ausstehend → weiterhin "Betreiberentscheidung abwarten" (unverändert)', () => {
+    const status = deriveCabinetStatus(fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'op-1', status: 'REQUESTED', approvalType: 'OPERATOR_ACCEPTANCE', requestedAt: new Date('2026-02-03'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))
+    expect(status.betreiberfreigabeAusstehend).toBe(true)
+    expect(status.freigabeOffen).toBe(false)
+    expect(status.naechsteAktion).toBe('Betreiberentscheidung abwarten')
+  })
+
+  it('C) freigabeOffen und betreiberfreigabeAusstehend erzeugen nie denselben oder den jeweils anderen Text', () => {
+    const interneFreigabeOffen = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+      checklistItems: [{ id: 'c1', title: 'Elektro/VDE geprüft', completed: true, isRequired: true, sequence: 1, stageCode: 'ABNAHME' }],
+    }))
+    const betreiberfreigabeOffen = deriveCabinetStatus(fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'op-1', status: 'REQUESTED', approvalType: 'OPERATOR_ACCEPTANCE', requestedAt: new Date('2026-02-03'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))
+    expect(interneFreigabeOffen.naechsteAktion).not.toBe(betreiberfreigabeOffen.naechsteAktion)
+    expect(interneFreigabeOffen.naechsteAktion).toBe('Interne Freigabe anfordern')
+    expect(betreiberfreigabeOffen.naechsteAktion).toBe('Betreiberentscheidung abwarten')
+  })
+
+  it('D) die Priorität von Blocker/Maßnahme/Checkliste vor internen und Betreiber-Freigabetexten bleibt unverändert', () => {
+    // Ein offener Blocker verdrängt weiterhin jeden Freigabetext — exakt wie
+    // vor dem Textfix, keine Prioritätsänderung durch GGA-03.1.
+    const status = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+      checklistItems: [{ id: 'c1', title: 'Elektro/VDE geprüft', completed: true, isRequired: true, sequence: 1, stageCode: 'ABNAHME' }],
+      blockers: [{ id: 'b1', title: 'Tür klemmt', status: 'OPEN' }],
+    }))
+    expect(status.freigabeOffen).toBe(true) // Zustand bleibt bestehen …
+    expect(status.naechsteAktion).toBe('Tür klemmt') // … aber der Blocker hat weiterhin Vorrang.
+  })
+})
 
 describe('deriveCabinetStatus — Betreiberstatus (getrennt von internem Prüfstatus)', () => {
   it('NICHT_ANGEFORDERT ohne jede OPERATOR_ACCEPTANCE — internes BESTANDEN reicht allein zum Abschluss', () => {
