@@ -286,3 +286,178 @@ Noch nicht entschieden — Status bleibt offen.
 
 ### Implementierung
 Noch nicht implementiert.
+
+---
+
+## REQ-011 — GGA-Mangelmanagement
+
+Status: IMPLEMENTED + TESTED
+Priority: P1
+Area: GGA Cabinet / Collaboration
+Created: 2026-09-18
+
+### Ziel
+Ein Bauleiter muss einen an einem Gefahrstoffschrank festgestellten Mangel direkt
+im Schrankkontext bearbeiten und nachvollziehbar beheben können.
+
+### Anforderungen
+- Offene Mängel direkt auf der Schrankdetailseite anzeigen.
+- Mangel direkt dort als behoben bearbeiten können.
+- Behebungsbeschreibung als Pflichtfeld.
+- `resolvedAt` und `resolvedBy` weiterhin serverseitig führen.
+- Schrankbezug eindeutig sichtbar.
+- Nach Mangelbehebung darf eine erforderliche Nachprüfung nicht übersprungen werden.
+- Bestehende `CollaborationBlocker`-Struktur wiederverwenden.
+- Keine zweite parallele Mangel-Datenstruktur schaffen.
+- Audit-Trail erhalten.
+- Concurrency-Schutz der bestehenden Resolve-Logik erhalten.
+
+### Akzeptanzkriterien
+- [ ] Offene Mängel sind direkt auf der Schrankdetailseite sichtbar, inklusive Schrankbezug.
+- [ ] Ein Mangel kann direkt dort mit Pflicht-Behebungsbeschreibung als behoben markiert werden.
+- [ ] `resolvedAt`/`resolvedBy`, Audit-Trail und bestehender Concurrency-Schutz bleiben unverändert serverseitig geführt.
+- [ ] Eine erforderliche Nachprüfung wird nach Mangelbehebung nicht übersprungen.
+- [ ] Ein Benutzer muss nicht mehr in das generische Phasenpanel wechseln, um einen Schrankmangel zu beheben.
+
+### Abhängigkeiten
+- GGA Cabinet, CollaborationProject (`CollaborationBlocker`) — siehe PROJECT_INDEX.
+
+### Entscheidung
+Noch nicht entschieden.
+
+### Implementierung
+Implementiert (Checkpoint GGA-01): `components/collaboration/GgaCabinetBlockerList.tsx` (neue
+Resolve-UI direkt auf `cabinets/[id]/page.tsx`), `app/api/collaboration/workflow/route.ts`
+(`resolve-blocker` erzwingt serverseitig eine nicht-leere Behebungsbeschreibung). Bestehende
+`resolveCollaborationBlocker()` (Concurrency-Schutz, Audit-Trail, `resolvedAt`/`resolvedById`)
+unverändert wiederverwendet — keine zweite Resolve-Logik, keine Prisma-Änderung. Regressionstests:
+`tests/unit/collaboration-workflow-route.test.ts` (Pflichtfeld, Concurrency-Fehler wird
+durchgereicht), `tests/unit/cabinet-workflow.test.ts` (Blocker-Behebung überspringt keine
+Nachprüfung, setzt den Schrank nicht automatisch auf abgeschlossen). Gezielte Tests, Typecheck,
+Lint und volle Testsuite grün.
+
+---
+
+## REQ-012 — GGA-Projektsteuerung
+
+Status: PLANNED
+Priority: P1
+Area: GGA Cabinet / Collaboration
+Created: 2026-09-18
+
+### Ziel
+Der Projektleiter erkennt den technischen Zustand aller GGA-Schränke eines
+Projekts auf einen Blick.
+
+### Anforderungen
+Mindestens getrennt sichtbar:
+- Schränke gesamt
+- abgeschlossen
+- offene Mängel
+- Nachprüfung erforderlich
+- interne Freigabe ausstehend
+- Betreiberfreigabe ausstehend
+- Betreiberbeanstandung
+- überfällig
+
+Bestehende Ableitungslogik wiederverwenden. Keine zweite Statuslogik in
+React-Komponenten implementieren.
+
+### Akzeptanzkriterien
+- [ ] Alle acht genannten Kennzahlen sind auf der GGA-Projektseite einzeln (nicht vermischt) sichtbar.
+- [ ] Die Ableitung nutzt ausschließlich bestehende Statuslogik (`deriveCabinetStatus`/`getGgaCabinetControlTowerSummary`), keine neue Statuslogik in Komponenten.
+
+### Abhängigkeiten
+- GGA Cabinet (`getGgaCabinetControlTowerSummary`), CollaborationProject.
+
+### Entscheidung
+Noch nicht entschieden.
+
+### Implementierung
+Noch nicht implementiert.
+
+---
+
+## REQ-013 — GGA-Fristen und nächste Aktionen
+
+Status: PLANNED
+Priority: P1
+Area: GGA Cabinet / Collaboration
+Created: 2026-09-18
+
+### Ziel
+Auf der GGA-Projektseite entsteht eine operative Arbeitsliste.
+
+### Anforderungen
+Je relevantem Eintrag mindestens:
+- Schrankkennung
+- Gebäude/Bereich
+- Art der offenen Aktion
+- Verantwortlicher, sofern vorhanden
+- Fälligkeitsdatum, sofern vorhanden
+- Überfälligkeitsstatus
+- direkte Navigation zum betroffenen Schrank bzw. Vorgang
+
+Sortierung:
+1. überfällig
+2. sicherheits-/prüfungsrelevante offene Aktionen
+3. übrige fällige Aktionen
+
+Keine neue Datenstruktur einführen, solange `CollaborationTask`,
+`CollaborationBlocker` und bestehende Statusableitungen ausreichen.
+
+### Akzeptanzkriterien
+- [ ] Jeder Eintrag zeigt Schrankkennung, Gebäude/Bereich, Art der Aktion, Verantwortlichen (sofern vorhanden), Fälligkeitsdatum (sofern vorhanden), Überfälligkeitsstatus und eine direkte Navigation zum Schrank/Vorgang.
+- [ ] Die Sortierung folgt exakt: überfällig → sicherheits-/prüfungsrelevant → übrige fällige Aktionen.
+- [ ] Keine neue Datenstruktur eingeführt, solange bestehende Modelle/Ableitungen ausreichen.
+
+### Abhängigkeiten
+- GGA Cabinet, CollaborationProject (`CollaborationTask`, `CollaborationBlocker`).
+
+### Entscheidung
+Noch nicht entschieden.
+
+### Implementierung
+Noch nicht implementiert.
+
+---
+
+## REQ-014 — GGA Control Tower
+
+Status: PLANNED
+Priority: P1
+Area: GGA Cabinet / Collaboration
+Created: 2026-09-18
+
+### Ziel
+Projektübergreifende Übersicht für interne Verantwortliche.
+
+### Anforderungen
+Mindestens:
+- aktive GGA-Projekte
+- Schränke gesamt
+- offene Mängel
+- überfällige Schränke
+- Nachprüfungen
+- ausstehende interne Freigaben
+- ausstehende Betreiberfreigaben
+
+Von dort direkte Navigation zum Projekt und Schrank ermöglichen.
+
+Wichtig: Die bestehende Trennung zwischen internem Bereich und Betreiberportal
+darf dadurch nicht aufgeweicht werden. Keine internen Informationen in die
+Betreiberansicht übernehmen.
+
+### Akzeptanzkriterien
+- [ ] Alle sieben genannten Kennzahlen sind auf einer projektübergreifenden Ansicht sichtbar.
+- [ ] Direkte Navigation zu Projekt und Schrank vorhanden.
+- [ ] Betreiberportal bleibt unverändert von internen Informationen getrennt (siehe PROJECT_MAP → Invariante 5).
+
+### Abhängigkeiten
+- GGA Cabinet, CollaborationProject, Operator Portal (Abgrenzung) — siehe PROJECT_MAP.
+
+### Entscheidung
+Noch nicht entschieden.
+
+### Implementierung
+Noch nicht implementiert.

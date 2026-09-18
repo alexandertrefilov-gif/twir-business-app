@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
 import { getGgaCabinetDetail, getGgaCabinetAuditHistory, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'
-import { getVisibleCollaborationMemberships } from '@/lib/services/collaboration-phase2.service'
+import { editorRoles, getVisibleCollaborationMemberships } from '@/lib/services/collaboration-phase2.service'
+import { GgaCabinetBlockerList } from '@/components/collaboration/GgaCabinetBlockerList'
 import { GGA_EX_ASSESSMENT_LABELS, GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS, formatGgaBetriebsstatusLabel, GGA_BETRIEBSSTATUS_BADGE_CLASS } from '@/lib/collaboration/cabinet-workflow'
 import { GgaCabinetSollIstComparison } from '@/components/collaboration/GgaCabinetSollIstComparison'
 import { GgaCabinetTechnicalForm } from '@/components/collaboration/GgaCabinetTechnicalForm'
@@ -57,6 +58,9 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
   const canEdit = (cabinetEditorRoles as readonly string[]).includes(cabinet.role)
   const canDelete = cabinet.role === 'COLLAB_MANAGER'
   const canUpload = true // jedes aktive Projektmitglied — Berechtigung wird serverseitig in uploadCollaborationDocument erneut geprüft
+  // Gleiche Rollen wie resolveCollaborationBlocker() serverseitig prüft — Sichtbarkeit des
+  // "Beheben"-Buttons folgt exakt der tatsächlichen Berechtigung, keine eigene Rollenliste.
+  const canResolveBlockers = (editorRoles as readonly string[]).includes(cabinet.role)
 
   return <div>
     <p className="text-xs text-muted-foreground"><Link href="/collaboration/cabinets" className="hover:underline">GGA-Schränke</Link> / {cabinet.project.name}</p>
@@ -175,15 +179,13 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
 
     <section className="mt-8">
       <h2 className="text-lg font-600">Blocker</h2>
-      <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm">
-        <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-stone-200 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-2">Titel</th><th className="px-4 py-2">Status</th><th className="px-4 py-2">Ursache</th></tr></thead>
-          <tbody className="divide-y divide-stone-100">
-            {cabinet.blockers.map((blocker) => <tr key={blocker.id}><td className="px-4 py-2">{blocker.title}</td><td className="px-4 py-2">{blocker.status === 'OPEN' ? 'Offen' : 'Gelöst'}</td><td className="px-4 py-2 text-xs text-muted-foreground">{blocker.cause ?? '–'}</td></tr>)}
-          </tbody>
-        </table>
-        {cabinet.blockers.length === 0 && <p className="px-4 py-6 text-sm text-muted-foreground">Keine Blocker.</p>}
-      </div>
+      <GgaCabinetBlockerList
+        blockers={cabinet.blockers.map((blocker) => ({
+          id: blocker.id, title: blocker.title, status: blocker.status, cause: blocker.cause,
+          resolution: blocker.resolution, resolvedAt: blocker.resolvedAt ? blocker.resolvedAt.toISOString() : null,
+        }))}
+        canResolve={canResolveBlockers}
+      />
     </section>
 
     <section className="mt-8">

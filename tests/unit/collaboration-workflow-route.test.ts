@@ -38,4 +38,46 @@ describe('Collaboration-Workflow-API', () => {
     expect(response.status).toBe(500)
     expect(await response.json()).toMatchObject({ ok: false, error: 'Keine Berechtigung' })
   })
+
+  describe('resolve-blocker — Behebungsbeschreibung ist Pflichtfeld (REQ-011)', () => {
+    it('lehnt einen fehlenden Resolution-Wert ab, ohne den Service aufzurufen', async () => {
+      const response = await POST(new Request('https://example.test/api/collaboration/workflow', { method: 'POST', body: JSON.stringify({ action: 'resolve-blocker', id: 'blocker-1' }) }))
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ ok: false, error: 'Eine Behebungsbeschreibung ist erforderlich' })
+      expect(service.resolveCollaborationBlocker).not.toHaveBeenCalled()
+    })
+
+    it('lehnt einen leeren Resolution-Text ab, ohne den Service aufzurufen', async () => {
+      const response = await POST(new Request('https://example.test/api/collaboration/workflow', { method: 'POST', body: JSON.stringify({ action: 'resolve-blocker', id: 'blocker-1', resolution: '' }) }))
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ ok: false, error: 'Eine Behebungsbeschreibung ist erforderlich' })
+      expect(service.resolveCollaborationBlocker).not.toHaveBeenCalled()
+    })
+
+    it('lehnt einen Resolution-Text aus ausschließlich Leerzeichen/Whitespace ab, ohne den Service aufzurufen', async () => {
+      const response = await POST(new Request('https://example.test/api/collaboration/workflow', { method: 'POST', body: JSON.stringify({ action: 'resolve-blocker', id: 'blocker-1', resolution: '   \n\t  ' }) }))
+      expect(response.status).toBe(400)
+      expect(await response.json()).toMatchObject({ ok: false, error: 'Eine Behebungsbeschreibung ist erforderlich' })
+      expect(service.resolveCollaborationBlocker).not.toHaveBeenCalled()
+    })
+
+    it('ruft den Service bei gültigem Resolution-Text genau einmal mit dem getrimmten Text auf und gibt Resolution/resolvedAt unverändert zurück', async () => {
+      const resolvedAt = new Date('2026-09-18T10:00:00.000Z')
+      service.resolveCollaborationBlocker.mockResolvedValue({ id: 'blocker-1', status: 'RESOLVED', resolution: 'Dichtung ersetzt und Tür neu justiert.', resolvedAt })
+      const response = await POST(new Request('https://example.test/api/collaboration/workflow', { method: 'POST', body: JSON.stringify({ action: 'resolve-blocker', id: 'blocker-1', resolution: '  Dichtung ersetzt und Tür neu justiert.  ' }) }))
+      expect(response.status).toBe(200)
+      expect(service.resolveCollaborationBlocker).toHaveBeenCalledTimes(1)
+      expect(service.resolveCollaborationBlocker).toHaveBeenCalledWith('blocker-1', 'Dichtung ersetzt und Tür neu justiert.')
+      const body = await response.json()
+      expect(body).toMatchObject({ ok: true, result: { status: 'RESOLVED', resolution: 'Dichtung ersetzt und Tür neu justiert.' } })
+    })
+
+    it('gibt einen Concurrency-Konflikt aus dem Service unverändert als Fehler zurück, ohne einen zweiten Versuch zu unternehmen', async () => {
+      service.resolveCollaborationBlocker.mockRejectedValue(new Error('Dieser Blocker wurde zwischenzeitlich bereits bearbeitet.'))
+      const response = await POST(new Request('https://example.test/api/collaboration/workflow', { method: 'POST', body: JSON.stringify({ action: 'resolve-blocker', id: 'blocker-1', resolution: 'Behoben' }) }))
+      expect(response.status).toBe(500)
+      expect(await response.json()).toMatchObject({ ok: false, error: 'Dieser Blocker wurde zwischenzeitlich bereits bearbeitet.' })
+      expect(service.resolveCollaborationBlocker).toHaveBeenCalledTimes(1)
+    })
+  })
 })

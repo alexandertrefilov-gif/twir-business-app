@@ -376,3 +376,54 @@ describe('deriveCabinetStatus — Betriebsstatus (einheitliches Anzeige-Label)',
     expect(status.betriebsstatus).toBe('BALD_FAELLIG')
   })
 })
+
+describe('deriveCabinetStatus — Mangelbehebung (REQ-011): Blocker-Resolution darf eine erforderliche Nachprüfung nicht überspringen', () => {
+  it('ein aufgelöster Blocker allein ändert pruefstatus/nacharbeitErforderlich/lifecycleStage/abgeschlossen/betriebsstatus nicht — nur Blocker-Zähler und nächste Aktion', () => {
+    // Simuliert genau das, was resolveCollaborationBlocker() serverseitig tut: es wird
+    // ausschließlich der Blocker-Status geändert, keine Approval wird jemals berührt.
+    const mitOffenemMangel = fertigesCabinet({
+      approvals: [{ id: 'internal-1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' }],
+      blockers: [{ id: 'b1', title: 'Tür schließt nicht dicht', status: 'OPEN' }],
+    })
+    const vorBehebung = deriveCabinetStatus(mitOffenemMangel)
+    expect(vorBehebung.pruefstatus).toBe('BEANSTANDET')
+    expect(vorBehebung.nacharbeitErforderlich).toBe(true)
+    expect(vorBehebung.abgeschlossen).toBe(false)
+    expect(vorBehebung.lifecycleStage).toBe('PRUEFUNG_ABNAHME')
+    expect(vorBehebung.betriebsstatus).toBe('MANGEL_OFFEN')
+    expect(vorBehebung.offeneBlocker).toBe(1)
+    expect(vorBehebung.naechsteAktion).toBe('Tür schließt nicht dicht')
+
+    const nachBehebung = deriveCabinetStatus({
+      ...mitOffenemMangel,
+      blockers: [{ id: 'b1', title: 'Tür schließt nicht dicht', status: 'RESOLVED' }],
+    })
+
+    // Eine erforderliche Nachprüfung wird NICHT übersprungen: pruefstatus bleibt
+    // BEANSTANDET, solange keine neue interne Freigabe angefordert/entschieden wurde.
+    expect(nachBehebung.pruefstatus).toBe('BEANSTANDET')
+    expect(nachBehebung.nacharbeitErforderlich).toBe(true)
+    // Der Schrank wird NICHT automatisch freigegeben/abgeschlossen.
+    expect(nachBehebung.abgeschlossen).toBe(false)
+    expect(nachBehebung.lifecycleStage).toBe('PRUEFUNG_ABNAHME')
+    expect(nachBehebung.betriebsstatus).toBe('MANGEL_OFFEN')
+
+    // Einzig betroffen: Blocker-Zähler und die daraus abgeleitete nächste Aktion.
+    expect(nachBehebung.offeneBlocker).toBe(0)
+    expect(nachBehebung.naechsteAktion).not.toBe('Tür schließt nicht dicht')
+    expect(nachBehebung.naechsteAktion).toBe('Beanstandung nachbessern')
+  })
+
+  it('erst eine neu angeforderte UND bestandene Nachprüfung erlaubt den regulären Abschluss — die Blocker-Behebung allein reicht nicht', () => {
+    const status = deriveCabinetStatus(fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'internal-2', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-03-01'), decidedAt: new Date('2026-03-02'), stageCode: 'ABNAHME' },
+      ],
+      blockers: [{ id: 'b1', title: 'Tür schließt nicht dicht', status: 'RESOLVED' }],
+    }))
+    expect(status.pruefstatus).toBe('BESTANDEN')
+    expect(status.nacharbeitErforderlich).toBe(false)
+    expect(status.abgeschlossen).toBe(true)
+  })
+})

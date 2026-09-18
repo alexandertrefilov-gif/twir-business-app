@@ -65,7 +65,11 @@ export async function POST(request: Request) {
       if (!input.projectId) throw new ValidationError('Projekt fehlt')
       result = await createCollaborationBlocker(input.projectId, { ...(input.data ?? {}), stageId: input.id || undefined })
     }
-    else if (input.action === 'resolve-blocker') result = await resolveCollaborationBlocker(input.id, input.resolution?.trim() || 'Geklärt')
+    else if (input.action === 'resolve-blocker') {
+      const resolution = input.resolution?.trim()
+      if (!resolution) throw new ValidationError('Eine Behebungsbeschreibung ist erforderlich')
+      result = await resolveCollaborationBlocker(input.id, resolution)
+    }
     else if (input.action === 'request-approval') result = await requestCollaborationApproval(input.id, input.cabinetId ?? undefined)
     else if (input.action === 'decide-approval') {
       if (!input.decision) throw new ValidationError('Entscheidung fehlt')

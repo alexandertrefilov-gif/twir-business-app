@@ -248,6 +248,10 @@ Services:
 
 Wizards (Client): `components/collaboration/{GgaCabinetInspectionWizard,GgaCabinetIntakeWizard}.tsx`
 
+Mangelbehebung (Client): `components/collaboration/GgaCabinetBlockerList.tsx` — Mangel wird direkt im
+Schrankkontext mit Pflicht-Behebungsbeschreibung geschlossen (`resolve-blocker` über
+`app/api/collaboration/workflow/route.ts`, Resolution serverseitig als Pflichtfeld erzwungen)
+
 Prisma models: `GgaCabinet` (Ex-Schutz-Bewertung als expliziter Tri-State:
 „Noch nicht bewertet“/„Erforderlich“/„Nicht erforderlich“ — nie automatisch abgeleitet)
 
