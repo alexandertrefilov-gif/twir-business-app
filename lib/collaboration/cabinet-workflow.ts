@@ -372,6 +372,169 @@ export function deriveGgaCabinetControlTowerSummary(entries: GgaCabinetControlTo
   }
 }
 
+// ── Projekt-Arbeitsliste "Fristen & nächste Aktionen" (REQ-013) ──────────
+// Reine Ableitung — keine DB-Zugriffe, keine neue Statuslogik. Liest
+// ausschließlich bereits vorhandene Daten (offene CollaborationTask/-Blocker
+// je Schrank) und bereits abgeleitete DerivedGgaCabinetStatus-Felder. Erzeugt
+// keine neuen Fristen und ändert nie einen Workflow-Status.
+
+export type GgaWorklistEntryType =
+  | 'MASSNAHME'              // konkrete offene, erforderliche CollaborationTask
+  | 'MANGEL'                 // offener CollaborationBlocker
+  | 'BEANSTANDUNG'           // interne oder Betreiber-Prüfung abgelehnt, noch nicht neu angefordert
+  | 'PRUEFUNG_UEBERFAELLIG'  // Prüfintervall abgelaufen (betriebsstatus UEBERFAELLIG)
+  | 'NACHPRUEFUNG'           // frühere Prüfung entschieden, erneute Prüfung bereits angefordert
+  | 'INTERNE_FREIGABE'       // Abnahme-Checkliste fertig, interne Freigabe noch nicht angefordert/entschieden
+  | 'BETREIBERFREIGABE'      // Betreiberentscheidung aussteht
+  | 'NAECHSTE_AKTION'        // Rest-Fallback aus deriveCabinetStatus().naechsteAktion (z.B. Bestandsaufnahme/Checkliste/Prüfung planen)
+
+// 1=überfällig, 2=sicherheitsrelevant ohne erledigte Freigabe/Nachprüfung,
+// 3=heute fällig, 4=demnächst fällig, 5=sonstige offene nächste Aktion,
+// 6=ohne Frist. Numerisch, damit die Sortierung eindeutig und testbar bleibt.
+export type GgaWorklistUrgency = 1 | 2 | 3 | 4 | 5 | 6
+export const GGA_WORKLIST_URGENCY_LABELS: Record<GgaWorklistUrgency, string> = {
+  1: 'Überfällig',
+  2: 'Sicherheitsrelevant',
+  3: 'Heute fällig',
+  4: 'Demnächst fällig',
+  5: 'Offen',
+  6: 'Ohne Frist',
+}
+
+export const GGA_WORKLIST_URGENCY_BADGE_CLASS: Record<GgaWorklistUrgency, string> = {
+  1: 'bg-red-100 text-red-800',
+  2: 'bg-amber-100 text-amber-800',
+  3: 'bg-amber-100 text-amber-800',
+  4: 'bg-stone-100 text-stone-700',
+  5: 'bg-stone-100 text-stone-600',
+  6: 'bg-stone-100 text-stone-500',
+}
+
+export type GgaWorklistEntry = {
+  cabinetId: string
+  kennung: string
+  standort: string | null
+  title: string
+  type: GgaWorklistEntryType
+  dueDate: Date | null
+  verantwortlich: string | null
+  urgency: GgaWorklistUrgency
+  ueberfaellig: boolean
+  // Nur innerhalb urgency===4 relevant: Frist liegt innerhalb des kurzen
+  // Vorlaufs (siehe AUFGABE_DEMNAECHST_VORLAUF_TAGE) — rein visuelle
+  // Zusatzinformation, ändert nie die Sortierklasse selbst.
+  baldFaellig: boolean
+}
+
+export type GgaWorklistCabinetTask = { id: string; title: string; dueDate: Date | null; verantwortlich: string | null }
+export type GgaWorklistCabinetBlocker = { id: string; title: string; verantwortlich: string | null }
+
+export type GgaWorklistCabinetInput = {
+  id: string
+  kennung: string
+  standort: string | null
+  status: DerivedGgaCabinetStatus
+  openRequiredTasks: GgaWorklistCabinetTask[]
+  openBlockers: GgaWorklistCabinetBlocker[]
+}
+
+// Aufgaben ohne eigenes Fälligkeitsdatum haben keinen "bald fällig"-Vorlauf.
+// Eigener, kleinerer Vorlauf als bei der mehrmonatigen Prüfintervall-Logik
+// (BALD_FAELLIG_VORLAUF_TAGE = 30 Tage dort) — Maßnahmen sind feingranularer.
+const AUFGABE_DEMNAECHST_VORLAUF_TAGE = 7
+
+function istGleicherKalendertag(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+}
+
+function tagesUrgency(dueDate: Date, now: Date): { urgency: GgaWorklistUrgency; ueberfaellig: boolean; baldFaellig: boolean } {
+  if (dueDate.getTime() < now.getTime()) return { urgency: 1, ueberfaellig: true, baldFaellig: false }
+  if (istGleicherKalendertag(dueDate, now)) return { urgency: 3, ueberfaellig: false, baldFaellig: false }
+  const tageBisFaellig = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  return { urgency: 4, ueberfaellig: false, baldFaellig: tageBisFaellig <= AUFGABE_DEMNAECHST_VORLAUF_TAGE }
+}
+
+export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], now = new Date()): GgaWorklistEntry[] {
+  const entries: GgaWorklistEntry[] = []
+  const sicherheitsrelevant = (title: string, type: GgaWorklistEntryType, cabinet: GgaWorklistCabinetInput) =>
+    entries.push({ cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort, title, type, dueDate: null, verantwortlich: null, urgency: 2 as const, ueberfaellig: false, baldFaellig: false })
+
+  for (const cabinet of cabinets) {
+    const usedTitles = new Set<string>()
+
+    for (const blocker of cabinet.openBlockers) {
+      usedTitles.add(blocker.title)
+      entries.push({
+        cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort,
+        title: blocker.title, type: 'MANGEL', dueDate: null, verantwortlich: blocker.verantwortlich,
+        urgency: 2, ueberfaellig: false, baldFaellig: false,
+      })
+    }
+
+    for (const task of cabinet.openRequiredTasks) {
+      usedTitles.add(task.title)
+      const { urgency, ueberfaellig, baldFaellig } = task.dueDate ? tagesUrgency(task.dueDate, now) : { urgency: 6 as const, ueberfaellig: false, baldFaellig: false }
+      entries.push({
+        cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort,
+        title: task.title, type: 'MASSNAHME', dueDate: task.dueDate, verantwortlich: task.verantwortlich,
+        urgency, ueberfaellig, baldFaellig,
+      })
+    }
+
+    // Beanstandung: interne oder Betreiber-Prüfung wurde abgelehnt und noch
+    // nicht neu angefordert — betriebsstatus zeigt dafür MANGEL_OFFEN, hat
+    // aber (anders als hier) keinen eigenen Kennzahlnamen im Control-Tower.
+    if (cabinet.status.nacharbeitErforderlich) {
+      const title = cabinet.status.pruefstatus === 'BEANSTANDET' ? 'Beanstandung nachbessern' : 'Beanstandung bearbeiten'
+      usedTitles.add(title)
+      sicherheitsrelevant(title, 'BEANSTANDUNG', cabinet)
+    }
+    if (cabinet.status.betriebsstatus === 'UEBERFAELLIG') {
+      const title = 'Prüfung überfällig — Termin vereinbaren'
+      usedTitles.add(title)
+      entries.push({ cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort, title, type: 'PRUEFUNG_UEBERFAELLIG', dueDate: null, verantwortlich: null, urgency: 1, ueberfaellig: true, baldFaellig: false })
+    }
+    if (cabinet.status.betriebsstatus === 'NACHPRUEFUNG_ERFORDERLICH') {
+      const title = 'Nachprüfung erforderlich'
+      usedTitles.add(title)
+      sicherheitsrelevant(title, 'NACHPRUEFUNG', cabinet)
+    }
+    if (cabinet.status.freigabeOffen) {
+      const title = 'Interne Freigabe anfordern'
+      usedTitles.add(title)
+      sicherheitsrelevant(title, 'INTERNE_FREIGABE', cabinet)
+    }
+    if (cabinet.status.betreiberfreigabeAusstehend) {
+      const title = 'Betreiberentscheidung abwarten'
+      usedTitles.add(title)
+      sicherheitsrelevant(title, 'BETREIBERFREIGABE', cabinet)
+    }
+
+    // Rest-Fallback: nur wenn keiner der obigen, konkreteren Einträge diesen
+    // Schrank bereits repräsentiert (kein offener Blocker/keine offene
+    // Maßnahme/keine der vier Sicherheits-Flags) — verhindert einen
+    // fachlichen Doppeleintrag (REQ-013 Phase 7).
+    const hatKonkretenEintrag = cabinet.openBlockers.length > 0 || cabinet.openRequiredTasks.length > 0
+      || cabinet.status.nacharbeitErforderlich || cabinet.status.betriebsstatus === 'UEBERFAELLIG'
+      || cabinet.status.betriebsstatus === 'NACHPRUEFUNG_ERFORDERLICH' || cabinet.status.freigabeOffen || cabinet.status.betreiberfreigabeAusstehend
+    if (!hatKonkretenEintrag && cabinet.status.naechsteAktion !== 'Keine offenen Punkte' && !usedTitles.has(cabinet.status.naechsteAktion)) {
+      entries.push({
+        cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort,
+        title: cabinet.status.naechsteAktion, type: 'NAECHSTE_AKTION', dueDate: null, verantwortlich: null,
+        urgency: 5, ueberfaellig: false, baldFaellig: false,
+      })
+    }
+  }
+
+  return entries.sort((a, b) => {
+    if (a.urgency !== b.urgency) return a.urgency - b.urgency
+    if (a.dueDate && b.dueDate) { const diff = a.dueDate.getTime() - b.dueDate.getTime(); if (diff !== 0) return diff }
+    else if (a.dueDate && !b.dueDate) return -1
+    else if (!a.dueDate && b.dueDate) return 1
+    return a.kennung.localeCompare(b.kennung) || a.cabinetId.localeCompare(b.cabinetId)
+  })
+}
+
 /** Formatiert das Betriebsstatus-Label, inkl. Tage-Countdown wo zutreffend. */
 export function formatGgaBetriebsstatusLabel(status: GgaCabinetBetriebsstatus, tageBisFaellig: number | null): string {
   switch (status) {

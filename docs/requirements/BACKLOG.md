@@ -398,7 +398,7 @@ Aufmerksamkeits-Badges je Schrank) ist nicht live verifiziert, nur durch die Uni
 
 ## REQ-013 — GGA-Fristen und nächste Aktionen
 
-Status: PLANNED
+Status: IMPLEMENTED + TESTED
 Priority: P1
 Area: GGA Cabinet / Collaboration
 Created: 2026-09-18
@@ -425,9 +425,9 @@ Keine neue Datenstruktur einführen, solange `CollaborationTask`,
 `CollaborationBlocker` und bestehende Statusableitungen ausreichen.
 
 ### Akzeptanzkriterien
-- [ ] Jeder Eintrag zeigt Schrankkennung, Gebäude/Bereich, Art der Aktion, Verantwortlichen (sofern vorhanden), Fälligkeitsdatum (sofern vorhanden), Überfälligkeitsstatus und eine direkte Navigation zum Schrank/Vorgang.
-- [ ] Die Sortierung folgt exakt: überfällig → sicherheits-/prüfungsrelevant → übrige fällige Aktionen.
-- [ ] Keine neue Datenstruktur eingeführt, solange bestehende Modelle/Ableitungen ausreichen.
+- [x] Jeder Eintrag zeigt Schrankkennung, Gebäude/Bereich, Art der Aktion, Verantwortlichen (sofern vorhanden), Fälligkeitsdatum (sofern vorhanden), Überfälligkeitsstatus und eine direkte Navigation zum Schrank/Vorgang.
+- [x] Die Sortierung folgt exakt: überfällig → sicherheits-/prüfungsrelevant → übrige fällige Aktionen.
+- [x] Keine neue Datenstruktur eingeführt, solange bestehende Modelle/Ableitungen ausreichen.
 
 ### Abhängigkeiten
 - GGA Cabinet, CollaborationProject (`CollaborationTask`, `CollaborationBlocker`).
@@ -436,7 +436,32 @@ Keine neue Datenstruktur einführen, solange `CollaborationTask`,
 Noch nicht entschieden.
 
 ### Implementierung
-Noch nicht implementiert.
+Implementiert (Checkpoint GGA-03): `lib/collaboration/cabinet-workflow.ts` erhält eine neue, reine
+Ableitung `deriveGgaProjectWorklist()` (plus `GGA_WORKLIST_URGENCY_LABELS`/`_BADGE_CLASS`) — liest
+ausschließlich offene `CollaborationTask`/`CollaborationBlocker` je Schrank sowie bereits abgeleitete
+`DerivedGgaCabinetStatus`-Felder (`nacharbeitErforderlich`, `betriebsstatus`, `freigabeOffen`,
+`betreiberfreigabeAusstehend`, `naechsteAktion`), keine neue Statuslogik. Sortierung in sechs
+Dringlichkeitsklassen (überfällig → sicherheitsrelevant → heute/demnächst fällig → sonstige offene
+Aktion → ohne Frist), je Klasse nach frühestem Fälligkeitsdatum, danach stabil nach Schrankkennung.
+Deduplication: eine generische "nächste Aktion" wird nur ergänzt, wenn kein offener Blocker, keine
+offene erforderliche Maßnahme und keines der vier Sicherheits-Flags denselben Schrank bereits
+abdeckt. `lib/services/gga-cabinet.service.ts` ergänzt `getGgaCabinetProjectWorklist()` — reiner
+DB-Wrapper mit identischer Autorisierung wie `getGgaCabinetControlTowerSummary()`, ausschließlich
+Daten des angefragten Projekts, kein neuer API-Endpunkt. `cabinetListSelect` liefert dafür zusätzlich
+`dueDate`/`responsibleMembership` für Tasks und `responsibleMembership` für Blocker mit (keine
+zweite Cabinet-Abfrage). Neue Sektion "Fristen & nächste Aktionen" auf
+`app/(collaboration)/collaboration/projects/[id]/page.tsx`, unterhalb der REQ-012-Statusbereiche,
+mit vier eigenständigen Leerzuständen (keine Schränke / keine offene Arbeit / Aktion ohne Frist /
+Aktion ohne Verantwortlichen). Regressionstests: `tests/unit/cabinet-workflow.test.ts` (20 Fälle:
+Fristen, Überfälligkeit, Sortierung inkl. stabiler Tiebreaker, Verantwortlicher, Sicherheits-Flags
+ohne Frist, Deduplication, leere/abgeschlossene Projekte), `tests/integration/gga-cabinet-db.test.ts`
+(erledigte vs. offene Maßnahme, projektübergreifende Scoping-Prüfung — ohne lokale
+`TEST_DATABASE_URL` weiterhin übersprungen), `tests/unit/collaboration-project-page.test.ts`
+(Leerzustands-/Neutraltexte). Gezielte Tests, Typecheck, Lint, volle Testsuite und Production Build
+grün. UI live gegen den lokalen Dev-Server geprüft (1440×900/1024×768/768×1024, kein horizontaler
+Overflow, keine Konsolenfehler) — nur im Leerzustand (0 GGA-Schränke lokal vorhanden, keine Testdaten
+angelegt); der befüllte Zustand ist ausschließlich durch die Unit-/Integrationstests abgedeckt, nicht
+live verifiziert.
 
 ---
 

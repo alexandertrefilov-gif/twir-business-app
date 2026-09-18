@@ -1,11 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import {
-  deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, formatGgaBetriebsstatusLabel,
-  type GgaCabinetControlTowerEntry, type GgaCabinetSnapshot,
+  deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaProjectWorklist, formatGgaBetriebsstatusLabel,
+  type GgaCabinetControlTowerEntry, type GgaCabinetSnapshot, type GgaWorklistCabinetBlocker,
+  type GgaWorklistCabinetInput, type GgaWorklistCabinetTask,
 } from '@/lib/collaboration/cabinet-workflow'
 
 function entry(id: string, kennung: string, snapshot: GgaCabinetSnapshot, now?: Date): GgaCabinetControlTowerEntry {
   return { id, kennung, ...deriveCabinetStatus(snapshot, now) }
+}
+
+function worklistCabinet(
+  id: string, kennung: string, snapshot: GgaCabinetSnapshot,
+  options: { standort?: string | null; openRequiredTasks?: GgaWorklistCabinetTask[]; openBlockers?: GgaWorklistCabinetBlocker[]; now?: Date } = {},
+): GgaWorklistCabinetInput {
+  return {
+    id, kennung, standort: options.standort ?? null,
+    status: deriveCabinetStatus(snapshot, options.now),
+    openRequiredTasks: options.openRequiredTasks ?? [],
+    openBlockers: options.openBlockers ?? [],
+  }
 }
 
 function baseSnapshot(overrides: Partial<GgaCabinetSnapshot> = {}): GgaCabinetSnapshot {
@@ -539,5 +552,156 @@ describe('deriveGgaCabinetControlTowerSummary (REQ-012): Projektweite GGA-Kennza
     expect(summary.abgeschlossen).toBe(0)
     expect(summary.nacharbeitErforderlich).toBe(1)
     expect(summary.aufmerksamkeitErforderlich).toBe(1)
+  })
+})
+
+describe('deriveGgaProjectWorklist (REQ-013): Fristen & nächste Aktionen', () => {
+  const now = new Date('2026-06-15T09:00:00.000Z')
+
+  it('1) eine offene Maßnahme mit zukünftiger Frist erscheint mit Dringlichkeit "demnächst fällig"', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Soll-Wert dokumentieren', dueDate: new Date('2026-06-20T00:00:00.000Z'), verantwortlich: null }],
+      now,
+    })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist).toHaveLength(1)
+    expect(worklist[0]).toMatchObject({ title: 'Soll-Wert dokumentieren', type: 'MASSNAHME', urgency: 4, ueberfaellig: false })
+    expect(worklist[0].dueDate).toEqual(new Date('2026-06-20T00:00:00.000Z'))
+  })
+
+  it('2) eine überfällige offene Maßnahme erscheint mit Dringlichkeit "überfällig"', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Ist-Wert nachtragen', dueDate: new Date('2026-06-01T00:00:00.000Z'), verantwortlich: null }],
+      now,
+    })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist).toHaveLength(1)
+    expect(worklist[0]).toMatchObject({ title: 'Ist-Wert nachtragen', type: 'MASSNAHME', urgency: 1, ueberfaellig: true })
+  })
+
+  it('3) eine bereits erledigte Maßnahme mit vergangener Frist erzeugt keinen Eintrag (Filterung erfolgt vor der Ableitung, siehe gga-cabinet-db.test.ts)', () => {
+    // Die erledigte Maßnahme wird — wie in getGgaCabinetProjectWorklist() —
+    // gar nicht erst in openRequiredTasks aufgenommen; die reine Funktion
+    // kann eine erledigte Maßnahme dadurch strukturell nie als überfällig
+    // ausgeben.
+    const cabinet = worklistCabinet('c1', 'K-001', fertigesCabinet(), { openRequiredTasks: [], now })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist).toHaveLength(0)
+  })
+
+  it('4) mehrere Fristen werden deterministisch nach Dringlichkeit und anschließend nach Datum sortiert', () => {
+    const cabinetA = worklistCabinet('c-a', 'B-002', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Später fällig', dueDate: new Date('2026-06-25T00:00:00.000Z'), verantwortlich: null }],
+      now,
+    })
+    const cabinetB = worklistCabinet('c-b', 'A-001', baseSnapshot(), {
+      openRequiredTasks: [
+        { id: 't2', title: 'Früher überfällig', dueDate: new Date('2026-06-01T00:00:00.000Z'), verantwortlich: null },
+        { id: 't3', title: 'Später überfällig', dueDate: new Date('2026-06-10T00:00:00.000Z'), verantwortlich: null },
+      ],
+      openBlockers: [{ id: 'b1', title: 'Mangel B', verantwortlich: null }],
+      now,
+    })
+    const worklist = deriveGgaProjectWorklist([cabinetA, cabinetB], now)
+    // 1. beide überfälligen Maßnahmen (früheste zuerst), 2. der sicherheitsrelevante Mangel, 3. die demnächst fällige Maßnahme.
+    expect(worklist.map((e) => e.title)).toEqual(['Früher überfällig', 'Später überfällig', 'Mangel B', 'Später fällig'])
+    expect(worklist.map((e) => e.urgency)).toEqual([1, 1, 2, 4])
+  })
+
+  it('4b) innerhalb derselben Dringlichkeitsklasse ohne Datum entscheidet die Schrankkennung als stabiles Kriterium', () => {
+    const cabinetZ = worklistCabinet('c-z', 'Z-999', baseSnapshot(), { openBlockers: [{ id: 'bz', title: 'Mangel Z', verantwortlich: null }], now })
+    const cabinetA = worklistCabinet('c-a', 'A-001', baseSnapshot(), { openBlockers: [{ id: 'ba', title: 'Mangel A', verantwortlich: null }], now })
+    const worklist = deriveGgaProjectWorklist([cabinetZ, cabinetA], now)
+    expect(worklist.map((e) => e.kennung)).toEqual(['A-001', 'Z-999'])
+  })
+
+  it('5) der Verantwortliche wird korrekt aus der Maßnahme übernommen', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Elektro prüfen', dueDate: null, verantwortlich: 'Anna Muster' }],
+      now,
+    })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist[0].verantwortlich).toBe('Anna Muster')
+  })
+
+  it('6) ein fehlender Verantwortlicher liefert null statt eines erfundenen Platzhaltertexts (neutrale Anzeige ist UI-Sache)', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Elektro prüfen', dueDate: null, verantwortlich: null }],
+      now,
+    })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist[0].verantwortlich).toBeNull()
+  })
+
+  it('7) ein fehlendes dueDate funktioniert und liefert Dringlichkeit "ohne Frist", nie überfällig', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Dokumentation nachreichen', dueDate: null, verantwortlich: null }],
+      now,
+    })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist[0]).toMatchObject({ urgency: 6, ueberfaellig: false, dueDate: null })
+  })
+
+  it('8) "Nachprüfung erforderlich" ohne dueDate bleibt in der Arbeitsliste sichtbar', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', fertigesCabinet({
+      approvals: [
+        { id: 'a1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-05'), stageCode: 'ABNAHME' },
+        { id: 'a2', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }), { now })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist).toContainEqual(expect.objectContaining({ type: 'NACHPRUEFUNG', title: 'Nachprüfung erforderlich', dueDate: null, urgency: 2 }))
+  })
+
+  it('9) "interne Freigabe anfordern" ohne dueDate bleibt in der Arbeitsliste sichtbar', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+      checklistItems: [{ id: 'c1', title: 'Elektro/VDE geprüft', completed: true, isRequired: true, sequence: 1, stageCode: 'ABNAHME' }],
+    }), { now })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist).toContainEqual(expect.objectContaining({ type: 'INTERNE_FREIGABE', title: 'Interne Freigabe anfordern', dueDate: null, urgency: 2 }))
+  })
+
+  it('10) "Betreiberentscheidung abwarten" ohne dueDate bleibt sichtbar, wenn Betreiberfreigabe laut Workflow aussteht', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'op-1', status: 'REQUESTED', approvalType: 'OPERATOR_ACCEPTANCE', requestedAt: new Date('2026-02-03'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }), { now })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist).toContainEqual(expect.objectContaining({ type: 'BETREIBERFREIGABE', title: 'Betreiberentscheidung abwarten', dueDate: null, urgency: 2 }))
+  })
+
+  it('11) ein konkreter offener Task und die davon abgeleitete generische "nächste Aktion" erzeugen keinen fachlichen Doppeleintrag', () => {
+    const snapshot = baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [{ id: 't1', title: 'Soll-Abluft klären', status: 'TODO', isRequired: true, sequence: 1, stageCode: 'PLANUNG' }],
+    })
+    // Zur Kontrolle: deriveCabinetStatus() würde ohne die Sonderbehandlung
+    // exakt denselben Titel als naechsteAktion ausgeben.
+    expect(deriveCabinetStatus(snapshot, now).naechsteAktion).toBe('Soll-Abluft klären')
+
+    const cabinet = worklistCabinet('c1', 'K-001', snapshot, {
+      openRequiredTasks: [{ id: 't1', title: 'Soll-Abluft klären', dueDate: null, verantwortlich: null }],
+      now,
+    })
+    const worklist = deriveGgaProjectWorklist([cabinet], now)
+    expect(worklist).toHaveLength(1)
+    expect(worklist[0]).toMatchObject({ title: 'Soll-Abluft klären', type: 'MASSNAHME' })
+  })
+
+  it('12) ein Projekt ohne GGA-Schränke liefert eine leere Arbeitsliste', () => {
+    expect(deriveGgaProjectWorklist([], now)).toEqual([])
+  })
+
+  it('13) ein Projekt mit ausschließlich abgeschlossenen Schränken ohne offene Arbeit liefert eine leere Arbeitsliste', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', fertigesCabinet(), { openRequiredTasks: [], openBlockers: [], now })
+    expect(deriveCabinetStatus(fertigesCabinet(), now).naechsteAktion).toBe('Keine offenen Punkte')
+    expect(deriveGgaProjectWorklist([cabinet], now)).toEqual([])
   })
 })

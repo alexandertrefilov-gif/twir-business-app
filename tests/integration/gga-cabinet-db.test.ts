@@ -264,4 +264,31 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     await db.collaborationMembership.delete({ where: { id: membership.id } })
     await db.collaborationProject.delete({ where: { id: emptyProject.id } })
   })
+
+  // ── REQ-013: Projekt-Arbeitsliste "Fristen & nächste Aktionen" ────────
+  it('REQ-013: eine erledigte Maßnahme mit vergangener Frist erscheint nicht in der Arbeitsliste, eine offene mit künftiger Frist schon', async () => {
+    asPlanner()
+    const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-WORKLIST-1`, bezeichnung: 'Arbeitsliste Test' })
+    const erledigt = await db.collaborationTask.create({ data: { projectId: projectAId, stageId: stagePlanungId, cabinetId: cabinet.id, title: 'Erledigte Maßnahme', isRequired: true, status: 'DONE', dueDate: new Date('2020-01-01') } })
+    const offen = await db.collaborationTask.create({ data: { projectId: projectAId, stageId: stagePlanungId, cabinetId: cabinet.id, title: 'Offene Maßnahme', isRequired: true, status: 'TODO', dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) } })
+
+    const worklist = await cabinetService.getGgaCabinetProjectWorklist(projectAId)
+    const titles = worklist.filter((entry) => entry.cabinetId === cabinet.id).map((entry) => entry.title)
+    expect(titles).toContain('Offene Maßnahme')
+    expect(titles).not.toContain('Erledigte Maßnahme')
+
+    await db.collaborationTask.deleteMany({ where: { id: { in: [erledigt.id, offen.id] } } })
+  })
+
+  it('REQ-013: die Arbeitsliste enthält ausschließlich Einträge des angefragten Projekts — keine Daten aus einem fremden Projekt', async () => {
+    // outsider ist ausschließlich COLLAB_MANAGER in Projekt B (siehe Setup oben).
+    asOutsider()
+    const foreignCabinet = await cabinetService.createGgaCabinet(projectBId, { kennung: `${marker}-WORKLIST-FOREIGN`, bezeichnung: 'Fremdes Projekt' })
+    await db.collaborationBlocker.create({ data: { projectId: projectBId, cabinetId: foreignCabinet.id, title: 'Fremder Mangel' } })
+
+    asManager()
+    const worklistA = await cabinetService.getGgaCabinetProjectWorklist(projectAId)
+    expect(worklistA.some((entry) => entry.cabinetId === foreignCabinet.id)).toBe(false)
+    expect(worklistA.some((entry) => entry.title === 'Fremder Mangel')).toBe(false)
+  })
 })

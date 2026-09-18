@@ -13,4 +13,14 @@ describe('Collaboration-Projektseite', () => {
     expect(page).toContain('error instanceof NotFoundError')
     expect(page).toContain('notFound()')
   })
+
+  it('REQ-013: zeigt neutrale Texte für fehlende Verantwortliche/Fristen statt sie zu verwerfen', () => {
+    expect(page).toContain('Nicht zugewiesen')
+    expect(page).toContain('Keine Frist hinterlegt')
+  })
+
+  it('REQ-013: behandelt "keine Schränke" und "keine offene Arbeit" als zwei unterschiedliche Leerzustände', () => {
+    expect(page).toContain('Noch keine GGA-Schränke in diesem Projekt.')
+    expect(page).toContain('Keine offenen GGA-Fristen oder nächsten Aktionen.')
+  })
 })

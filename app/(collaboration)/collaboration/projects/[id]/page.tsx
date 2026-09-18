@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getCollaborationPhase2Project, getRecentCollaborationActivity } from '@/lib/services/collaboration-phase2.service'
-import { getGgaCabinetControlTowerSummary } from '@/lib/services/gga-cabinet.service'
-import { GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS } from '@/lib/collaboration/cabinet-workflow'
+import { getGgaCabinetControlTowerSummary, getGgaCabinetProjectWorklist } from '@/lib/services/gga-cabinet.service'
+import { GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS, GGA_WORKLIST_URGENCY_LABELS, GGA_WORKLIST_URGENCY_BADGE_CLASS } from '@/lib/collaboration/cabinet-workflow'
 import { NotFoundError } from '@/lib/auth/permissions'
 import { COLLABORATION_STAGE_STATUS_LABELS, COLLABORATION_PROJECT_STATUS_LABELS, COLLABORATION_ROLE_LABELS, COLLABORATION_HEALTH_STATUS_LABELS, type CollaborationRole } from '@/types/enums'
 import { CollaborationStageActions } from '@/components/collaboration/CollaborationStageActions'
@@ -17,6 +17,7 @@ export default async function CollaborationProjectPage({ params }: { params: Pro
   })
   const activity = await getRecentCollaborationActivity(id)
   const cabinetSummary = await getGgaCabinetControlTowerSummary(id)
+  const ggaWorklist = await getGgaCabinetProjectWorklist(id)
   const tasks = project.stages.flatMap((stage) => (stage.tasks ?? []).map((task) => ({ ...task, stageTitle: stage.title })))
   const openTasks = tasks.filter((task) => task.isRequired && !['DONE', 'SKIPPED'].includes(task.status))
   const checklist = project.stages.flatMap((stage) => (stage.checklistItems ?? []).map((item) => ({ ...item, stageTitle: stage.title })))
@@ -88,6 +89,29 @@ export default async function CollaborationProjectPage({ params }: { params: Pro
             </li>)}
           </ul>}
       </div>
+    </section>
+
+    <section aria-labelledby="gga-worklist-title" className="mt-6 rounded-xl border border-stone-200 bg-white p-5">
+      <h2 id="gga-worklist-title" className="font-600">Fristen &amp; nächste Aktionen</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Offene GGA-Arbeit über alle Schränke dieses Projekts, dringlichste zuerst.</p>
+      {cabinetSummary.gesamt === 0
+        ? <p className="mt-3 text-sm text-muted-foreground">Noch keine GGA-Schränke in diesem Projekt.</p>
+        : ggaWorklist.length === 0
+          ? <p className="mt-3 text-sm text-muted-foreground">Keine offenen GGA-Fristen oder nächsten Aktionen.</p>
+          : <ul className="mt-3 divide-y divide-stone-100">
+            {ggaWorklist.map((entry, index) => <li key={`${entry.cabinetId}-${entry.type}-${index}`} className="flex flex-wrap items-center gap-3 py-3 text-sm">
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-600 ${GGA_WORKLIST_URGENCY_BADGE_CLASS[entry.urgency]}`}>{GGA_WORKLIST_URGENCY_LABELS[entry.urgency]}</span>
+              <div className="min-w-0 flex-1">
+                <p>
+                  <Link href={`/collaboration/cabinets/${entry.cabinetId}`} className="font-600 text-blue-700 hover:underline">{entry.kennung}</Link>
+                  {entry.standort && <span className="text-xs text-muted-foreground"> · {entry.standort}</span>}
+                </p>
+                <p className="mt-0.5 truncate text-stone-800">{entry.title}</p>
+              </div>
+              <span className="w-32 shrink-0 text-xs text-muted-foreground">{entry.verantwortlich ?? 'Nicht zugewiesen'}</span>
+              <span className="w-28 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{entry.dueDate ? entry.dueDate.toLocaleDateString('de-DE') : 'Keine Frist hinterlegt'}</span>
+            </li>)}
+          </ul>}
     </section>
 
     <section aria-labelledby="stage-title" className="mt-8 rounded-xl border border-stone-200 bg-white shadow-sm"><div className="border-b border-stone-200 px-5 py-4"><h2 id="stage-title" className="font-600">Projektphasen</h2></div><ol className="divide-y divide-stone-100">{project.stages.map((stage) => <li key={stage.id} className="px-5 py-5"><div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-sm font-600 text-white" aria-hidden="true">{stage.sequence}</span><div><p className="font-600">{stage.title}</p><p className="mt-1 text-sm text-muted-foreground">{stage.code} · {COLLABORATION_STAGE_STATUS_LABELS[stage.derivedStatus]}</p></div><span className="text-sm text-muted-foreground">{stage.weight > 0 ? `${stage.weight} % Gewicht` : 'Ohne Gewicht'}</span></div><CollaborationStageActions stage={stage} role={project.role} projectId={project.id} memberships={project.memberships} showCreationForms={canSeeCreationForms} /></li>)}</ol></section>

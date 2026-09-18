@@ -20,7 +20,7 @@ import {
 import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
 import { editorRoles, setCollaborationChecklistCompleted } from '@/lib/services/collaboration-phase2.service'
-import { deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, type GgaCabinetSnapshot } from '@/lib/collaboration/cabinet-workflow'
+import { deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaProjectWorklist, type GgaCabinetSnapshot } from '@/lib/collaboration/cabinet-workflow'
 import { Prisma } from '@prisma/client'
 
 // Stammdaten-Pflege ist enger gefasst als die allgemeinen Collaboration-
@@ -150,9 +150,12 @@ const cabinetListSelect = {
   responsibleMembershipId: true,
   responsibleMembership: { select: { user: { select: { firstName: true, lastName: true } } } },
   project: { select: { id: true, name: true } },
-  tasks: { select: { id: true, title: true, status: true, isRequired: true, sequence: true, stage: { select: { code: true } } } },
+  // dueDate/responsibleMembership werden nur für die REQ-013-Arbeitsliste
+  // benötigt (deriveCabinetStatus() selbst liest sie nicht) — hier trotzdem
+  // im gemeinsamen Select, um keine zweite Cabinet-Abfrage einzuführen.
+  tasks: { select: { id: true, title: true, status: true, isRequired: true, sequence: true, dueDate: true, stage: { select: { code: true } }, responsibleMembership: { select: { user: { select: { firstName: true, lastName: true } } } } } },
   checklistItems: { select: { id: true, title: true, completed: true, isRequired: true, sequence: true, stage: { select: { code: true } } } },
-  blockers: { select: { id: true, title: true, status: true } },
+  blockers: { select: { id: true, title: true, status: true, responsibleMembership: { select: { user: { select: { firstName: true, lastName: true } } } } } },
   approvals: { select: { id: true, status: true, approvalType: true, requestedAt: true, decidedAt: true, stage: { select: { code: true } } } },
 } satisfies Prisma.GgaCabinetSelect
 
@@ -379,6 +382,35 @@ export async function getGgaCabinetControlTowerSummary(projectId: string) {
   const cabinets = await prisma.ggaCabinet.findMany({ where: { projectId, deletedAt: null }, select: cabinetListSelect })
   const derived = cabinets.map((cabinet) => ({ id: cabinet.id, kennung: cabinet.kennung, ...deriveCabinetStatus(toCabinetSnapshot(cabinet)) }))
   return deriveGgaCabinetControlTowerSummary(derived)
+}
+
+function membershipName(membership: { user: { firstName: string; lastName: string } } | null): string | null {
+  return membership ? `${membership.user.firstName} ${membership.user.lastName}` : null
+}
+
+// ── Projekt-Arbeitsliste "Fristen & nächste Aktionen" (REQ-013) ──────────
+// Nur DB-Zugriff + Berechtigung; die eigentliche Ableitung ist reine,
+// unit-testbare Logik in cabinet-workflow.ts (deriveGgaProjectWorklist).
+// Ausschließlich Daten des angefragten Projekts — keine projektübergreifende
+// Aggregation (das ist REQ-014, hier bewusst nicht vorweggenommen).
+export async function getGgaCabinetProjectWorklist(projectId: string) {
+  const { userId } = await requireCollaborationSession()
+  await requireCollaborationProjectAccess(userId, projectId)
+
+  const cabinets = await prisma.ggaCabinet.findMany({ where: { projectId, deletedAt: null }, select: cabinetListSelect })
+  const input = cabinets.map((cabinet) => ({
+    id: cabinet.id,
+    kennung: cabinet.kennung,
+    standort: [cabinet.gebaeude, cabinet.ebene, cabinet.raumbezeichnung].filter(Boolean).join(' · ') || null,
+    status: deriveCabinetStatus(toCabinetSnapshot(cabinet)),
+    openBlockers: cabinet.blockers
+      .filter((blocker) => blocker.status === 'OPEN')
+      .map((blocker) => ({ id: blocker.id, title: blocker.title, verantwortlich: membershipName(blocker.responsibleMembership) })),
+    openRequiredTasks: cabinet.tasks
+      .filter((task) => task.isRequired && !['DONE', 'SKIPPED'].includes(task.status))
+      .map((task) => ({ id: task.id, title: task.title, dueDate: task.dueDate, verantwortlich: membershipName(task.responsibleMembership) })),
+  }))
+  return deriveGgaProjectWorklist(input)
 }
 
 // ── Betreiberfreigabe (OPERATOR_ACCEPTANCE) ───────────────────

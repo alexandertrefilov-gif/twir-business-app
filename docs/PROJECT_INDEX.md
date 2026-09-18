@@ -241,7 +241,7 @@ Zyklus (über CollaborationBlocker), Schrankakte-PDF.
 Services:
 - `lib/services/gga-cabinet.service.ts` — `createGgaCabinet`, `updateGgaCabinet`,
   `getGgaCabinetDetail`, `applyGgaCabinetChecklistTemplate`, `setGgaCabinetInspectionItem`,
-  `getGgaCabinetAuditHistory`, `getGgaCabinetControlTowerSummary`,
+  `getGgaCabinetAuditHistory`, `getGgaCabinetControlTowerSummary`, `getGgaCabinetProjectWorklist`,
   `requestGgaCabinetOperatorApproval`, `decideGgaCabinetOperatorApproval`
 - `lib/services/gga-cabinet-schrankakte.service.ts` — `getGgaCabinetSchrankaktePdfData`
   (PDF wird live generiert, nicht persistiert)
