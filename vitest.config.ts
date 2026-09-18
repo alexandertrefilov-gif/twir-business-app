@@ -7,6 +7,17 @@ export default defineConfig({
     environment: 'node',
     globals:     true,
     setupFiles:  ['./tests/setup.ts'],
+    // next.config.mjs setzt output:'standalone' (CP17); da STORAGE_LOCAL_PATH
+    // ein zur Build-Zeit nicht statisch auflösbarer Pfad ist, kopiert Next.js'
+    // Datei-Tracer vorsorglich weite Teile des Projekts (inkl. tests/) nach
+    // .next/standalone — sonst würde Vitest doppelte, dort nicht lauffähige
+    // Kopien der Testdateien einsammeln.
+    exclude: [
+      '**/node_modules/**', '**/dist/**', '**/cypress/**',
+      '**/.{idea,git,cache,output,temp}/**',
+      '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build}.config.*',
+      '.next/**', '.next-dev/**',
+    ],
     coverage: {
       provider:  'v8',
       reporter:  ['text', 'json', 'html'],

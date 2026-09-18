@@ -1,0 +1,30 @@
+# .dockerignore
+# Verhindert, dass Secrets, lokale Daten oder unnötig große Verzeichnisse in
+# den Docker-Build-Context (und damit potenziell in Image-Layer) gelangen.
+
+.git
+.github
+
+# Secrets — niemals in den Build-Context
+.env
+.env.local
+.env.*.local
+deploy/.env.production
+deploy/secrets/
+
+# Abhängigkeiten/Build-Artefakte — werden im Container neu erzeugt
+node_modules
+.next
+.next-dev
+out
+
+# Lokale Entwicklungsdaten — dürfen nie ins Image
+storage/
+output/
+coverage/
+
+# Sonstiges
+*.tsbuildinfo
+.DS_Store
+tmp/
+.claude-dev-helper

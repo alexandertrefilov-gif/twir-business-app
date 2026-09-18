@@ -1,0 +1,30 @@
+# deploy/Caddyfile
+# Entwurf — Platzhalter-Domain, nicht scharf geschaltet.
+# Caddy verwaltet TLS-Zertifikate (Let's Encrypt) automatisch — kein manueller
+# Zertifikatsschritt nötig.
+
+business.example.tld {
+	encode gzip
+
+	# Next.js setzt eigene Sicherheits-Header bereits selbst (next.config.mjs:
+	# X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+	# Permissions-Policy) — hier nur ergänzt, nicht dupliziert.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# Healthcheck nicht öffentlich weiterleiten lassen wirkt unnötig
+	# restriktiv für einen Reverse-Proxy-eigenen Check — bewusst weiterhin
+	# über den normalen Pfad erreichbar, liefert aber laut app/api/health/
+	# route.ts ohnehin keine internen Daten preis.
+
+	reverse_proxy localhost:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+	}
+
+	log {
+		output file /var/log/caddy/business-app.log {
+			roll_size 50mb
+			roll_keep 10
+		}
+	}
+}

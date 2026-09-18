@@ -7,6 +7,7 @@ const projectRoot = fileURLToPath(new URL('.', import.meta.url))
 /** @type {import('next').NextConfig} */
 const sharedConfig = {
   outputFileTracingRoot: projectRoot,
+  output: 'standalone',
 
   // Strikte Typenprüfung im Build
   typescript: {

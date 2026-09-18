@@ -1,0 +1,24 @@
+# deploy/docker-compose.local-test.override.yml
+# NUR für die lokale Produktions-Simulation (Aufgabe 9). Tauscht die
+# Caddyfile gegen die TLS-lose lokale Variante, sonst identisch zur echten
+# Produktionskonfiguration.
+services:
+  caddy:
+    volumes:
+      - ./Caddyfile.local-test:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+  app:
+    # Host-Port 3000 ist durch einen unabhängigen, bereits laufenden
+    # Container (open-webui) belegt — für diesen isolierten Test auf 3080
+    # umgebogen. Der eigentliche Testpfad läuft ohnehin über Caddy (Port 80,
+    # frei), dieser Direktzugriff dient nur der Fehlersuche.
+    ports: !override
+      - "127.0.0.1:3080:3000"
+  db:
+    # Host-Port 5432 ist durch die reale lokale Postgres-Instanz belegt
+    # (hostet business_webapp) — für diesen isolierten Test auf 5433
+    # umgebogen, um sie unangetastet zu lassen. Nur für diesen lokalen Test
+    # relevant, die echte Produktions-Compose-Datei bleibt bei 5432.
+    ports: !override
+      - "127.0.0.1:5433:5432"

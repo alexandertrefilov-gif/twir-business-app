@@ -1,0 +1,13 @@
+# deploy/Caddyfile.local-test
+# NUR für die lokale Produktions-Simulation (Aufgabe 9) — echtes TLS/ACME
+# funktioniert ohne öffentliche Domain nicht. Die eigentliche
+# Produktions-Caddyfile (deploy/Caddyfile) bleibt unverändert und wird nicht
+# für diesen Test verwendet.
+
+:80 {
+	encode gzip
+	reverse_proxy app:3000 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+	}
+}

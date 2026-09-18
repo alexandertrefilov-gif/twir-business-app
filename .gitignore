@@ -11,3 +11,8 @@ coverage/
 *.tsbuildinfo
 # Lokale Backups/Dumps/Rekonziliations-Artefakte (enthalten reale DB-Dumps)
 output/
+
+# Deployment-Secrets (echte Werte, nie committen — nur die .example-Dateien
+# unter deploy/ sind zum Einchecken gedacht)
+deploy/.env.production
+deploy/secrets/
