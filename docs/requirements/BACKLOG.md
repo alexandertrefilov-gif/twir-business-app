@@ -467,7 +467,7 @@ live verifiziert.
 
 ## REQ-014 — GGA Control Tower
 
-Status: PLANNED
+Status: IMPLEMENTED + TESTED
 Priority: P1
 Area: GGA Cabinet / Collaboration
 Created: 2026-09-18
@@ -492,9 +492,9 @@ darf dadurch nicht aufgeweicht werden. Keine internen Informationen in die
 Betreiberansicht übernehmen.
 
 ### Akzeptanzkriterien
-- [ ] Alle sieben genannten Kennzahlen sind auf einer projektübergreifenden Ansicht sichtbar.
-- [ ] Direkte Navigation zu Projekt und Schrank vorhanden.
-- [ ] Betreiberportal bleibt unverändert von internen Informationen getrennt (siehe PROJECT_MAP → Invariante 5).
+- [x] Alle sieben genannten Kennzahlen sind auf einer projektübergreifenden Ansicht sichtbar.
+- [x] Direkte Navigation zu Projekt und Schrank vorhanden.
+- [x] Betreiberportal bleibt unverändert von internen Informationen getrennt (siehe PROJECT_MAP → Invariante 5, 9).
 
 ### Abhängigkeiten
 - GGA Cabinet, CollaborationProject, Operator Portal (Abgrenzung) — siehe PROJECT_MAP.
@@ -503,4 +503,33 @@ Betreiberansicht übernehmen.
 Noch nicht entschieden.
 
 ### Implementierung
-Noch nicht implementiert.
+Implementiert (Checkpoint GGA-04): `lib/collaboration/cabinet-workflow.ts` erhält eine neue, reine
+Aggregation `deriveGgaControlTowerOverview()` — aggregiert projektübergreifend über bereits
+abgeleitete Einzelschrank-Status via `deriveGgaCabinetControlTowerSummary()` (REQ-012, unverändert
+wiederverwendet, einmal global und einmal je Projektgruppe), keine zweite Statuslogik.
+`lib/services/gga-cabinet.service.ts` ergänzt `getGgaControlTowerOverview()` — lädt Projekte über
+das bestehende `getVisibleCollaborationProjects()` (bereits über Mitgliedschaft gescoped) und filtert
+Projekte mit Rolle `OPERATOR` heraus (interner Control Tower ist keine Betreiberansicht), danach
+genau eine `ggaCabinet.findMany`-Abfrage für alle verbleibenden Projekt-IDs — insgesamt zwei Queries,
+kein N+1. `app/(collaboration)/collaboration/dashboard/page.tsx` (der bereits als „Control Tower"
+bezeichneten Seite) erhält drei neue Abschnitte: Gesamt-/Sicherheits-Kennzahlen, GGA-Projektübersicht
+(sortiert: Aufmerksamkeit → überfällig → Mängel → Nachprüfung → Projektnummer/-name) und „Dringende
+GGA-Schränke" (Badges: Überfällig/Mangel/Beanstandung (intern/Betreiber)/Nachprüfung/interne
+Freigabe/Betreiberfreigabe, sortiert nach Schweregrad). Direkte Links zu Projekt- und Schrankseite.
+Bekannter, bewusst dokumentierter Zusatzfall: die wiederverwendete REQ-012-Bedingung
+`ggaCabinetBrauchtAufmerksamkeit()` erfasst eine allein abgelaufene Prüffrist (ohne weiteren
+Auslöser) nicht — dafür neue, REQ-014-eigene `ggaCabinetIstDringend()` (= obige Bedingung ODER
+`betriebsstatus === 'UEBERFAELLIG'`), ohne REQ-012 selbst zu verändern. Regressionstests:
+`tests/unit/cabinet-workflow.test.ts` (20 Fälle: leeres Projekt, Mehrfach-Projekt-/Mehrfach-Schrank-
+Aggregation, alle sieben Kennzahlen einzeln, keine Doppelzählung, deterministische Projekt- und
+Dringlichkeitssortierung inkl. stabiler Tiebreaker, unauffällige Schränke bleiben ausgeschlossen,
+korrekte Projekt-/Schrankreferenzen, „abgeschlossen" ausschließlich aus deriveCabinetStatus()),
+`tests/integration/gga-cabinet-db.test.ts` (OPERATOR-Ausschluss + Cross-Project-Scoping gegen echte
+DB, ohne lokale `TEST_DATABASE_URL` weiterhin übersprungen), `tests/unit/collaboration-dashboard-page.test.ts`
+(neue Datei: Entry Point, Leerzustände, direkte Navigation). Gezielte Tests, Typecheck, Lint, volle
+Testsuite und Production Build grün. UI live gegen einen neu gestarteten lokalen Dev-Server geprüft
+(1440×900/1024×768/768×1024, kein horizontaler Overflow, keine Konsolenfehler) — nur im Leerzustand
+(0 GGA-Schränke lokal vorhanden, keine Testdaten angelegt); der befüllte Zustand ist ausschließlich
+durch die Unit-/Integrationstests abgedeckt, nicht live verifiziert. Der ursprünglich seit Stunden
+laufende lokale Dev-Server war stark verlangsamt (>5 Minuten für eine einzelne Anfrage) und wurde
+für die Prüfung neu gestartet — reiner lokaler Prozess-Neustart, keine Datenänderung.

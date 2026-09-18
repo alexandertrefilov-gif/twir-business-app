@@ -245,6 +245,7 @@ Services:
 - `lib/services/gga-cabinet.service.ts` — `createGgaCabinet`, `updateGgaCabinet`,
   `getGgaCabinetDetail`, `applyGgaCabinetChecklistTemplate`, `setGgaCabinetInspectionItem`,
   `getGgaCabinetAuditHistory`, `getGgaCabinetControlTowerSummary`, `getGgaCabinetProjectWorklist`,
+  `getGgaControlTowerOverview` (projektübergreifend, OPERATOR-Mitgliedschaften ausgeschlossen),
   `requestGgaCabinetOperatorApproval`, `decideGgaCabinetOperatorApproval`
 - `lib/services/gga-cabinet-schrankakte.service.ts` — `getGgaCabinetSchrankaktePdfData`
   (PDF wird live generiert, nicht persistiert)

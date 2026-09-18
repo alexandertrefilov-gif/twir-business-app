@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
-  deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaProjectWorklist, formatGgaBetriebsstatusLabel,
-  type GgaCabinetControlTowerEntry, type GgaCabinetSnapshot, type GgaWorklistCabinetBlocker,
+  deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaControlTowerOverview, deriveGgaProjectWorklist, formatGgaBetriebsstatusLabel,
+  type GgaCabinetControlTowerEntry, type GgaCabinetSnapshot, type GgaControlTowerCabinetEntry, type GgaWorklistCabinetBlocker,
   type GgaWorklistCabinetInput, type GgaWorklistCabinetTask,
 } from '@/lib/collaboration/cabinet-workflow'
 
 function entry(id: string, kennung: string, snapshot: GgaCabinetSnapshot, now?: Date): GgaCabinetControlTowerEntry {
   return { id, kennung, ...deriveCabinetStatus(snapshot, now) }
+}
+
+function controlTowerCabinet(
+  id: string, kennung: string, projectId: string, projectNumber: string | null, projectName: string,
+  snapshot: GgaCabinetSnapshot, options: { standort?: string | null; now?: Date } = {},
+): GgaControlTowerCabinetEntry {
+  return { id, kennung, standort: options.standort ?? null, projectId, projectNumber, projectName, ...deriveCabinetStatus(snapshot, options.now) }
 }
 
 function worklistCabinet(
@@ -785,5 +792,188 @@ describe('deriveGgaProjectWorklist (REQ-013): Fristen & nächste Aktionen', () =
     const cabinet = worklistCabinet('c1', 'K-001', fertigesCabinet(), { openRequiredTasks: [], openBlockers: [], now })
     expect(deriveCabinetStatus(fertigesCabinet(), now).naechsteAktion).toBe('Keine offenen Punkte')
     expect(deriveGgaProjectWorklist([cabinet], now)).toEqual([])
+  })
+})
+
+describe('deriveGgaControlTowerOverview (REQ-014): Projektübergreifender GGA Control Tower', () => {
+  const now = new Date('2026-06-15T09:00:00.000Z')
+
+  it('1) 0 Projekte / 0 Schränke liefert konsistente Nullwerte statt eines Fehlers', () => {
+    const overview = deriveGgaControlTowerOverview([], new Set())
+    expect(overview.aktiveGgaProjekte).toBe(0)
+    expect(overview.gesamt.gesamt).toBe(0)
+    expect(overview.projekte).toEqual([])
+    expect(overview.dringendeSchraenke).toEqual([])
+  })
+
+  it('2) mehrere Projekte werden korrekt getrennt aggregiert', () => {
+    const cabinets = [
+      controlTowerCabinet('c1', 'A-001', 'p1', 'P-1', 'Projekt Eins', baseSnapshot()),
+      controlTowerCabinet('c2', 'B-001', 'p2', 'P-2', 'Projekt Zwei', fertigesCabinet()),
+    ]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1', 'p2']))
+    expect(overview.projekte).toHaveLength(2)
+    expect(overview.projekte.find((p) => p.projectId === 'p1')?.projectName).toBe('Projekt Eins')
+    expect(overview.projekte.find((p) => p.projectId === 'p2')?.projectName).toBe('Projekt Zwei')
+    expect(overview.gesamt.gesamt).toBe(2)
+  })
+
+  it('3) mehrere Schränke desselben Projekts werden im Projekt-Eintrag zusammengefasst', () => {
+    const cabinets = [
+      controlTowerCabinet('c1', 'A-001', 'p1', 'P-1', 'Projekt Eins', baseSnapshot()),
+      controlTowerCabinet('c2', 'A-002', 'p1', 'P-1', 'Projekt Eins', baseSnapshot()),
+      controlTowerCabinet('c3', 'A-003', 'p1', 'P-1', 'Projekt Eins', fertigesCabinet()),
+    ]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.projekte).toHaveLength(1)
+    expect(overview.projekte[0].gesamt).toBe(3)
+    expect(overview.projekte[0].abgeschlossen).toBe(1)
+  })
+
+  it('4) abgeschlossen zählt korrekt — projektweit und übergreifend', () => {
+    const cabinets = [
+      controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', fertigesCabinet()),
+      controlTowerCabinet('c2', 'A-002', 'p1', null, 'Projekt Eins', baseSnapshot()),
+    ]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.abgeschlossen).toBe(1)
+    expect(overview.projekte[0].abgeschlossen).toBe(1)
+  })
+
+  it('5) offene Mängel (Blocker) zählen korrekt', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', baseSnapshot({ blockers: [{ id: 'b1', title: 'Mangel', status: 'OPEN' }] }))]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.mitBlocker).toBe(1)
+    expect(overview.projekte[0].mitBlocker).toBe(1)
+  })
+
+  it('6) Nachprüfung erforderlich wird separat gezählt', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', fertigesCabinet({
+      approvals: [
+        { id: 'a1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-05'), stageCode: 'ABNAHME' },
+        { id: 'a2', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.nachpruefungErforderlich).toBe(1)
+    expect(overview.gesamt.ueberfaellig).toBe(0)
+  })
+
+  it('7) überfällig wird separat gezählt', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', fertigesCabinet({ pruefintervallMonate: 12, letztePruefungAm: new Date('2024-01-01') }), { now })]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.ueberfaellig).toBe(1)
+    expect(overview.gesamt.nachpruefungErforderlich).toBe(0)
+  })
+
+  it('8) interne Freigabe offen wird separat gezählt', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+      checklistItems: [{ id: 'c1', title: 'Elektro/VDE geprüft', completed: true, isRequired: true, sequence: 1, stageCode: 'ABNAHME' }],
+    }))]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.freigabeOffen).toBe(1)
+    expect(overview.gesamt.betreiberfreigabeAusstehend).toBe(0)
+  })
+
+  it('9) Betreiberfreigabe ausstehend wird separat gezählt', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'op-1', status: 'REQUESTED', approvalType: 'OPERATOR_ACCEPTANCE', requestedAt: new Date('2026-02-03'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.betreiberfreigabeAusstehend).toBe(1)
+    expect(overview.gesamt.freigabeOffen).toBe(0)
+  })
+
+  it('10) Betreiberbeanstandung wird separat gezählt', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'op-1', status: 'REJECTED', approvalType: 'OPERATOR_ACCEPTANCE', requestedAt: new Date('2026-02-03'), decidedAt: new Date('2026-02-04'), stageCode: 'ABNAHME' },
+      ],
+    }))]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.betreiberbeanstandung).toBe(1)
+    expect(overview.gesamt.betreiberfreigabeAusstehend).toBe(0)
+  })
+
+  it('11) keine Doppelzählung — ein Schrank mit mehreren Problemen zählt in jeder betroffenen Kategorie genau einmal, aber nur ein Listeneintrag in "dringend"', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', baseSnapshot({
+      blockers: [{ id: 'b1', title: 'Mangel', status: 'OPEN' }],
+    }))]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.gesamt).toBe(1)
+    expect(overview.gesamt.mitBlocker).toBe(1)
+    expect(overview.gesamt.bestandsaufnahmeOffen).toBe(1)
+    expect(overview.dringendeSchraenke).toHaveLength(1)
+    expect(overview.dringendeSchraenke[0].gruende).toContain('MANGEL')
+  })
+
+  it('12) Projektsortierung ist deterministisch: Aufmerksamkeit > überfällig > Mängel > Nachprüfung > Projektnummer/-name', () => {
+    const ruhig = controlTowerCabinet('c1', 'Z-001', 'p-ruhig', 'P-9', 'Ruhiges Projekt', fertigesCabinet())
+    const wenigerDringend = controlTowerCabinet('c2', 'A-001', 'p-wenig', 'P-2', 'Wenig dringend', baseSnapshot({ blockers: [{ id: 'b1', title: 'Mangel', status: 'OPEN' }] }))
+    const sehrDringend = controlTowerCabinet('c3', 'B-001', 'p-viel', 'P-1', 'Sehr dringend', baseSnapshot({
+      blockers: [{ id: 'b1', title: 'Mangel 1', status: 'OPEN' }, { id: 'b2', title: 'Mangel 2', status: 'OPEN' }],
+    }))
+    const overview = deriveGgaControlTowerOverview([ruhig, wenigerDringend, sehrDringend], new Set())
+    expect(overview.projekte.map((p) => p.projectId)).toEqual(['p-viel', 'p-wenig', 'p-ruhig'])
+  })
+
+  it('12b) innerhalb gleicher Dringlichkeit entscheidet die Projektnummer als stabiles Kriterium', () => {
+    const projB = controlTowerCabinet('c1', 'K-001', 'p-b', 'P-002', 'B-Projekt', fertigesCabinet())
+    const projA = controlTowerCabinet('c2', 'K-002', 'p-a', 'P-001', 'A-Projekt', fertigesCabinet())
+    const overview = deriveGgaControlTowerOverview([projB, projA], new Set())
+    expect(overview.projekte.map((p) => p.projectId)).toEqual(['p-a', 'p-b'])
+  })
+
+  it('13) dringende Schränke werden nach Schweregrad priorisiert: überfällig vor Mangel vor Nachprüfung vor Freigaben', () => {
+    const nachpruefung = controlTowerCabinet('c1', 'N-001', 'p1', null, 'Projekt', fertigesCabinet({
+      approvals: [
+        { id: 'a1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-05'), stageCode: 'ABNAHME' },
+        { id: 'a2', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))
+    const ueberfaellig = controlTowerCabinet('c2', 'U-001', 'p1', null, 'Projekt', fertigesCabinet({ pruefintervallMonate: 12, letztePruefungAm: new Date('2024-01-01') }), { now })
+    const mangel = controlTowerCabinet('c3', 'M-001', 'p1', null, 'Projekt', baseSnapshot({ blockers: [{ id: 'b1', title: 'Mangel', status: 'OPEN' }] }))
+    const betreiberfreigabe = controlTowerCabinet('c4', 'B-001', 'p1', null, 'Projekt', fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'op-1', status: 'REQUESTED', approvalType: 'OPERATOR_ACCEPTANCE', requestedAt: new Date('2026-02-03'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))
+    const overview = deriveGgaControlTowerOverview([nachpruefung, ueberfaellig, mangel, betreiberfreigabe], new Set(), )
+    expect(overview.dringendeSchraenke.map((c) => c.kennung)).toEqual(['U-001', 'M-001', 'N-001', 'B-001'])
+  })
+
+  it('14) ein unauffälliger, vollständig abgeschlossener Schrank erscheint nicht in "Dringende GGA-Schränke"', () => {
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', fertigesCabinet())]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.dringendeSchraenke).toEqual([])
+  })
+
+  it('15) Projekt- und Schrankreferenzen für die direkte Navigation sind korrekt', () => {
+    const cabinets = [controlTowerCabinet('cabinet-xyz', 'A-001', 'project-abc', 'P-9', 'Beispielprojekt', baseSnapshot({ blockers: [{ id: 'b1', title: 'Mangel', status: 'OPEN' }] }), { standort: 'Halle 3' })]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['project-abc']))
+    expect(overview.projekte[0]).toMatchObject({ projectId: 'project-abc', projectNumber: 'P-9', projectName: 'Beispielprojekt' })
+    expect(overview.dringendeSchraenke[0]).toMatchObject({ cabinetId: 'cabinet-xyz', projectId: 'project-abc', standort: 'Halle 3' })
+  })
+
+  it('20) "abgeschlossen" wird niemals durch die Dashboard-Aggregation selbst erzeugt — ausschließlich item.abgeschlossen (deriveCabinetStatus)', () => {
+    // Ein Schrank mit offenem Blocker, aber sonst technisch bestandener interner
+    // Prüfung, gilt laut Workflow trotzdem als abgeschlossen (Blocker ändert
+    // lifecycleStage nicht, siehe REQ-011/012) — die Aggregation darf das nicht
+    // "korrigieren" oder umgekehrt künstlich verhindern.
+    const cabinets = [controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt Eins', fertigesCabinet({ blockers: [{ id: 'b1', title: 'Kleinmangel', status: 'OPEN' }] }))]
+    const overview = deriveGgaControlTowerOverview(cabinets, new Set(['p1']))
+    expect(overview.gesamt.abgeschlossen).toBe(1)
+    expect(overview.projekte[0].abgeschlossen).toBe(1)
+    expect(overview.gesamt.mitBlocker).toBe(1) // gleichzeitig weiterhin als dringend sichtbar
   })
 })

@@ -311,6 +311,32 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     expect(worklistA.some((entry) => entry.title === 'Fremder Mangel')).toBe(false)
   })
 
+  // ── REQ-014: Projektübergreifender GGA Control Tower ───────────────────
+  it('REQ-014: OPERATOR-Mitgliedschaften werden aus dem internen Control Tower ausgeschlossen; Zugriff bleibt korrekt auf die eigenen Projekte begrenzt', async () => {
+    const ctProject = await db.collaborationProject.create({ data: { projectNumber: `${marker}-CT`, name: 'Nur-Betreiber-Projekt', active: true } })
+    const operatorMembership = await db.collaborationMembership.create({ data: { projectId: ctProject.id, userId: outsiderUserId, role: 'OPERATOR' } })
+    const operatorOnlyCabinet = await db.ggaCabinet.create({ data: { projectId: ctProject.id, kennung: `${marker}-CT-001`, bezeichnung: 'Nur für Betreiber sichtbar' } })
+
+    // outsiderUserId ist COLLAB_MANAGER in Projekt B UND (neu, nur für diesen
+    // Test) OPERATOR in ctProject — der interne Control Tower darf für diese
+    // OPERATOR-Mitgliedschaft keinerlei Daten liefern.
+    asOutsider()
+    const operatorOverview = await cabinetService.getGgaControlTowerOverview()
+    expect(operatorOverview.projekte.some((p) => p.projectId === ctProject.id)).toBe(false)
+    expect(operatorOverview.dringendeSchraenke.some((c) => c.cabinetId === operatorOnlyCabinet.id)).toBe(false)
+
+    // Manager ist ausschließlich Mitglied von Projekt A — Cross-Project-Scoping.
+    asManager()
+    const managerOverview = await cabinetService.getGgaControlTowerOverview()
+    expect(managerOverview.projekte.length).toBeGreaterThan(0)
+    expect(managerOverview.projekte.every((p) => p.projectId === projectAId)).toBe(true)
+    expect(managerOverview.projekte.some((p) => p.projectId === ctProject.id)).toBe(false)
+
+    await db.ggaCabinet.delete({ where: { id: operatorOnlyCabinet.id } })
+    await db.collaborationMembership.delete({ where: { id: operatorMembership.id } })
+    await db.collaborationProject.delete({ where: { id: ctProject.id } })
+  })
+
   // ── GGA-04.1: Security-Fix — OPERATOR darf keine internen Projekt-/GGA-Lesedaten erhalten ──
   describe('GGA-04.1: OPERATOR-Ausschluss von internen Lesezugriffen', () => {
     it('A) eine berechtigte interne Rolle (COLLAB_MANAGER) erhält weiterhin das volle interne Projektdetail', async () => {

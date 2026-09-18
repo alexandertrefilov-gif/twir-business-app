@@ -22,7 +22,11 @@ import {
 import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
 import { editorRoles, setCollaborationChecklistCompleted } from '@/lib/services/collaboration-phase2.service'
-import { deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaProjectWorklist, type GgaCabinetSnapshot } from '@/lib/collaboration/cabinet-workflow'
+import {
+  deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaControlTowerOverview, deriveGgaProjectWorklist,
+  type GgaCabinetSnapshot, type GgaControlTowerCabinetEntry,
+} from '@/lib/collaboration/cabinet-workflow'
+import { getVisibleCollaborationProjects } from '@/lib/services/collaboration-project.service'
 import { Prisma } from '@prisma/client'
 
 // Stammdaten-Pflege ist enger gefasst als die allgemeinen Collaboration-
@@ -151,7 +155,7 @@ const cabinetListSelect = {
   pruefintervallMonate: true, letztePruefungAm: true,
   responsibleMembershipId: true,
   responsibleMembership: { select: { user: { select: { firstName: true, lastName: true } } } },
-  project: { select: { id: true, name: true } },
+  project: { select: { id: true, name: true, projectNumber: true } },
   // dueDate/responsibleMembership werden nur für die REQ-013-Arbeitsliste
   // benötigt (deriveCabinetStatus() selbst liest sie nicht) — hier trotzdem
   // im gemeinsamen Select, um keine zweite Cabinet-Abfrage einzuführen.
@@ -416,6 +420,41 @@ export async function getGgaCabinetProjectWorklist(projectId: string) {
       .map((task) => ({ id: task.id, title: task.title, dueDate: task.dueDate, verantwortlich: membershipName(task.responsibleMembership) })),
   }))
   return deriveGgaProjectWorklist(input)
+}
+
+// ── Projektübergreifender GGA Control Tower (REQ-014) ─────────────────
+// Nur DB-Zugriff + Berechtigung; die eigentliche Aggregation ist reine,
+// unit-testbare Logik in cabinet-workflow.ts (deriveGgaControlTowerOverview).
+//
+// Scoping: getVisibleCollaborationProjects() liefert ausschließlich Projekte,
+// in denen der Nutzer eine aktive Mitgliedschaft hat (bestehender, wieder-
+// verwendeter Mechanismus) — keine clientseitig übergebene projectId wird
+// jemals als Vertrauensanker verwendet. Projekte, in denen die Rolle des
+// Nutzers OPERATOR ist, werden zusätzlich herausgefiltert: der interne
+// Control Tower ist keine Betreiberansicht — OPERATOR-Mitgliedschaften sind
+// ausschließlich für das getrennte Betreiberportal bestimmt (siehe
+// requestGgaCabinetOperatorApproval/decideGgaCabinetOperatorApproval unten
+// und PROJECT_MAP → Auth-Domains/Invariante 5).
+export async function getGgaControlTowerOverview() {
+  await requireCollaborationSession()
+  const projects = await getVisibleCollaborationProjects()
+  const internalProjects = projects.filter((project) => project.role !== 'OPERATOR')
+  const projectIds = internalProjects.map((project) => project.id)
+  const activeProjectIds = new Set(internalProjects.filter((project) => project.status === 'ACTIVE').map((project) => project.id))
+
+  if (projectIds.length === 0) return deriveGgaControlTowerOverview([], activeProjectIds)
+
+  const cabinets = await prisma.ggaCabinet.findMany({ where: { projectId: { in: projectIds }, deletedAt: null }, select: cabinetListSelect })
+  const entries: GgaControlTowerCabinetEntry[] = cabinets.map((cabinet) => ({
+    id: cabinet.id,
+    kennung: cabinet.kennung,
+    standort: [cabinet.gebaeude, cabinet.ebene, cabinet.raumbezeichnung].filter(Boolean).join(' · ') || null,
+    projectId: cabinet.projectId,
+    projectNumber: cabinet.project.projectNumber,
+    projectName: cabinet.project.name,
+    ...deriveCabinetStatus(toCabinetSnapshot(cabinet)),
+  }))
+  return deriveGgaControlTowerOverview(entries, activeProjectIds)
 }
 
 // ── Betreiberfreigabe (OPERATOR_ACCEPTANCE) ───────────────────

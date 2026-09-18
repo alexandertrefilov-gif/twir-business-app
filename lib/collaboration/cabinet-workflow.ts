@@ -336,6 +336,18 @@ export function ggaCabinetBrauchtAufmerksamkeit(item: DerivedGgaCabinetStatus): 
     || item.nacharbeitErforderlich
 }
 
+// REQ-014: wie ggaCabinetBrauchtAufmerksamkeit, ergänzt um
+// betriebsstatus === 'UEBERFAELLIG'. Bekannte Lücke der obigen, unveränderten
+// REQ-012-Bedingung: eine abgelaufene Prüffrist allein (ohne zusätzlichen
+// offenen Blocker/ausstehende Freigabe) löst dort kein aufmerksamkeitErforderlich
+// aus, obwohl der GGA Control Tower "überfällig" explizit als eigene
+// Sicherheits-Kennzahl verlangt. Bewusst NICHT in ggaCabinetBrauchtAufmerksamkeit
+// selbst korrigiert (kein Wiederaufgreifen von REQ-011–013) — stattdessen hier
+// um genau dieses eine, bereits vorhandene Signal ergänzt.
+export function ggaCabinetIstDringend(item: DerivedGgaCabinetStatus): boolean {
+  return ggaCabinetBrauchtAufmerksamkeit(item) || item.betriebsstatus === 'UEBERFAELLIG'
+}
+
 export function deriveGgaCabinetControlTowerSummary(entries: GgaCabinetControlTowerEntry[]): GgaCabinetControlTowerSummary {
   return {
     gesamt: entries.length,
@@ -533,6 +545,136 @@ export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], no
     else if (!a.dueDate && b.dueDate) return 1
     return a.kennung.localeCompare(b.kennung) || a.cabinetId.localeCompare(b.cabinetId)
   })
+}
+
+// ── Projektübergreifender GGA Control Tower (REQ-014) ────────────────────
+// Reine Aggregation über bereits abgeleitete Einzelschrank-Status, genau wie
+// deriveGgaCabinetControlTowerSummary() (REQ-012), nur projektübergreifend.
+// Keine neue Statuslogik, keine DB-Zugriffe — der Service liefert die pro
+// Schrank bereits abgeleiteten Werte inkl. Projektbezug an.
+
+export type GgaControlTowerCabinetEntry = { id: string; kennung: string; standort: string | null; projectId: string; projectNumber: string | null; projectName: string } & DerivedGgaCabinetStatus
+
+export type GgaControlTowerProjectSummary = GgaCabinetControlTowerSummary & {
+  projectId: string
+  projectNumber: string | null
+  projectName: string
+  // Anzahl Schränke mit ggaCabinetIstDringend() === true — konsistent mit
+  // dringendeSchraenke unten, anders als das (unveränderte) REQ-012-Feld
+  // aufmerksamkeitErforderlich oben, das UEBERFAELLIG allein nicht erfasst.
+  dringendeSchraenkeAnzahl: number
+}
+
+// Genau die in REQ-014 Phase 4 vorgegebenen sechs Badges, plus eine interne
+// Beanstandung (abgelehnte interne Prüfung, noch nicht neu angefordert) —
+// ohne diese siebte Badge hätte ein Teil der "dringend"-Menge (nacharbeit-
+// Erforderlich über pruefstatus, nicht über betreiberstatus) keinen sichtbaren
+// Grund, obwohl Phase 4 verlangt, dass jeder Eintrag einen Grund zeigt.
+export type GgaControlTowerReasonBadge =
+  | 'UEBERFAELLIG' | 'MANGEL' | 'INTERNE_BEANSTANDUNG' | 'NACHPRUEFUNG' | 'INTERNE_FREIGABE' | 'BETREIBERFREIGABE' | 'BETREIBERBEANSTANDUNG'
+
+export const GGA_CONTROL_TOWER_REASON_LABELS: Record<GgaControlTowerReasonBadge, string> = {
+  UEBERFAELLIG: 'Überfällig',
+  MANGEL: 'Mangel',
+  INTERNE_BEANSTANDUNG: 'Beanstandung (intern)',
+  NACHPRUEFUNG: 'Nachprüfung',
+  INTERNE_FREIGABE: 'Interne Freigabe',
+  BETREIBERFREIGABE: 'Betreiberfreigabe',
+  BETREIBERBEANSTANDUNG: 'Betreiberbeanstandung',
+}
+
+// Rangfolge ausschließlich für die Anzeige-Sortierung der "Dringende
+// GGA-Schränke"-Liste — eigene, transparente Darstellungsreihenfolge, ändert
+// keinen Workflow-Zustand und keine Freigabe-/Prüf-Priorität.
+const GGA_CONTROL_TOWER_REASON_RANK: Record<GgaControlTowerReasonBadge, number> = {
+  UEBERFAELLIG: 1, MANGEL: 2, INTERNE_BEANSTANDUNG: 3, BETREIBERBEANSTANDUNG: 3,
+  NACHPRUEFUNG: 4, INTERNE_FREIGABE: 5, BETREIBERFREIGABE: 6,
+}
+
+function ggaControlTowerReasons(item: DerivedGgaCabinetStatus): GgaControlTowerReasonBadge[] {
+  const reasons: GgaControlTowerReasonBadge[] = []
+  if (item.betriebsstatus === 'UEBERFAELLIG') reasons.push('UEBERFAELLIG')
+  if (item.offeneBlocker > 0) reasons.push('MANGEL')
+  if (item.nacharbeitErforderlich && item.pruefstatus === 'BEANSTANDET') reasons.push('INTERNE_BEANSTANDUNG')
+  if (item.betreiberbeanstandung) reasons.push('BETREIBERBEANSTANDUNG')
+  if (item.betriebsstatus === 'NACHPRUEFUNG_ERFORDERLICH') reasons.push('NACHPRUEFUNG')
+  if (item.freigabeOffen) reasons.push('INTERNE_FREIGABE')
+  if (item.betreiberfreigabeAusstehend) reasons.push('BETREIBERFREIGABE')
+  return reasons
+}
+
+export type GgaControlTowerUrgentCabinet = {
+  cabinetId: string
+  kennung: string
+  projectId: string
+  projectNumber: string | null
+  projectName: string
+  standort: string | null
+  lifecycleStage: GgaCabinetLifecycleStage
+  betriebsstatus: GgaCabinetBetriebsstatus
+  betriebsstatusTageBisFaellig: number | null
+  naechsteAktion: string
+  gruende: GgaControlTowerReasonBadge[]
+}
+
+export type GgaControlTowerOverview = {
+  aktiveGgaProjekte: number
+  gesamt: GgaCabinetControlTowerSummary
+  projekte: GgaControlTowerProjectSummary[]
+  dringendeSchraenke: GgaControlTowerUrgentCabinet[]
+}
+
+export function deriveGgaControlTowerOverview(
+  cabinets: GgaControlTowerCabinetEntry[],
+  activeProjectIds: ReadonlySet<string>,
+): GgaControlTowerOverview {
+  const gesamt = deriveGgaCabinetControlTowerSummary(cabinets)
+
+  const byProject = new Map<string, GgaControlTowerCabinetEntry[]>()
+  for (const cabinet of cabinets) {
+    const list = byProject.get(cabinet.projectId)
+    if (list) list.push(cabinet)
+    else byProject.set(cabinet.projectId, [cabinet])
+  }
+
+  const projekte: GgaControlTowerProjectSummary[] = Array.from(byProject.entries()).map(([projectId, projectCabinets]) => {
+    const summary = deriveGgaCabinetControlTowerSummary(projectCabinets)
+    const first = projectCabinets[0]
+    const dringendeSchraenkeAnzahl = projectCabinets.filter(ggaCabinetIstDringend).length
+    return { ...summary, projectId, projectNumber: first.projectNumber, projectName: first.projectName, dringendeSchraenkeAnzahl }
+  })
+
+  // Sortierung exakt nach REQ-014 Phase 3: 1) sicherheitsrelevante
+  // Aufmerksamkeit zuerst, 2) meiste überfällige Schränke, 3) meiste offene
+  // Mängel, 4) Nachprüfung erforderlich, 5) stabil nach Projektnummer/-name.
+  projekte.sort((a, b) => {
+    const aAufmerksamkeit = a.dringendeSchraenkeAnzahl > 0 ? 0 : 1
+    const bAufmerksamkeit = b.dringendeSchraenkeAnzahl > 0 ? 0 : 1
+    if (aAufmerksamkeit !== bAufmerksamkeit) return aAufmerksamkeit - bAufmerksamkeit
+    if (a.ueberfaellig !== b.ueberfaellig) return b.ueberfaellig - a.ueberfaellig
+    if (a.mitBlocker !== b.mitBlocker) return b.mitBlocker - a.mitBlocker
+    if (a.nachpruefungErforderlich !== b.nachpruefungErforderlich) return b.nachpruefungErforderlich - a.nachpruefungErforderlich
+    return (a.projectNumber ?? '').localeCompare(b.projectNumber ?? '') || a.projectName.localeCompare(b.projectName)
+  })
+
+  const dringendeSchraenke: GgaControlTowerUrgentCabinet[] = cabinets
+    .filter(ggaCabinetIstDringend)
+    .map((cabinet) => ({
+      cabinetId: cabinet.id, kennung: cabinet.kennung, projectId: cabinet.projectId, projectNumber: cabinet.projectNumber, projectName: cabinet.projectName,
+      standort: cabinet.standort, lifecycleStage: cabinet.lifecycleStage, betriebsstatus: cabinet.betriebsstatus,
+      betriebsstatusTageBisFaellig: cabinet.betriebsstatusTageBisFaellig, naechsteAktion: cabinet.naechsteAktion,
+      gruende: ggaControlTowerReasons(cabinet),
+    }))
+    .sort((a, b) => {
+      const rankA = Math.min(...a.gruende.map((reason) => GGA_CONTROL_TOWER_REASON_RANK[reason]))
+      const rankB = Math.min(...b.gruende.map((reason) => GGA_CONTROL_TOWER_REASON_RANK[reason]))
+      if (rankA !== rankB) return rankA - rankB
+      return a.kennung.localeCompare(b.kennung) || a.cabinetId.localeCompare(b.cabinetId)
+    })
+
+  const aktiveGgaProjekte = Array.from(byProject.keys()).filter((projectId) => activeProjectIds.has(projectId)).length
+
+  return { aktiveGgaProjekte, gesamt, projekte, dringendeSchraenke }
 }
 
 /** Formatiert das Betriebsstatus-Label, inkl. Tage-Countdown wo zutreffend. */
