@@ -35,36 +35,60 @@ export default async function CollaborationProjectPage({ params }: { params: Pro
       <div className="rounded-xl border border-stone-200 bg-white p-5"><p className="text-sm text-muted-foreground">Nächste Aktion</p><p className="mt-2 font-600">{project.nextAction}</p></div>
     </div>
 
-    {cabinetSummary && <section className="mt-6 rounded-xl border border-stone-200 bg-white p-5">
+    <section className="mt-6 rounded-xl border border-stone-200 bg-white p-5">
       <div className="flex items-center justify-between"><h2 className="font-600">GGA-Schränke</h2><Link href="/collaboration/cabinets" className="text-sm text-blue-700 hover:underline">Alle anzeigen →</Link></div>
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-        <div><p className="text-2xl font-600">{cabinetSummary.gesamt}</p><p className="text-xs text-muted-foreground">Gesamt</p></div>
-        <div><p className={`text-2xl font-600 ${cabinetSummary.bestandsaufnahmeOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.bestandsaufnahmeOffen}</p><p className="text-xs text-muted-foreground">Bestandsaufnahme offen</p></div>
-        <div><p className={`text-2xl font-600 ${cabinetSummary.planungOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.planungOffen}</p><p className="text-xs text-muted-foreground">Planung offen</p></div>
-        <div><p className={`text-2xl font-600 ${cabinetSummary.umsetzungOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.umsetzungOffen}</p><p className="text-xs text-muted-foreground">Umsetzung offen</p></div>
-        <div><p className={`text-2xl font-600 ${cabinetSummary.pruefungOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.pruefungOffen}</p><p className="text-xs text-muted-foreground">Prüfung offen</p></div>
-        <div><p className={`text-2xl font-600 ${cabinetSummary.betreiberfreigabeAusstehend ? 'text-amber-700' : ''}`}>{cabinetSummary.betreiberfreigabeAusstehend}</p><p className="text-xs text-muted-foreground">Betreiberfreigabe ausstehend</p></div>
-        <div><p className={`text-2xl font-600 ${cabinetSummary.nacharbeitErforderlich ? 'text-red-700' : ''}`}>{cabinetSummary.nacharbeitErforderlich}</p><p className="text-xs text-muted-foreground">Nacharbeit erforderlich</p></div>
-        <div><p className="text-2xl font-600 text-emerald-700">{cabinetSummary.abgeschlossen}</p><p className="text-xs text-muted-foreground">Abgeschlossen</p></div>
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div><p className={`text-lg font-600 ${cabinetSummary.betreiberbeanstandung ? 'text-red-700' : ''}`}>{cabinetSummary.betreiberbeanstandung}</p><p className="text-xs text-muted-foreground">Betreiberbeanstandung</p></div>
-        <div><p className="text-lg font-600 text-emerald-700">{cabinetSummary.betreiberfreigabeErteilt}</p><p className="text-xs text-muted-foreground">Betreiberfreigabe erteilt</p></div>
+
+      {/* Ebene 1: GGA-Gesamtzustand des Projekts */}
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <p className="text-sm text-muted-foreground"><span className="font-600 text-stone-900">{cabinetSummary.abgeschlossen}</span> von <span className="font-600 text-stone-900">{cabinetSummary.gesamt}</span> Schränken abgeschlossen</p>
+        {cabinetSummary.aufmerksamkeitErforderlich > 0 && <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-600 text-red-800">⚠ {cabinetSummary.aufmerksamkeitErforderlich} Schrank/Schränke benötigen Aufmerksamkeit</span>}
       </div>
 
+      {/* Ebene 2: Fortschritt (Workflow-Fortschritt, nicht sicherheitskritisch) */}
+      <div className="mt-4">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Fortschritt</p>
+        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <div><p className="text-2xl font-600">{cabinetSummary.gesamt}</p><p className="text-xs text-muted-foreground">Gesamt</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.bestandsaufnahmeOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.bestandsaufnahmeOffen}</p><p className="text-xs text-muted-foreground">Bestandsaufnahme offen</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.planungOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.planungOffen}</p><p className="text-xs text-muted-foreground">Planung offen</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.umsetzungOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.umsetzungOffen}</p><p className="text-xs text-muted-foreground">Umsetzung offen</p></div>
+          <div><p className="text-2xl font-600 text-emerald-700">{cabinetSummary.abgeschlossen}</p><p className="text-xs text-muted-foreground">Abgeschlossen</p></div>
+        </div>
+      </div>
+
+      {/* Ebene 2: Prüfung & Freigabe — sicherheitsrelevante Zustände, bewusst optisch abgesetzt */}
+      <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+        <p className="text-xs font-600 uppercase tracking-wide text-amber-800">Prüfung &amp; Freigabe — sicherheitsrelevant</p>
+        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <div><p className={`text-2xl font-600 ${cabinetSummary.pruefungOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.pruefungOffen}</p><p className="text-xs text-muted-foreground">Prüfung offen</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.nachpruefungErforderlich ? 'text-amber-700' : ''}`}>{cabinetSummary.nachpruefungErforderlich}</p><p className="text-xs text-muted-foreground">Nachprüfung erforderlich</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.ueberfaellig ? 'text-red-700' : ''}`}>{cabinetSummary.ueberfaellig}</p><p className="text-xs text-muted-foreground">Überfällig</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.mitBlocker ? 'text-red-700' : ''}`}>{cabinetSummary.mitBlocker}</p><p className="text-xs text-muted-foreground">Offene Mängel</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.freigabeOffen ? 'text-amber-700' : ''}`}>{cabinetSummary.freigabeOffen}</p><p className="text-xs text-muted-foreground">Interne Freigabe ausstehend</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.betreiberfreigabeAusstehend ? 'text-amber-700' : ''}`}>{cabinetSummary.betreiberfreigabeAusstehend}</p><p className="text-xs text-muted-foreground">Betreiberfreigabe ausstehend</p></div>
+          <div><p className={`text-2xl font-600 ${cabinetSummary.betreiberbeanstandung ? 'text-red-700' : ''}`}>{cabinetSummary.betreiberbeanstandung}</p><p className="text-xs text-muted-foreground">Betreiberbeanstandung</p></div>
+        </div>
+      </div>
+
+      <p className="mt-2 text-xs text-muted-foreground">{cabinetSummary.nacharbeitErforderlich} Schrank/Schränke mit Nacharbeit · {cabinetSummary.betreiberfreigabeErteilt} Betreiberfreigabe(n) erteilt</p>
+
+      {/* Ebene 3: Schrankübersicht mit direkter operativer Aussage */}
       <div className="mt-5 border-t border-stone-100 pt-4">
         <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Wo hängt welcher Schrank — und warum?</p>
-        <ul className="mt-2 divide-y divide-stone-100">
-          {cabinetSummary.cabinets.map((cabinet) => <li key={cabinet.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
-            <Link href={`/collaboration/cabinets/${cabinet.id}`} className="font-600 text-blue-700 hover:underline">{cabinet.kennung}</Link>
-            <span className="text-xs text-muted-foreground">{GGA_LIFECYCLE_STAGE_LABELS[cabinet.lifecycleStage as keyof typeof GGA_LIFECYCLE_STAGE_LABELS]}</span>
-            {cabinet.betreiberstatus !== 'NICHT_ANGEFORDERT' && <span className="text-xs text-muted-foreground">{GGA_BETREIBERSTATUS_LABELS[cabinet.betreiberstatus as keyof typeof GGA_BETREIBERSTATUS_LABELS]}</span>}
-            {cabinet.offeneBlocker > 0 && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-600 text-red-800">{cabinet.offeneBlocker} Blocker</span>}
-            <span className="flex-1 truncate text-right text-xs text-muted-foreground">{cabinet.naechsteAktion}</span>
-          </li>)}
-        </ul>
+        {cabinetSummary.gesamt === 0
+          ? <p className="mt-2 text-sm text-muted-foreground">Noch keine GGA-Schränke in diesem Projekt.</p>
+          : <ul className="mt-2 divide-y divide-stone-100">
+            {cabinetSummary.cabinets.map((cabinet) => <li key={cabinet.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
+              <Link href={`/collaboration/cabinets/${cabinet.id}`} className="font-600 text-blue-700 hover:underline">{cabinet.kennung}</Link>
+              <span className="text-xs text-muted-foreground">{GGA_LIFECYCLE_STAGE_LABELS[cabinet.lifecycleStage as keyof typeof GGA_LIFECYCLE_STAGE_LABELS]}</span>
+              {cabinet.betreiberstatus !== 'NICHT_ANGEFORDERT' && <span className="text-xs text-muted-foreground">{GGA_BETREIBERSTATUS_LABELS[cabinet.betreiberstatus as keyof typeof GGA_BETREIBERSTATUS_LABELS]}</span>}
+              {cabinet.offeneBlocker > 0 && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-600 text-red-800">{cabinet.offeneBlocker} Blocker</span>}
+              {cabinet.aufmerksamkeitErforderlich && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-600 text-red-800">⚠ Aufmerksamkeit</span>}
+              <span className="flex-1 truncate text-right text-xs text-muted-foreground">{cabinet.naechsteAktion}</span>
+            </li>)}
+          </ul>}
       </div>
-    </section>}
+    </section>
 
     <section aria-labelledby="stage-title" className="mt-8 rounded-xl border border-stone-200 bg-white shadow-sm"><div className="border-b border-stone-200 px-5 py-4"><h2 id="stage-title" className="font-600">Projektphasen</h2></div><ol className="divide-y divide-stone-100">{project.stages.map((stage) => <li key={stage.id} className="px-5 py-5"><div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-sm font-600 text-white" aria-hidden="true">{stage.sequence}</span><div><p className="font-600">{stage.title}</p><p className="mt-1 text-sm text-muted-foreground">{stage.code} · {COLLABORATION_STAGE_STATUS_LABELS[stage.derivedStatus]}</p></div><span className="text-sm text-muted-foreground">{stage.weight > 0 ? `${stage.weight} % Gewicht` : 'Ohne Gewicht'}</span></div><CollaborationStageActions stage={stage} role={project.role} projectId={project.id} memberships={project.memberships} showCreationForms={canSeeCreationForms} /></li>)}</ol></section>
 

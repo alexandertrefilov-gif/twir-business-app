@@ -289,6 +289,89 @@ export function deriveCabinetStatus(cabinet: GgaCabinetSnapshot, now = new Date(
   }
 }
 
+// ── Control-Tower-Aggregation (REQ-012) ──────────────────────
+// Rein berechnet aus bereits abgeleiteten Einzelschrank-Status — keine
+// zweite Statuslogik, keine DB-Zugriffe. gga-cabinet.service.ts liefert
+// die pro Schrank abgeleiteten Werte an, diese Funktion aggregiert sie nur
+// noch projektweit. Dadurch ist die vollständige Aggregation ohne
+// Testdatenbank unit-testbar.
+
+export type GgaCabinetControlTowerEntry = { id: string; kennung: string } & DerivedGgaCabinetStatus
+
+export type GgaCabinetControlTowerSummary = {
+  gesamt: number
+  bestandsaufnahmeOffen: number
+  planungOffen: number
+  umsetzungOffen: number
+  pruefungOffen: number
+  nachpruefungErforderlich: number
+  ueberfaellig: number
+  freigabeOffen: number
+  nacharbeitErforderlich: number
+  abgeschlossen: number
+  mitBlocker: number
+  aufmerksamkeitErforderlich: number
+  betreiberfreigabeAusstehend: number
+  betreiberbeanstandung: number
+  betreiberfreigabeErteilt: number
+  cabinets: Array<{
+    id: string; kennung: string; lifecycleStage: GgaCabinetLifecycleStage; betreiberstatus: GgaCabinetBetreiberstatus
+    naechsteAktion: string; offeneBlocker: number; aufmerksamkeitErforderlich: boolean
+  }>
+}
+
+// Ein Schrank braucht sichtbare Aufmerksamkeit, wenn irgendein sicherheits-
+// oder freigaberelevanter Zustand offen ist. Bewusst eine Vereinigung
+// mehrerer, bereits existierender Einzelsignale — kein neuer Status, keine
+// neue Ableitung. nacharbeitErforderlich deckt zusätzlich eine bereits
+// abgelehnte (aber noch nicht neu angeforderte) Prüfung/Betreiberentscheidung
+// ab, die sonst weder in "Nachprüfung erforderlich" noch in
+// "Betreiberfreigabe ausstehend" auftaucht (der Betriebsstatus zeigt dafür
+// MANGEL_OFFEN, siehe deriveBetriebsstatus oben).
+export function ggaCabinetBrauchtAufmerksamkeit(item: DerivedGgaCabinetStatus): boolean {
+  return item.offeneBlocker > 0
+    || item.betriebsstatus === 'NACHPRUEFUNG_ERFORDERLICH'
+    || item.freigabeOffen
+    || item.betreiberfreigabeAusstehend
+    || item.nacharbeitErforderlich
+}
+
+export function deriveGgaCabinetControlTowerSummary(entries: GgaCabinetControlTowerEntry[]): GgaCabinetControlTowerSummary {
+  return {
+    gesamt: entries.length,
+    bestandsaufnahmeOffen: entries.filter((item) => !item.bestandsaufnahmeAbgeschlossen).length,
+    planungOffen: entries.filter((item) => item.bestandsaufnahmeAbgeschlossen && (item.planungsfortschritt === null || item.planungsfortschritt < 100)).length,
+    umsetzungOffen: entries.filter((item) => item.lifecycleStage === 'UMSETZUNG').length,
+    // pruefungOffen: technische Prüfarbeit (ABNAHME-Checkliste) noch nicht
+    // abgeschlossen. nachpruefungErforderlich: ein früherer Prüfzyklus wurde
+    // bereits entschieden und danach erneut angefordert — beide Signale
+    // können sich für denselben Schrank überschneiden, sie beantworten aber
+    // unterschiedliche Fragen ("ist die Prüfarbeit fertig?" vs. "ist das schon
+    // die wiederholte Prüfung?") und werden deshalb bewusst getrennt gezählt.
+    pruefungOffen: entries.filter((item) => item.pruefungOffen).length,
+    nachpruefungErforderlich: entries.filter((item) => item.betriebsstatus === 'NACHPRUEFUNG_ERFORDERLICH').length,
+    ueberfaellig: entries.filter((item) => item.betriebsstatus === 'UEBERFAELLIG').length,
+    freigabeOffen: entries.filter((item) => item.freigabeOffen).length,
+    nacharbeitErforderlich: entries.filter((item) => item.nacharbeitErforderlich).length,
+    // abgeschlossen zählt ausschließlich über item.abgeschlossen, also exakt
+    // über deriveCabinetStatus()/lifecycleStage === 'ABGESCHLOSSEN' — niemals
+    // über eine eigene UI-Bedingung (Single Source of Truth, siehe REQ-012).
+    abgeschlossen: entries.filter((item) => item.abgeschlossen).length,
+    mitBlocker: entries.filter((item) => item.offeneBlocker > 0).length,
+    aufmerksamkeitErforderlich: entries.filter(ggaCabinetBrauchtAufmerksamkeit).length,
+    // Zusätzliche, rein abgeleitete Betreiber-Flags (Abschnitt 20) — kein
+    // zweiter Lifecycle, nur zusätzliche Sichten auf denselben Zustand.
+    betreiberfreigabeAusstehend: entries.filter((item) => item.betreiberfreigabeAusstehend).length,
+    betreiberbeanstandung: entries.filter((item) => item.betreiberbeanstandung).length,
+    betreiberfreigabeErteilt: entries.filter((item) => item.betreiberfreigabeErteilt).length,
+    // Für "Wo hängt welcher Schrank und warum?" — pro Cabinet Stufe + nächste Aktion.
+    cabinets: entries.map((item) => ({
+      id: item.id, kennung: item.kennung, lifecycleStage: item.lifecycleStage, betreiberstatus: item.betreiberstatus,
+      naechsteAktion: item.naechsteAktion, offeneBlocker: item.offeneBlocker, aufmerksamkeitErforderlich: ggaCabinetBrauchtAufmerksamkeit(item),
+    })),
+  }
+}
+
 /** Formatiert das Betriebsstatus-Label, inkl. Tage-Countdown wo zutreffend. */
 export function formatGgaBetriebsstatusLabel(status: GgaCabinetBetriebsstatus, tageBisFaellig: number | null): string {
   switch (status) {

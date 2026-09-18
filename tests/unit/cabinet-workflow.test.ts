@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { deriveCabinetStatus, formatGgaBetriebsstatusLabel, type GgaCabinetSnapshot } from '@/lib/collaboration/cabinet-workflow'
+import {
+  deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, formatGgaBetriebsstatusLabel,
+  type GgaCabinetControlTowerEntry, type GgaCabinetSnapshot,
+} from '@/lib/collaboration/cabinet-workflow'
+
+function entry(id: string, kennung: string, snapshot: GgaCabinetSnapshot, now?: Date): GgaCabinetControlTowerEntry {
+  return { id, kennung, ...deriveCabinetStatus(snapshot, now) }
+}
 
 function baseSnapshot(overrides: Partial<GgaCabinetSnapshot> = {}): GgaCabinetSnapshot {
   return {
@@ -425,5 +432,112 @@ describe('deriveCabinetStatus — Mangelbehebung (REQ-011): Blocker-Resolution d
     expect(status.pruefstatus).toBe('BESTANDEN')
     expect(status.nacharbeitErforderlich).toBe(false)
     expect(status.abgeschlossen).toBe(true)
+  })
+})
+
+describe('deriveGgaCabinetControlTowerSummary (REQ-012): Projektweite GGA-Kennzahlen', () => {
+  it('leeres Projekt ohne GGA-Schränke liefert konsistente Nullwerte statt eines Fehlers oder null', () => {
+    const summary = deriveGgaCabinetControlTowerSummary([])
+    expect(summary).toEqual({
+      gesamt: 0, bestandsaufnahmeOffen: 0, planungOffen: 0, umsetzungOffen: 0,
+      pruefungOffen: 0, nachpruefungErforderlich: 0, ueberfaellig: 0, freigabeOffen: 0,
+      nacharbeitErforderlich: 0, abgeschlossen: 0, mitBlocker: 0, aufmerksamkeitErforderlich: 0,
+      betreiberfreigabeAusstehend: 0, betreiberbeanstandung: 0, betreiberfreigabeErteilt: 0,
+      cabinets: [],
+    })
+  })
+
+  it('aggregiert alle von REQ-012 geforderten Kennzahlen korrekt über mehrere Schränke hinweg (gesamt, Bestandsaufnahme, Planung, Umsetzung, Prüfung, interne/Betreiber-Freigabe, Mängel, abgeschlossen)', () => {
+    const neuAngelegt = entry('c1', 'N-001', baseSnapshot())
+    const inPlanung = entry('c2', 'N-002', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [{ id: 't1', title: 'Planung', status: 'TODO', isRequired: true, sequence: 1, stageCode: 'PLANUNG' }],
+    }))
+    const inUmsetzung = entry('c3', 'N-003', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage offen', status: 'TODO', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+    }))
+    const freigabeOffenCabinet = entry('c4', 'N-004', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+      checklistItems: [{ id: 'c1', title: 'Elektro/VDE geprüft', completed: true, isRequired: true, sequence: 1, stageCode: 'ABNAHME' }],
+    }))
+    const betreiberAusstehend = entry('c5', 'N-005', fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'op-1', status: 'REQUESTED', approvalType: 'OPERATOR_ACCEPTANCE', requestedAt: new Date('2026-02-03'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))
+    const mitOffenemMangel = entry('c6', 'N-006', baseSnapshot({
+      blockers: [{ id: 'b1', title: 'Beschädigtes Schild', status: 'OPEN' }],
+    }))
+    const abgeschlossenCabinet = entry('c7', 'N-007', fertigesCabinet())
+
+    const summary = deriveGgaCabinetControlTowerSummary([
+      neuAngelegt, inPlanung, inUmsetzung, freigabeOffenCabinet, betreiberAusstehend, mitOffenemMangel, abgeschlossenCabinet,
+    ])
+
+    expect(summary.gesamt).toBe(7)
+    expect(summary.bestandsaufnahmeOffen).toBe(2) // neuAngelegt, mitOffenemMangel
+    expect(summary.planungOffen).toBe(1) // inPlanung
+    expect(summary.umsetzungOffen).toBe(1) // inUmsetzung
+    expect(summary.freigabeOffen).toBe(1) // freigabeOffenCabinet
+    expect(summary.betreiberfreigabeAusstehend).toBe(1) // betreiberAusstehend
+    expect(summary.mitBlocker).toBe(1) // mitOffenemMangel
+    expect(summary.abgeschlossen).toBe(1) // abgeschlossenCabinet
+    expect(summary.cabinets).toHaveLength(7)
+  })
+
+  it('Nachprüfung erforderlich wird separat von einfacher offener Prüfung gezählt — beide Signale beantworten unterschiedliche Fragen', () => {
+    const ersteInspektionOffen = entry('c1', 'E-001', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+      ],
+    })) // noch nie geprüft: pruefungOffen=true, aber KEINE Nachprüfung
+    const nachpruefungOffen = entry('c2', 'E-002', fertigesCabinet({
+      approvals: [
+        { id: 'internal-1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' },
+        { id: 'internal-2', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-03-01'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    })) // bereits abgelehnt, erneut angefordert: pruefungOffen=true UND nachpruefungErforderlich=true
+
+    const summary = deriveGgaCabinetControlTowerSummary([ersteInspektionOffen, nachpruefungOffen])
+
+    expect(summary.pruefungOffen).toBe(2) // beide haben technisch offene Prüfarbeit
+    expect(summary.nachpruefungErforderlich).toBe(1) // nur der bereits einmal abgelehnte Schrank
+    expect(ersteInspektionOffen.betriebsstatus).not.toBe('NACHPRUEFUNG_ERFORDERLICH')
+    expect(nachpruefungOffen.betriebsstatus).toBe('NACHPRUEFUNG_ERFORDERLICH')
+  })
+
+  it('ein Schrank, der laut deriveCabinetStatus() bereits abgeschlossen ist, aber noch einen offenen Blocker hat, zählt gleichzeitig zu "abgeschlossen" UND zu "mitBlocker"/"aufmerksamkeitErforderlich" — keine Kategorie verdrängt die andere', () => {
+    const abgeschlossenMitMangel = entry('c1', 'K-001', fertigesCabinet({
+      blockers: [{ id: 'b1', title: 'Kleiner Nachtrag', status: 'OPEN' }],
+    }))
+    expect(abgeschlossenMitMangel.abgeschlossen).toBe(true) // ausschließlich aus deriveCabinetStatus(), nicht neu bewertet
+
+    const summary = deriveGgaCabinetControlTowerSummary([abgeschlossenMitMangel])
+    expect(summary.abgeschlossen).toBe(1)
+    expect(summary.mitBlocker).toBe(1)
+    expect(summary.aufmerksamkeitErforderlich).toBe(1)
+    expect(summary.cabinets[0].aufmerksamkeitErforderlich).toBe(true)
+  })
+
+  it('"abgeschlossen" zählt ausschließlich item.abgeschlossen (deriveCabinetStatus) — kein eigenes UI-Kriterium', () => {
+    const beanstandet = entry('c1', 'K-002', fertigesCabinet({
+      approvals: [{ id: 'internal-1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: new Date('2026-02-02'), stageCode: 'ABNAHME' }],
+    }))
+    expect(beanstandet.abgeschlossen).toBe(false)
+    const summary = deriveGgaCabinetControlTowerSummary([beanstandet])
+    expect(summary.abgeschlossen).toBe(0)
+    expect(summary.nacharbeitErforderlich).toBe(1)
+    expect(summary.aufmerksamkeitErforderlich).toBe(1)
   })
 })

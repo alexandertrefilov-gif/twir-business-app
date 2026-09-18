@@ -244,4 +244,24 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     expect(summary).not.toBeNull()
     expect(summary!.gesamt).toBeGreaterThan(0)
   })
+
+  // REQ-012: ein Projekt ohne GGA-Schränke lieferte vor diesem Checkpoint
+  // `null` zurück — die Projektseite musste den Leerfall gesondert behandeln
+  // und zeigte in diesem Fall gar keine Kachel. Jetzt: konsistente Nullwerte.
+  it('liefert bei einem Projekt ohne GGA-Schränke konsistente Nullwerte statt null', async () => {
+    const emptyProject = await db.collaborationProject.create({ data: { projectNumber: `${marker}-EMPTY`, name: 'Projekt ohne GGA-Schränke', active: true } })
+    const membership = await db.collaborationMembership.create({ data: { projectId: emptyProject.id, userId: managerUserId, role: 'COLLAB_MANAGER' } })
+    asManager()
+    const summary = await cabinetService.getGgaCabinetControlTowerSummary(emptyProject.id)
+    expect(summary).not.toBeNull()
+    expect(summary!.gesamt).toBe(0)
+    expect(summary!.abgeschlossen).toBe(0)
+    expect(summary!.mitBlocker).toBe(0)
+    expect(summary!.freigabeOffen).toBe(0)
+    expect(summary!.nachpruefungErforderlich).toBe(0)
+    expect(summary!.aufmerksamkeitErforderlich).toBe(0)
+    expect(summary!.cabinets).toEqual([])
+    await db.collaborationMembership.delete({ where: { id: membership.id } })
+    await db.collaborationProject.delete({ where: { id: emptyProject.id } })
+  })
 })

@@ -340,7 +340,7 @@ Lint und volle Testsuite grün.
 
 ## REQ-012 — GGA-Projektsteuerung
 
-Status: PLANNED
+Status: IMPLEMENTED + TESTED
 Priority: P1
 Area: GGA Cabinet / Collaboration
 Created: 2026-09-18
@@ -364,8 +364,8 @@ Bestehende Ableitungslogik wiederverwenden. Keine zweite Statuslogik in
 React-Komponenten implementieren.
 
 ### Akzeptanzkriterien
-- [ ] Alle acht genannten Kennzahlen sind auf der GGA-Projektseite einzeln (nicht vermischt) sichtbar.
-- [ ] Die Ableitung nutzt ausschließlich bestehende Statuslogik (`deriveCabinetStatus`/`getGgaCabinetControlTowerSummary`), keine neue Statuslogik in Komponenten.
+- [x] Alle acht genannten Kennzahlen sind auf der GGA-Projektseite einzeln (nicht vermischt) sichtbar.
+- [x] Die Ableitung nutzt ausschließlich bestehende Statuslogik (`deriveCabinetStatus`/`getGgaCabinetControlTowerSummary`), keine neue Statuslogik in Komponenten.
 
 ### Abhängigkeiten
 - GGA Cabinet (`getGgaCabinetControlTowerSummary`), CollaborationProject.
@@ -374,7 +374,25 @@ React-Komponenten implementieren.
 Noch nicht entschieden.
 
 ### Implementierung
-Noch nicht implementiert.
+Implementiert (Checkpoint GGA-02): `lib/collaboration/cabinet-workflow.ts` erhält eine neue,
+reine Aggregationsfunktion `deriveGgaCabinetControlTowerSummary()` (plus `ggaCabinetBrauchtAufmerksamkeit()`)
+— aggregiert ausschließlich bereits durch `deriveCabinetStatus()` abgeleitete Werte, keine neue
+Statuslogik. `getGgaCabinetControlTowerSummary()` in `lib/services/gga-cabinet.service.ts` ist jetzt
+ein dünner DB-Wrapper darum und liefert bei einem Projekt ohne Schränke konsistente Nullwerte statt
+`null`. Neue Felder: `nachpruefungErforderlich`, `ueberfaellig`, `aufmerksamkeitErforderlich` (Union
+aus offenem Blocker/Nachprüfung/interner Freigabe/Betreiberfreigabe/Nacharbeit, siehe Code-Kommentar).
+`app/(collaboration)/collaboration/projects/[id]/page.tsx` zeigt jetzt alle acht geforderten
+Kennzahlen einzeln, sicherheitsrelevante Zustände (Prüfung/Nachprüfung/überfällig/Mängel/Freigaben)
+optisch abgesetzt, plus einen Aufmerksamkeits-Hinweis projektweit und je Schrank. Kein Schrank kann
+laut UI als abgeschlossen erscheinen, ohne dass `deriveCabinetStatus()` dies bestätigt (regressionsgetestet).
+Regressionstests: `tests/unit/cabinet-workflow.test.ts` (Mehrfach-Schrank-Aggregation aller Kennzahlen,
+Nachprüfung getrennt von einfacher Prüfung, keine Kategorie verdrängt eine andere, leeres Projekt),
+`tests/integration/gga-cabinet-db.test.ts` (leeres Projekt gegen echte DB, ohne lokale
+`TEST_DATABASE_URL` weiterhin übersprungen). Gezielte Tests, Typecheck, Lint und volle Testsuite grün.
+UI live gegen den lokalen Dev-Server geprüft (1440×900/1024×768/768×1024, kein horizontaler Overflow,
+keine Konsolenfehler) — nur im Leerzustand (0 GGA-Schränke lokal vorhanden), da keine Testdaten in
+der Produktdatenbank angelegt werden durften; der befüllte Zustand (Schrankliste mit echten Einträgen,
+Aufmerksamkeits-Badges je Schrank) ist nicht live verifiziert, nur durch die Unit-Tests abgedeckt.
 
 ---
 

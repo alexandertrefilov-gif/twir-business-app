@@ -20,7 +20,7 @@ import {
 import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
 import { editorRoles, setCollaborationChecklistCompleted } from '@/lib/services/collaboration-phase2.service'
-import { deriveCabinetStatus, type GgaCabinetSnapshot } from '@/lib/collaboration/cabinet-workflow'
+import { deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, type GgaCabinetSnapshot } from '@/lib/collaboration/cabinet-workflow'
 import { Prisma } from '@prisma/client'
 
 // Stammdaten-Pflege ist enger gefasst als die allgemeinen Collaboration-
@@ -368,33 +368,17 @@ export async function getGgaCabinetAuditHistory(cabinetId: string) {
 }
 
 // ── Control-Tower-Aggregation (Schränke-Kachel) ──────────────
-// Rein berechnet — nichts davon wird auf CollaborationProject gespeichert.
+// Nur DB-Zugriff + Berechtigung; die eigentliche Aggregation ist reine,
+// unit-testbare Logik in cabinet-workflow.ts (deriveGgaCabinetControlTowerSummary).
+// Liefert bei einem Projekt ohne Schränke bewusst konsistente Nullwerte
+// (kein null) — die aufrufende Seite muss keinen Leerfall gesondert behandeln.
 export async function getGgaCabinetControlTowerSummary(projectId: string) {
   const { userId } = await requireCollaborationSession()
   await requireCollaborationProjectAccess(userId, projectId)
 
   const cabinets = await prisma.ggaCabinet.findMany({ where: { projectId, deletedAt: null }, select: cabinetListSelect })
-  if (cabinets.length === 0) return null
-
   const derived = cabinets.map((cabinet) => ({ id: cabinet.id, kennung: cabinet.kennung, ...deriveCabinetStatus(toCabinetSnapshot(cabinet)) }))
-  return {
-    gesamt: cabinets.length,
-    bestandsaufnahmeOffen: derived.filter((item) => !item.bestandsaufnahmeAbgeschlossen).length,
-    planungOffen: derived.filter((item) => item.bestandsaufnahmeAbgeschlossen && (item.planungsfortschritt === null || item.planungsfortschritt < 100)).length,
-    umsetzungOffen: derived.filter((item) => item.lifecycleStage === 'UMSETZUNG').length,
-    pruefungOffen: derived.filter((item) => item.pruefungOffen).length,
-    freigabeOffen: derived.filter((item) => item.freigabeOffen).length,
-    nacharbeitErforderlich: derived.filter((item) => item.nacharbeitErforderlich).length,
-    abgeschlossen: derived.filter((item) => item.abgeschlossen).length,
-    mitBlocker: derived.filter((item) => item.offeneBlocker > 0).length,
-    // Zusätzliche, rein abgeleitete Betreiber-Flags (Abschnitt 20) — kein
-    // zweiter Lifecycle, nur zusätzliche Sichten auf denselben Zustand.
-    betreiberfreigabeAusstehend: derived.filter((item) => item.betreiberfreigabeAusstehend).length,
-    betreiberbeanstandung: derived.filter((item) => item.betreiberbeanstandung).length,
-    betreiberfreigabeErteilt: derived.filter((item) => item.betreiberfreigabeErteilt).length,
-    // Für "Wo hängt welcher Schrank und warum?" — pro Cabinet Stufe + nächste Aktion.
-    cabinets: derived.map((item) => ({ id: item.id, kennung: item.kennung, lifecycleStage: item.lifecycleStage, betreiberstatus: item.betreiberstatus, naechsteAktion: item.naechsteAktion, offeneBlocker: item.offeneBlocker })),
-  }
+  return deriveGgaCabinetControlTowerSummary(derived)
 }
 
 // ── Betreiberfreigabe (OPERATOR_ACCEPTANCE) ───────────────────
