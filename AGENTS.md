@@ -31,6 +31,25 @@ Abhängigkeiten, Prisma-Modelle, Sicherheits-Invarianten, Storage-Architektur,
 Auth-Grenzen oder Workflow-Architektur geändert haben. Bei gewöhnlichem
 internem Refactoring den Index nicht anfassen.
 
+## Requirements and Architecture State
+
+1. `docs/PROJECT_INDEX.md` und `docs/PROJECT_MAP.md` = IST-Zustand
+   (ausschließlich tatsächlich implementiert).
+2. `docs/requirements/BACKLOG.md` = SOLL-Zustand (Ideen, Anforderungen,
+   noch nicht vollständig implementiert).
+3. `docs/requirements/DECISIONS.md` = freigegebene Entscheidungen —
+   unabhängig davon, ob bereits implementiert.
+4. Bei einer neuen Feature-Aufgabe: passende REQ-ID suchen; falls vorhanden,
+   deren Anforderungen verwenden; Implementierungsstatus trotzdem im Code
+   verifizieren, nicht dem Dokument vertrauen.
+5. Eine BACKLOG-Anforderung niemals als vorhandene Funktion behandeln.
+6. Nach erfolgreicher Implementierung: Tests ausführen; REQ-Status
+   aktualisieren; Implementierungsstatus der betroffenen DEC aktualisieren;
+   `PROJECT_INDEX.md` nur aktualisieren, wenn sich Entry Points, wichtige
+   Symbole oder Module geändert haben; `PROJECT_MAP.md` nur, wenn sich
+   Architektur/Modulbeziehungen tatsächlich geändert haben.
+7. Code bleibt Source of Truth für den IST-Zustand.
+
 ## Projektzweck
 
 TWIR ist eine interne, deutschsprachige Business-Anwendung für Kunden-, Angebots-, Auftrags-,
