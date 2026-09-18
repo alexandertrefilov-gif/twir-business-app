@@ -5,7 +5,18 @@ import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, Valida
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
 import { calculateProjectHealth, calculateProjectProgress, deriveNextAction, deriveStageStatuses, getStageCompletionBlocker, isCollaborationStageTransitionAllowed } from '@/lib/collaboration/project-workflow'
 
-export const editorRoles = ['COLLAB_MANAGER', 'INTERNAL_PLANNER', 'EXTERNAL_PLANNER', 'OPERATOR', 'PARTNER'] as const
+// GGA-04.2: 'OPERATOR' stand hier ursprünglich mit in der Liste, obwohl
+// KEINER der ca. 14 Aufrufer dieser Konstante (Task-/Checklisten-/Blocker-
+// CRUD, Stage-Übergänge, Freigabe-Anforderung, GGA-Checklisten-Vorlage/
+// -Prüfpunkt, Cabinet-Zuordnung, Dokument-Upload/-Löschen) einen legitimen
+// Betreiberprozess abbildet — der einzige echte OPERATOR-Schreibpfad ist
+// vollständig getrennt und nutzt bereits ausschließlich ['OPERATOR']
+// (decideGgaCabinetOperatorApproval, siehe unten in gga-cabinet.service.ts).
+// Dieselbe Rolle taucht in collaboration-document.service.ts bereits als
+// EXTERNAL_ONLY_VISIBILITY_ROLES (nur lesen) auf — Schreibrechte über
+// editorRoles widersprachen dieser bereits bestehenden Trennung. Audit und
+// Call-Site-Bestätigung: Checkpoint GGA-04.2.
+export const editorRoles = ['COLLAB_MANAGER', 'INTERNAL_PLANNER', 'EXTERNAL_PLANNER', 'PARTNER'] as const
 export const approverRoles = ['COLLAB_MANAGER', 'INTERNAL_PLANNER'] as const
 const taskStatus = z.enum(['TODO', 'IN_PROGRESS', 'BLOCKED', 'DONE', 'SKIPPED'])
 const blockerStatus = z.enum(['OPEN', 'RESOLVED'])
@@ -164,7 +175,14 @@ export async function resolveCollaborationBlocker(blockerId: string, resolution:
   const { userId, userEmail } = await requireCollaborationSession()
   const blocker = await prisma.collaborationBlocker.findUnique({ where: { id: blockerId }, select: { id: true, projectId: true, stageId: true, status: true } })
   if (!blocker) throw new NotFoundError('Blocker nicht gefunden')
-  if (!blocker.stageId) { await requireCollaborationProjectAccess(userId, blocker.projectId) } else {
+  // GGA-04.2: beide Zweige verlangen dieselbe Rollenprüfung (editorRoles) —
+  // ein projektweiter Blocker ohne stageId darf COLLAB_VIEWER (oder jeder
+  // anderen nicht-editierenden Rolle) genauso wenig auflösbar sein wie ein
+  // stufengebundener. Vorher prüfte dieser Zweig ausschließlich Mitgliedschaft.
+  if (!blocker.stageId) {
+    const membership = await requireCollaborationProjectAccess(userId, blocker.projectId)
+    if (!(editorRoles as readonly string[]).includes(membership.role)) throw new ForbiddenError('Keine Berechtigung für Blocker')
+  } else {
     const access = await requireCollaborationStageAccess(userId, blocker.stageId, editorRoles)
     if (access.projectId !== blocker.projectId) throw new NotFoundError('Blocker nicht gefunden')
   }

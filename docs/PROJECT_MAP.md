@@ -160,3 +160,11 @@ Runtime-Image heraus.
     verwenden — sonst erhält OPERATOR über den direkten Aufruf interner Routen
     (z. B. `/collaboration/projects/[id]`) unbeabsichtigt Lesezugriff auf
     interne Projekt-/GGA-Daten (siehe GGA-04.1).
+11. `editorRoles` (`collaboration-phase2.service.ts`) darf `OPERATOR` nie
+    enthalten — jede interne Task-/Checklisten-/Blocker-/Freigabe-/Cabinet-
+    Checklisten-/Dokument-Mutation läuft über diese Konstante. Der einzige
+    legitime OPERATOR-Schreibpfad ist vollständig getrennt und verwendet
+    ausschließlich `['OPERATOR']` (`decideGgaCabinetOperatorApproval`).
+    `resolveCollaborationBlocker()` muss für Blocker mit UND ohne `stageId`
+    dieselbe `editorRoles`-Prüfung erzwingen — COLLAB_VIEWER darf über den
+    `stageId === null`-Zweig niemals Schreibrechte erhalten (siehe GGA-04.2).

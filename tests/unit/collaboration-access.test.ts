@@ -147,3 +147,16 @@ describe('requireInternalCollaborationProjectAccess (GGA-04.1)', () => {
     await expect(requireInternalCollaborationProjectAccess('operator-user', 'projekt-b')).rejects.toBeInstanceOf(NotFoundError)
   })
 })
+
+// GGA-04.2 (P0-A): statische Regressionssicherung gegen ein versehentliches
+// erneutes Hinzufügen von 'OPERATOR' zu editorRoles — die vollständige
+// Verhaltensprüfung (kann OPERATOR tatsächlich keine internen Mutationen
+// mehr ausführen) läuft als Integrationstest gegen eine echte DB, siehe
+// tests/integration/gga-cabinet-db.test.ts → "GGA-04.2".
+describe('editorRoles (GGA-04.2: P0-A)', () => {
+  it('enthält OPERATOR nicht — der einzige legitime OPERATOR-Schreibpfad ist vollständig getrennt (decideGgaCabinetOperatorApproval, [\'OPERATOR\'])', async () => {
+    const { editorRoles } = await import('@/lib/services/collaboration-phase2.service')
+    expect(editorRoles).not.toContain('OPERATOR')
+    expect(editorRoles).toEqual(['COLLAB_MANAGER', 'INTERNAL_PLANNER', 'EXTERNAL_PLANNER', 'PARTNER'])
+  })
+})

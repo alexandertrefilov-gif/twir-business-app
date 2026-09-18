@@ -345,4 +345,81 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
       await expect(phase2Service.getCollaborationPhase2Project(projectAId)).rejects.toThrow('nicht gefunden')
     })
   })
+
+  // ── GGA-04.2: P0-A/P0-B — OPERATOR-/VIEWER-Schreibzugriffe geschlossen ──
+  describe('GGA-04.2: OPERATOR-/VIEWER-Schreibzugriffe im internen Collaboration-/GGA-Workflow', () => {
+    it('A) OPERATOR kann keine interne Aufgabe anlegen', async () => {
+      asProjectAOperator()
+      await expect(phase2Service.createCollaborationTask(stagePlanungId, { title: 'Illegitime Aufgabe (OPERATOR)' })).rejects.toThrow('Keine Berechtigung für diese Projektstufe')
+    })
+
+    it('B) OPERATOR kann eine bestehende interne Aufgabe nicht ändern', async () => {
+      asPlanner()
+      const task = await phase2Service.createCollaborationTask(stagePlanungId, { title: `${marker}-Task-B` })
+      asProjectAOperator()
+      await expect(phase2Service.updateCollaborationTask(task.id, { title: 'Manipuliert (OPERATOR)' })).rejects.toThrow('Keine Berechtigung für diese Projektstufe')
+    })
+
+    it('C) OPERATOR kann keinen internen Checklistenpunkt anlegen', async () => {
+      asProjectAOperator()
+      await expect(phase2Service.createCollaborationChecklistItem(stagePlanungId, { title: 'Illegitimer Punkt (OPERATOR)' })).rejects.toThrow('Keine Berechtigung für diese Projektstufe')
+    })
+
+    it('D) OPERATOR kann einen stufengebundenen Blocker nicht auflösen', async () => {
+      asPlanner()
+      const blocker = await phase2Service.createCollaborationBlocker(projectAId, { title: `${marker}-Blocker-D`, stageId: stagePlanungId })
+      asProjectAOperator()
+      await expect(phase2Service.resolveCollaborationBlocker(blocker.id, 'Versuch (OPERATOR)')).rejects.toThrow('Keine Berechtigung für diese Projektstufe')
+    })
+
+    it('E) OPERATOR kann keine interne Freigabe anfordern', async () => {
+      asProjectAOperator()
+      await expect(phase2Service.requestCollaborationApproval(stageAbnahmeId)).rejects.toThrow('Keine Berechtigung für diese Projektstufe')
+    })
+
+    it('F) OPERATOR kann keinen internen GGA-Prüfpunkt setzen', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-042-F`, bezeichnung: 'Inspektionstest' })
+      asProjectAOperator()
+      await expect(cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Elektro/VDE geprüft', true)).rejects.toThrow('Keine Berechtigung für diesen Schrank')
+    })
+
+    it('G) COLLAB_VIEWER kann einen projektweiten Blocker ohne stageId nicht auflösen', async () => {
+      asManager()
+      const projectWideBlocker = await phase2Service.createCollaborationBlocker(projectAId, { title: `${marker}-Blocker-G` })
+      expect(projectWideBlocker.stageId).toBeNull()
+      asViewer()
+      await expect(phase2Service.resolveCollaborationBlocker(projectWideBlocker.id, 'Versuch (COLLAB_VIEWER)')).rejects.toThrow('Keine Berechtigung für Blocker')
+    })
+
+    it('H) eine interne Editor-Rolle kann einen projektweiten Blocker ohne stageId weiterhin auflösen', async () => {
+      asPlanner()
+      const projectWideBlocker = await phase2Service.createCollaborationBlocker(projectAId, { title: `${marker}-Blocker-H` })
+      const resolved = await phase2Service.resolveCollaborationBlocker(projectWideBlocker.id, 'Behoben (INTERNAL_PLANNER)')
+      expect(resolved.status).toBe('RESOLVED')
+    })
+
+    it('I) die REQ-011-Mangelbehebung (Blocker mit stageId + cabinetId) funktioniert für interne Editor-Rollen unverändert', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-042-I`, bezeichnung: 'Mangeltest' })
+      const cabinetBlocker = await phase2Service.createCollaborationBlocker(projectAId, { title: `${marker}-Blocker-I`, stageId: stageAbnahmeId, cabinetId: cabinet.id })
+      const resolved = await phase2Service.resolveCollaborationBlocker(cabinetBlocker.id, 'Dichtung ersetzt und Tür neu justiert.')
+      expect(resolved.status).toBe('RESOLVED')
+      expect(resolved.resolution).toBe('Dichtung ersetzt und Tür neu justiert.')
+    })
+
+    it('J) OPERATOR kann weiterhin seine eigene Betreiberfreigabe entscheiden (legitimer Betreiberprozess bleibt unverändert)', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-042-J`, bezeichnung: 'Betreiberentscheidungstest' })
+      const approvalRequest = await cabinetService.requestGgaCabinetOperatorApproval(cabinet.id)
+      asProjectAOperator()
+      const decided = await cabinetService.decideGgaCabinetOperatorApproval(approvalRequest.id, { decision: 'APPROVED', unterlagenGeprueft: true })
+      expect(decided.status).toBe('APPROVED')
+    })
+
+    it('L) eine Rolle ohne jede Mitgliedschaft in Projekt A kann dort keine interne Aufgabe anlegen (Cross-Project-Mutation bleibt verboten)', async () => {
+      asOutsider() // COLLAB_MANAGER, aber nur Mitglied von Projekt B
+      await expect(phase2Service.createCollaborationTask(stagePlanungId, { title: 'Cross-Project-Angriff' })).rejects.toThrow('nicht gefunden')
+    })
+  })
 })
