@@ -56,6 +56,19 @@ Trennung erfolgt über getrennte Cookie-Namen UND `authScope`-JWT-Claim (doppelt
 abgesichert). `/api/health` ist die einzige Ausnahme ohne Auth — exakter
 Pfad-Match, keine Präfix-Ausnahme.
 
+Innerhalb der Collaboration-Domain gibt es zusätzlich eine zweite Grenze
+zwischen internem Bereich und Betreiberportal (beide teilen sich Cookie/
+authScope, trennen sich über die `CollaborationRole`):
+`requireCollaborationProjectAccess`/`requireCollaborationCabinetAccess`
+(`lib/auth/collaboration-guards.ts`) prüfen nur Mitgliedschaft, absichtlich
+rollenagnostisch — gemeinsam genutzte Funktionen wie `getGgaCabinetDetail`
+oder die Dokumentdienste brauchen OPERATOR weiterhin (Dokumente filtern
+stattdessen selbst nach `visibility`, siehe `collaboration-document.service.ts`).
+Ausschließlich intern genutzte Lesezugriffe (Projektdetail, Aktivitäten,
+GGA-Kennzahlen/-Arbeitsliste, Schrank-Audit-Historie) verwenden zusätzlich
+`requireInternalCollaborationProjectAccess` bzw. `requireCollaborationCabinetAccess`
+mit `internalCollaborationRoles`, die OPERATOR explizit ausschließen.
+
 ## Storage
 
 ```
@@ -135,3 +148,15 @@ Runtime-Image heraus.
    durch `NODE_ENV`-Gate abgesichert, nicht nur durch die Env-Variable.
 8. Downloads/Dateizugriffe laufen ausschließlich über geprüfte App-Routen —
    nie direkt aus einem Storage-Pfad über einen statischen File-Server.
+9. Der projektübergreifende interne GGA Control Tower (`getGgaControlTowerOverview`)
+   schließt Projekte, in denen die Rolle des Nutzers `OPERATOR` ist, aus der
+   Aggregation aus — der interne Control Tower ist keine Betreiberansicht.
+10. `requireCollaborationProjectAccess`/`requireCollaborationCabinetAccess`
+    (ohne `allowedRoles`) prüfen ausschließlich Mitgliedschaft, nie Rolle —
+    das ist beabsichtigt für Funktionen, die OPERATOR gemeinsam mit internen
+    Rollen nutzt (z. B. `getGgaCabinetDetail`, Dokumentdienste). Ein rein
+    intern genutzter Lesezugriff MUSS stattdessen `requireInternalCollaboration-
+    ProjectAccess` oder `requireCollaborationCabinetAccess(..., internalCollaborationRoles)`
+    verwenden — sonst erhält OPERATOR über den direkten Aufruf interner Routen
+    (z. B. `/collaboration/projects/[id]`) unbeabsichtigt Lesezugriff auf
+    interne Projekt-/GGA-Daten (siehe GGA-04.1).

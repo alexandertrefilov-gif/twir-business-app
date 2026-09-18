@@ -22,10 +22,12 @@ describe.skipIf(!RUN_INTEGRATION)('CollaborationDocument — Datenbankintegratio
 
   let memberUserId = '', memberEmail = ''
   let outsiderUserId = '', outsiderEmail = ''
+  let operatorUserId = '', operatorEmail = ''
   let projectAId = '', projectBId = ''
 
   function asMember() { auth.getServerSession.mockResolvedValue({ user: { id: memberUserId, email: memberEmail, authScope: 'COLLABORATION' } }) }
   function asOutsider() { auth.getServerSession.mockResolvedValue({ user: { id: outsiderUserId, email: outsiderEmail, authScope: 'COLLABORATION' } }) }
+  function asOperator() { auth.getServerSession.mockResolvedValue({ user: { id: operatorUserId, email: operatorEmail, authScope: 'COLLABORATION' } }) }
 
   beforeAll(async () => {
     storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'gga-doc-test-'))
@@ -38,6 +40,8 @@ describe.skipIf(!RUN_INTEGRATION)('CollaborationDocument — Datenbankintegratio
     memberUserId = member.id; memberEmail = member.email
     const outsider = await db.user.create({ data: { email: `${marker}-outsider@example.invalid`, passwordHash: 'not-used', firstName: 'Outsider', lastName: 'Test', roleId: role.id, status: 'ACTIVE' } })
     outsiderUserId = outsider.id; outsiderEmail = outsider.email
+    const operator = await db.user.create({ data: { email: `${marker}-operator@example.invalid`, passwordHash: 'not-used', firstName: 'Operator', lastName: 'Test', roleId: role.id, status: 'ACTIVE' } })
+    operatorUserId = operator.id; operatorEmail = operator.email
 
     const projectA = await db.collaborationProject.create({ data: { projectNumber: `${marker}-A`, name: 'Doc Test Projekt A', active: true } })
     projectAId = projectA.id
@@ -45,19 +49,20 @@ describe.skipIf(!RUN_INTEGRATION)('CollaborationDocument — Datenbankintegratio
     projectBId = projectB.id
     await db.collaborationMembership.create({ data: { projectId: projectAId, userId: memberUserId, role: 'INTERNAL_PLANNER' } })
     await db.collaborationMembership.create({ data: { projectId: projectBId, userId: outsiderUserId, role: 'COLLAB_MANAGER' } })
+    await db.collaborationMembership.create({ data: { projectId: projectAId, userId: operatorUserId, role: 'OPERATOR' } })
 
     documentService = await import('@/lib/services/collaboration-document.service')
   })
 
   afterAll(async () => {
     if (db) {
-      await db.auditLog.deleteMany({ where: { userId: { in: [memberUserId, outsiderUserId].filter(Boolean) } } })
+      await db.auditLog.deleteMany({ where: { userId: { in: [memberUserId, outsiderUserId, operatorUserId].filter(Boolean) } } })
       for (const projectId of [projectAId, projectBId].filter(Boolean)) {
         await db.collaborationDocument.deleteMany({ where: { projectId } })
         await db.collaborationMembership.deleteMany({ where: { projectId } })
       }
       await db.collaborationProject.deleteMany({ where: { id: { in: [projectAId, projectBId].filter(Boolean) } } })
-      await db.user.deleteMany({ where: { id: { in: [memberUserId, outsiderUserId].filter(Boolean) } } })
+      await db.user.deleteMany({ where: { id: { in: [memberUserId, outsiderUserId, operatorUserId].filter(Boolean) } } })
       await db.$disconnect()
     }
     if (storageRoot) await fs.rm(storageRoot, { recursive: true, force: true })
@@ -118,5 +123,36 @@ describe.skipIf(!RUN_INTEGRATION)('CollaborationDocument — Datenbankintegratio
     })
     await documentService.softDeleteCollaborationDocument(document.id, 'Testbereinigung')
     await expect(documentService.getCollaborationDocumentForDownload(document.id)).rejects.toThrow('nicht gefunden')
+  })
+
+  // GGA-04.1: bereits vor diesem Checkpoint korrektes, aber bislang
+  // ungetestetes Verhalten — OPERATOR sieht nur EXTERNAL-sichtbare
+  // Dokumente, nie INTERNAL, ohne dass die Existenz eines INTERNAL-
+  // Dokuments verraten wird (dieselbe "nicht gefunden"-Fehlermeldung).
+  it('OPERATOR sieht ausschließlich EXTERNAL-sichtbare Dokumente, niemals INTERNAL', async () => {
+    asMember()
+    const internalDoc = await documentService.uploadCollaborationDocument({
+      projectId: projectAId,
+      documentKind: 'Sonstiges',
+      originalName: 'nur-intern.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('intern'),
+    })
+    const externalDoc = await documentService.uploadCollaborationDocument({
+      projectId: projectAId,
+      documentKind: 'Sonstiges',
+      originalName: 'fuer-betreiber.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('extern'),
+    })
+    await documentService.setCollaborationDocumentVisibility(externalDoc.id, 'EXTERNAL')
+
+    asOperator()
+    const visible = await documentService.listCollaborationDocuments({ projectId: projectAId })
+    expect(visible.map((d) => d.id)).toContain(externalDoc.id)
+    expect(visible.map((d) => d.id)).not.toContain(internalDoc.id)
+
+    await expect(documentService.getCollaborationDocumentForDownload(externalDoc.id)).resolves.toMatchObject({ id: externalDoc.id })
+    await expect(documentService.getCollaborationDocumentForDownload(internalDoc.id)).rejects.toThrow('nicht gefunden')
   })
 })

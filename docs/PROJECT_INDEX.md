@@ -217,7 +217,10 @@ Services:
 
 Auth-Guards: `lib/auth/collaboration-guards.ts` — `requireCollaborationSession`,
 `requireCollaborationProjectAccess`, `requireCollaborationManager`,
-`handleCollaborationPageError`
+`handleCollaborationPageError`,
+`requireInternalCollaborationProjectAccess` (Mitgliedschaft + Ausschluss
+`OPERATOR` — für ausschließlich intern genutzte Lesezugriffe, siehe
+PROJECT_MAP → Invariante 10), `internalCollaborationRoles`
 
 Prisma models: `CollaborationProject`, `CollaborationMembership`,
 `CollaborationProjectStage`, `CollaborationTask`, `CollaborationChecklistItem`,

@@ -57,6 +57,36 @@ export async function requireCurrentCollaborationProjectAccess(projectId: string
   return requireCollaborationProjectAccess(userId, projectId)
 }
 
+// Rollen mit Zugriff auf den internen Collaboration-Projektbereich. OPERATOR
+// ist bewusst ausgeschlossen — OPERATOR-Mitgliedschaften sind ausschließlich
+// für das getrennte Betreiberportal bestimmt (siehe PROJECT_MAP → Invariante
+// 5, 9). requireCollaborationProjectAccess() selbst bleibt absichtlich
+// rollenagnostisch, weil andere Aufrufer (z. B. Dokumente, Betreiber-
+// Freigabe-Anfrage) OPERATOR weiterhin benötigen — dort filtert die jeweilige
+// Funktion selbst nach Sichtbarkeit (siehe collaboration-document.service.ts).
+export const internalCollaborationRoles = ['COLLAB_VIEWER', 'COLLAB_MEMBER', 'COLLAB_MANAGER', 'EXTERNAL_PLANNER', 'INTERNAL_PLANNER', 'PARTNER'] as const
+
+/**
+ * Wie requireCollaborationProjectAccess(), zusätzlich mit Ausschluss der
+ * Rolle OPERATOR. Für Lesezugriffe, die es im Betreiberportal nicht gibt
+ * (vollständiges Projektdetail, interne Aktivitäten, GGA-Kennzahlen/
+ * -Arbeitsliste) — nicht für gemeinsam genutzte Funktionen wie Dokumente
+ * oder die Schrank-Detailansicht (die wird auch vom Betreiberportal
+ * aufgerufen und filtert stattdessen selbst nach Sichtbarkeit/Rolle).
+ */
+export async function requireInternalCollaborationProjectAccess(userId: string, projectId: string) {
+  const membership = await requireCollaborationProjectAccess(userId, projectId)
+  if (!(internalCollaborationRoles as readonly string[]).includes(membership.role)) {
+    throw new ForbiddenError('Kein Zugriff auf den internen Projektbereich')
+  }
+  return membership
+}
+
+export async function requireCurrentInternalCollaborationProjectAccess(projectId: string) {
+  const { userId } = await requireCollaborationSession()
+  return requireInternalCollaborationProjectAccess(userId, projectId)
+}
+
 /**
  * Object-level guard for stage-scoped collaboration mutations and reads.
  * A project membership is required even when a caller knows a stage UUID.

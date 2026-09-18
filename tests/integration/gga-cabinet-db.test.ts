@@ -15,12 +15,14 @@ vi.mock('next-auth', () => ({ getServerSession: auth.getServerSession }))
 describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegration', () => {
   let db: any
   let cabinetService: typeof import('@/lib/services/gga-cabinet.service')
+  let phase2Service: typeof import('@/lib/services/collaboration-phase2.service')
   const marker = `GGA-CAB-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
   let managerUserId = '', managerEmail = ''
   let plannerUserId = '', plannerEmail = ''
   let viewerUserId = '', viewerEmail = ''
   let outsiderUserId = '', outsiderEmail = ''
+  let projectAOperatorUserId = '', projectAOperatorEmail = ''
 
   let projectAId = '', projectBId = ''
   let stageKonzeptId = '', stagePlanungId = '', stageUmsetzungId = '', stageAbnahmeId = ''
@@ -30,6 +32,8 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
   function asPlanner() { auth.getServerSession.mockResolvedValue({ user: { id: plannerUserId, email: plannerEmail, authScope: 'COLLABORATION' } }) }
   function asViewer() { auth.getServerSession.mockResolvedValue({ user: { id: viewerUserId, email: viewerEmail, authScope: 'COLLABORATION' } }) }
   function asOutsider() { auth.getServerSession.mockResolvedValue({ user: { id: outsiderUserId, email: outsiderEmail, authScope: 'COLLABORATION' } }) }
+  // GGA-04.1: OPERATOR-Mitglied von Projekt A — für den Security-Regressionstest.
+  function asProjectAOperator() { auth.getServerSession.mockResolvedValue({ user: { id: projectAOperatorUserId, email: projectAOperatorEmail, authScope: 'COLLABORATION' } }) }
 
   beforeAll(async () => {
     const { PrismaClient } = await import('@prisma/client')
@@ -41,6 +45,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     const planner = await mk('planner'); plannerUserId = planner.id; plannerEmail = planner.email
     const viewer = await mk('viewer'); viewerUserId = viewer.id; viewerEmail = viewer.email
     const outsider = await mk('outsider'); outsiderUserId = outsider.id; outsiderEmail = outsider.email
+    const projectAOperator = await mk('projA-operator'); projectAOperatorUserId = projectAOperator.id; projectAOperatorEmail = projectAOperator.email
 
     const projectA = await db.collaborationProject.create({ data: { projectNumber: `${marker}-A`, name: 'GGA Cabinet Test Projekt A', active: true } })
     projectAId = projectA.id
@@ -53,6 +58,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     await db.collaborationMembership.create({ data: { projectId: projectAId, userId: viewerUserId, role: 'COLLAB_VIEWER' } })
     // outsider ist NUR Mitglied von Projekt B, nicht A
     await db.collaborationMembership.create({ data: { projectId: projectBId, userId: outsiderUserId, role: 'COLLAB_MANAGER' } })
+    await db.collaborationMembership.create({ data: { projectId: projectAId, userId: projectAOperatorUserId, role: 'OPERATOR' } })
 
     const stageKonzept = await db.collaborationProjectStage.create({ data: { projectId: projectAId, code: 'KONZEPT', title: 'Konzept', sequence: 1, weight: 10 } })
     stageKonzeptId = stageKonzept.id
@@ -64,11 +70,12 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     stageAbnahmeId = stageAbnahme.id
 
     cabinetService = await import('@/lib/services/gga-cabinet.service')
+    phase2Service = await import('@/lib/services/collaboration-phase2.service')
   })
 
   afterAll(async () => {
     if (!db) return
-    const allUserIds = [managerUserId, plannerUserId, viewerUserId, outsiderUserId].filter(Boolean)
+    const allUserIds = [managerUserId, plannerUserId, viewerUserId, outsiderUserId, projectAOperatorUserId].filter(Boolean)
     await db.auditLog.deleteMany({ where: { userId: { in: allUserIds } } })
     for (const projectId of [projectAId, projectBId].filter(Boolean)) {
       await db.collaborationDocument.deleteMany({ where: { projectId } })
@@ -290,5 +297,52 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     const worklistA = await cabinetService.getGgaCabinetProjectWorklist(projectAId)
     expect(worklistA.some((entry) => entry.cabinetId === foreignCabinet.id)).toBe(false)
     expect(worklistA.some((entry) => entry.title === 'Fremder Mangel')).toBe(false)
+  })
+
+  // ── GGA-04.1: Security-Fix — OPERATOR darf keine internen Projekt-/GGA-Lesedaten erhalten ──
+  describe('GGA-04.1: OPERATOR-Ausschluss von internen Lesezugriffen', () => {
+    it('A) eine berechtigte interne Rolle (COLLAB_MANAGER) erhält weiterhin das volle interne Projektdetail', async () => {
+      asManager()
+      const project = await phase2Service.getCollaborationPhase2Project(projectAId)
+      expect(project.id).toBe(projectAId)
+      expect(project.role).toBe('COLLAB_MANAGER')
+    })
+
+    it('B) OPERATOR (Mitglied von Projekt A) erhält 403 beim Versuch, das interne Projektdetail direkt zu lesen', async () => {
+      asProjectAOperator()
+      await expect(phase2Service.getCollaborationPhase2Project(projectAId)).rejects.toThrow('Kein Zugriff auf den internen Projektbereich')
+    })
+
+    it('B) OPERATOR erhält 403 bei den REQ-012/013-Lesefunktionen desselben Projekts', async () => {
+      asProjectAOperator()
+      await expect(cabinetService.getGgaCabinetControlTowerSummary(projectAId)).rejects.toThrow('Kein Zugriff auf den internen Projektbereich')
+      await expect(cabinetService.getGgaCabinetProjectWorklist(projectAId)).rejects.toThrow('Kein Zugriff auf den internen Projektbereich')
+    })
+
+    it('C) OPERATOR erhält 403 bei der internen Schrank-Audit-Historie', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-SEC-001`, bezeichnung: 'Security-Test' })
+      asProjectAOperator()
+      await expect(cabinetService.getGgaCabinetAuditHistory(cabinet.id)).rejects.toThrow('Keine Berechtigung für diesen Schrank')
+    })
+
+    it('F) OPERATOR behält weiterhin Zugriff auf die gemeinsam genutzte Schrank-Detailfunktion (Betreiberportal nicht beschädigt)', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-SEC-002`, bezeichnung: 'Security-Test Betreiber' })
+      asProjectAOperator()
+      const detail = await cabinetService.getGgaCabinetDetail(cabinet.id)
+      expect(detail.id).toBe(cabinet.id)
+      expect(detail.role).toBe('OPERATOR')
+    })
+
+    it('G) Cross-Project-IDOR bleibt verboten: OPERATOR aus Projekt A kommt an Projekt B nicht heran (NotFoundError, nicht 403)', async () => {
+      asProjectAOperator()
+      await expect(phase2Service.getCollaborationPhase2Project(projectBId)).rejects.toThrow('nicht gefunden')
+    })
+
+    it('H) eine interne Rolle ohne jede Mitgliedschaft in Projekt A bleibt weiterhin verboten', async () => {
+      asOutsider() // COLLAB_MANAGER, aber nur in Projekt B
+      await expect(phase2Service.getCollaborationPhase2Project(projectAId)).rejects.toThrow('nicht gefunden')
+    })
   })
 })

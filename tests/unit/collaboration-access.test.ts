@@ -4,12 +4,15 @@ const auth = vi.hoisted(() => ({ getServerSession: vi.fn() }))
 vi.mock('next-auth', () => ({ getServerSession: auth.getServerSession }))
 
 import { prisma } from '@/lib/db/prisma'
-import { NotFoundError, UnauthorizedError } from '@/lib/auth/permissions'
+import { ForbiddenError, NotFoundError, UnauthorizedError } from '@/lib/auth/permissions'
 import {
+  requireCollaborationCabinetAccess,
   requireCollaborationManager,
   requireCollaborationProjectAccess,
   requireCollaborationSession,
   requireCollaborationStageAccess,
+  requireInternalCollaborationProjectAccess,
+  internalCollaborationRoles,
 } from '@/lib/auth/collaboration-guards'
 import {
   COLLABORATION_SESSION_COOKIE,
@@ -84,5 +87,63 @@ describe('Collaboration-Mandantentrennung', () => {
         }),
       }),
     }))
+  })
+})
+
+// GGA-04.1: requireCollaborationProjectAccess() selbst ist absichtlich
+// rollenagnostisch (siehe Kommentar dort — Dokumente/Betreiber-Freigabe
+// brauchen weiterhin jede Rolle inkl. OPERATOR). requireInternalCollaboration-
+// ProjectAccess() ist der zusätzliche Guard für ausschließlich intern
+// genutzte Lesezugriffe (Projektdetail, Aktivitäten, GGA-Kennzahlen/
+// -Arbeitsliste) und schließt OPERATOR serverseitig aus.
+describe('requireInternalCollaborationProjectAccess (GGA-04.1)', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('A) erlaubt jede interne Collaboration-Rolle', async () => {
+    const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+    for (const role of internalCollaborationRoles) {
+      findFirst.mockResolvedValueOnce({ id: 'm1', role, project: { id: 'p1', name: 'Projekt A' } } as never)
+      await expect(requireInternalCollaborationProjectAccess('u1', 'p1')).resolves.toMatchObject({ role })
+    }
+  })
+
+  it('B) lehnt eine OPERATOR-Mitgliedschaft mit ForbiddenError ab, obwohl die Projektmitgliedschaft selbst gültig ist', async () => {
+    const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+    findFirst.mockResolvedValueOnce({ id: 'm1', role: 'OPERATOR', project: { id: 'p1', name: 'Projekt A' } } as never)
+    await expect(requireInternalCollaborationProjectAccess('operator-user', 'p1')).rejects.toBeInstanceOf(ForbiddenError)
+    // Die zugrunde liegende Mitgliedschaftsprüfung bleibt unverändert (IDOR-Schutz):
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ userId: 'operator-user', projectId: 'p1', active: true }),
+    }))
+  })
+
+  it('H) eine interne Rolle ohne jede Projektmitgliedschaft bleibt weiterhin verboten (NotFoundError, nicht ForbiddenError)', async () => {
+    const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+    findFirst.mockResolvedValueOnce(null)
+    await expect(requireInternalCollaborationProjectAccess('u1', 'fremdes-projekt')).rejects.toBeInstanceOf(NotFoundError)
+  })
+
+  it('C) derselbe OPERATOR-Ausschluss gilt für interne Schrank-Ressourcen (requireCollaborationCabinetAccess mit internalCollaborationRoles)', async () => {
+    const findFirst = vi.mocked(prisma.ggaCabinet.findFirst)
+    findFirst.mockResolvedValueOnce({
+      id: 'cabinet-1', projectId: 'p1', kennung: 'K-001', bezeichnung: 'Schrank',
+      project: { memberships: [{ id: 'm1', role: 'OPERATOR' }] },
+    } as never)
+    await expect(requireCollaborationCabinetAccess('operator-user', 'cabinet-1', internalCollaborationRoles as unknown as string[])).rejects.toBeInstanceOf(ForbiddenError)
+  })
+
+  it('F) OPERATOR-Zugriff auf die gemeinsam genutzte Schrank-Detailfunktion (getGgaCabinetDetail, ohne allowedRoles) bleibt erlaubt — Betreiberportal darf nicht brechen', async () => {
+    const findFirst = vi.mocked(prisma.ggaCabinet.findFirst)
+    findFirst.mockResolvedValueOnce({
+      id: 'cabinet-1', projectId: 'p1', kennung: 'K-001', bezeichnung: 'Schrank',
+      project: { memberships: [{ id: 'm1', role: 'OPERATOR' }] },
+    } as never)
+    await expect(requireCollaborationCabinetAccess('operator-user', 'cabinet-1')).resolves.toMatchObject({ membership: { role: 'OPERATOR' } })
+  })
+
+  it('G) Cross-Project-IDOR bleibt für OPERATOR wie für jede andere Rolle verboten (NotFoundError statt Daten aus einem fremden Projekt)', async () => {
+    const findFirst = vi.mocked(prisma.collaborationMembership.findFirst)
+    findFirst.mockResolvedValueOnce(null) // OPERATOR ist nicht Mitglied von Projekt B
+    await expect(requireInternalCollaborationProjectAccess('operator-user', 'projekt-b')).rejects.toBeInstanceOf(NotFoundError)
   })
 })

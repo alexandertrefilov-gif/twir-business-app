@@ -27,6 +27,7 @@ vi.mock('@/lib/db/prisma', () => ({
     collaborationChecklistItem: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     collaborationBlocker: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     collaborationApproval: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    ggaCabinet: { findFirst: vi.fn(), findMany: vi.fn() },
     user: { findUnique: vi.fn(), update: vi.fn() },
     project: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
   },

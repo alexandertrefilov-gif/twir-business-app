@@ -13,9 +13,11 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/db/prisma'
 import {
+  internalCollaborationRoles,
   requireCollaborationCabinetAccess,
   requireCollaborationProjectAccess,
   requireCollaborationSession,
+  requireInternalCollaborationProjectAccess,
 } from '@/lib/auth/collaboration-guards'
 import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
@@ -344,7 +346,10 @@ export async function setGgaCabinetInspectionItem(cabinetId: string, title: stri
 // Historientabelle.
 export async function getGgaCabinetAuditHistory(cabinetId: string) {
   const { userId } = await requireCollaborationSession()
-  await requireCollaborationCabinetAccess(userId, cabinetId)
+  // Nur intern genutzt (Historie-Sektion der internen Schrankseite) — anders
+  // als getGgaCabinetDetail() nicht vom Betreiberportal aufgerufen, deshalb
+  // hier ausdrücklich auf interne Rollen beschränkt.
+  await requireCollaborationCabinetAccess(userId, cabinetId, internalCollaborationRoles)
 
   const [tasks, checklistItems, blockers, approvals, documents] = await Promise.all([
     prisma.collaborationTask.findMany({ where: { cabinetId }, select: { id: true } }),
@@ -377,7 +382,7 @@ export async function getGgaCabinetAuditHistory(cabinetId: string) {
 // (kein null) — die aufrufende Seite muss keinen Leerfall gesondert behandeln.
 export async function getGgaCabinetControlTowerSummary(projectId: string) {
   const { userId } = await requireCollaborationSession()
-  await requireCollaborationProjectAccess(userId, projectId)
+  await requireInternalCollaborationProjectAccess(userId, projectId)
 
   const cabinets = await prisma.ggaCabinet.findMany({ where: { projectId, deletedAt: null }, select: cabinetListSelect })
   const derived = cabinets.map((cabinet) => ({ id: cabinet.id, kennung: cabinet.kennung, ...deriveCabinetStatus(toCabinetSnapshot(cabinet)) }))
@@ -395,7 +400,7 @@ function membershipName(membership: { user: { firstName: string; lastName: strin
 // Aggregation (das ist REQ-014, hier bewusst nicht vorweggenommen).
 export async function getGgaCabinetProjectWorklist(projectId: string) {
   const { userId } = await requireCollaborationSession()
-  await requireCollaborationProjectAccess(userId, projectId)
+  await requireInternalCollaborationProjectAccess(userId, projectId)
 
   const cabinets = await prisma.ggaCabinet.findMany({ where: { projectId, deletedAt: null }, select: cabinetListSelect })
   const input = cabinets.map((cabinet) => ({

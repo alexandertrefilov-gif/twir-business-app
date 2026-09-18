@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { prisma } from '@/lib/db/prisma'
-import { requireCollaborationManager, requireCollaborationProjectAccess, requireCollaborationSession, requireCollaborationStageAccess } from '@/lib/auth/collaboration-guards'
+import { requireCollaborationManager, requireCollaborationProjectAccess, requireCollaborationSession, requireCollaborationStageAccess, requireInternalCollaborationProjectAccess } from '@/lib/auth/collaboration-guards'
 import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
 import { calculateProjectHealth, calculateProjectProgress, deriveNextAction, deriveStageStatuses, getStageCompletionBlocker, isCollaborationStageTransitionAllowed } from '@/lib/collaboration/project-workflow'
@@ -16,7 +16,7 @@ const blockerInputSchema = z.object({ title: z.string().trim().min(1).max(200), 
 
 export async function getCollaborationPhase2Project(projectId: string) {
   const { userId } = await requireCollaborationSession()
-  const membership = await requireCollaborationProjectAccess(userId, projectId)
+  const membership = await requireInternalCollaborationProjectAccess(userId, projectId)
   const project = await prisma.collaborationProject.findFirst({
     where: { id: projectId, active: true, deletedAt: null },
     select: {
@@ -295,7 +295,7 @@ export async function getVisibleCollaborationMemberships(filters?: { projectId?:
 // ── Letzte Aktivitäten (abgeleitet, keine eigene Tabelle) ──────
 export async function getRecentCollaborationActivity(projectId: string, limit = 10) {
   const { userId } = await requireCollaborationSession()
-  await requireCollaborationProjectAccess(userId, projectId)
+  await requireInternalCollaborationProjectAccess(userId, projectId)
 
   const [tasks, checklistItems, blockers, approvals, stages] = await Promise.all([
     prisma.collaborationTask.findMany({ where: { projectId, completedAt: { not: null } }, orderBy: { completedAt: 'desc' }, take: limit, select: { id: true, title: true, status: true, completedAt: true, stage: { select: { title: true } } } }),
