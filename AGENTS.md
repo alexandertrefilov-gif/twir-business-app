@@ -1,5 +1,36 @@
 # TWIR – Projektanweisungen
 
+## Repository Navigation — mandatory
+
+Der Code ist die einzige Quelle der Wahrheit. `docs/PROJECT_INDEX.md` und
+`docs/PROJECT_MAP.md` sind ausschließlich Navigationshilfen, keine zweite
+Spezifikation — bei Widerspruch gilt immer der Code.
+
+A. Keine Aufgabe mit einem rekursiven Repository-Scan beginnen.
+B. Zuerst `docs/PROJECT_INDEX.md` lesen.
+C. Das betroffene Modul bestimmen.
+D. Nur die für dieses Modul angegebenen Entry Points/Services/Tests lesen.
+E. `docs/PROJECT_MAP.md` nur lesen, wenn die Aufgabe Beziehungen zwischen
+   Modulen betrifft.
+F. Gezielte Suche nach Symbol-/Funktionsname statt Volltextsuche verwenden.
+G. `app/`, `lib/`, `components/`, `tests/`, `prisma/` nicht vollständig
+   lesen, sofern die Aufgabe das nicht ausdrücklich erfordert.
+H. Suchumfang nur erweitern, wenn:
+   - der Index nicht ausreicht,
+   - eine unbekannte Abhängigkeit auffällt,
+   - eine Sicherheitsauswirkung mehrere Module betrifft,
+   - eine Prisma-Änderung eine Impact-Analyse erfordert,
+   - Build/Typecheck/Test auf eine zusätzliche Abhängigkeit hinweist.
+I. Widerspricht `PROJECT_INDEX.md` dem Code: der Code hat Vorrang. Die
+   veraltete Stelle im Index vermerken und erst nach erfolgreichen Tests
+   aktualisieren — nicht spekulativ vorab.
+
+**Index-Pflege:** Nach einer erfolgreich abgeschlossenen Aufgabe `PROJECT_INDEX.md`
+nur aktualisieren, wenn sich Entry Points, wichtige public Symbols,
+Abhängigkeiten, Prisma-Modelle, Sicherheits-Invarianten, Storage-Architektur,
+Auth-Grenzen oder Workflow-Architektur geändert haben. Bei gewöhnlichem
+internem Refactoring den Index nicht anfassen.
+
 ## Projektzweck
 
 TWIR ist eine interne, deutschsprachige Business-Anwendung für Kunden-, Angebots-, Auftrags-,
@@ -12,15 +43,19 @@ Der tatsächlich implementierte Hauptablauf ist:
 - Ein Auftrag kann direkt oder über `convertOfferToOrder` aus einem angenommenen Angebot entstehen.
 - Eine Rechnung kann einem Auftrag zugeordnet sein, benötigt aber nur zwingend einen Kunden.
 - `ServiceReport` und `ServiceReportItem` bilden Leistung und Leistungsnachweis gemeinsam ab.
-- Es gibt kein `Project`-Modell.
-- Es gibt kein separates Modell für eine Kundenbestellung.
+- `Project` (interner kaufmännischer Kontext) und `CustomerPurchaseOrder` existieren als eigene
+  Modelle — siehe `docs/PROJECT_INDEX.md`.
 - E-Mail-Versand ist nicht implementiert.
+
+Daneben existiert eine vollständig getrennte GGA-/Gefahrstoffschrank-Domäne
+(`CollaborationProject`, `GgaCabinet`, eigene Auth-Domain, Betreiberportal) —
+siehe `docs/PROJECT_INDEX.md` und `docs/PROJECT_MAP.md`.
 
 Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinden.
 
 ## Technischer Stack
 
-- Next.js `15.5.21`, App Router
+- Next.js `16.3.5`, App Router (Turbopack, `output: 'standalone'`)
 - React 19, React Server Components und Client Components
 - TypeScript 5 im Strict-Modus
 - PostgreSQL mit Prisma 5
@@ -43,7 +78,7 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
 - `lib/validators/`: Zod-Schemas und zentrale Berechnungen.
 - `lib/auth/`: NextAuth, Callback-Schutz und Berechtigungsmatrix.
 - `lib/security/`: Rate Limiting und Uploadvalidierung.
-- `lib/pdf-templates/`: vorhandene Angebot-, Leistungsnachweis- und Mahnvorlagen.
+- `lib/pdf-templates/`: PDF-Vorlagen — siehe `docs/PROJECT_INDEX.md` für den aktuellen Stand.
 - `lib/export/`: DATEV-Export und E-Rechnungs-Typvorbereitung.
 - `prisma/schema.prisma`: Datenmodell; `prisma/seed/seed.ts`: Demo-/Basisdaten.
 - `types/enums.ts`: Rollen, Statuswerte, Übergänge und Labels.
@@ -54,10 +89,11 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
 ## Geschäftsbegriffe
 
 - **Kunde:** `Customer`, optional mit `Contact`; Stammdaten werden soft gelöscht.
-- **Projekt:** Offen: im vorhandenen Code nicht als Modell oder eigenständiger Prozess implementiert.
+- **Projekt:** `Project` — interner kaufmännischer Kontext, optionaler Querverweis zu
+  Angebot/Auftrag, kein eigener Prozessschritt. Nicht zu verwechseln mit `CollaborationProject`
+  (separate GGA-Domäne).
 - **Angebot:** `Offer` mit Positionen, Preisen, Status und Kundensnapshot beim Versand.
-- **Bestellung:** Offen: kein eigenes Modell. Ein angenommenes Angebot kann in einen Auftrag
-  konvertiert werden; eine Kundenbestellnummer ist nicht modelliert.
+- **Kundenbestellung:** `CustomerPurchaseOrder` — eigenes Modell, an ein Angebot gehängt.
 - **Auftrag:** `Order`, direkt erstellt oder eindeutig aus einem Angebot erzeugt.
 - **Leistung:** Keine getrennte Entität; Positionen eines `ServiceReport`.
 - **Leistungsnachweis:** `ServiceReport` mit eindeutiger Nummer und Positionen.
@@ -80,7 +116,7 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
 ## Datenbankregeln
 
 - Prisma-Schema und TypeScript-Enums synchron halten.
-- Schemaänderungen benötigen versionierte Migrationen; aktuell fehlt `prisma/migrations/`.
+- Schemaänderungen benötigen versionierte Migrationen (`prisma/migrations/` vorhanden und maßgeblich).
 - `db:push` ist nur für lokale Entwicklung, nicht für Produktionsdeployments.
 - Hauptobjekte mit `deletedAt` soft löschen; bestehendes Hard-Delete-Verhalten nicht still ändern.
 - Positionen dürfen über bewusst definierte Cascades mit ihrem Elternobjekt gelöscht werden.
@@ -115,18 +151,24 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
 - Storno über Gegenrechnung und Referenz zum Original, nicht durch Überschreiben.
 - `ServiceReport` besitzt kein Statusmodell; keine Freigabe behaupten.
 - Dokumentdateien über `Document` registrieren und nur über geschützte API ausliefern.
-- PDF-Vorlagen existieren für Angebot, Leistungsnachweis und Mahnung.
-- Rechnungs- und Auftrags-PDF sind derzeit nicht implementiert.
+- PDF-Vorlagen und live erreichbare Routen existieren für Angebot, Auftrag, Leistungsnachweis,
+  Rechnung und die GGA-Schrankakte — siehe `docs/PROJECT_INDEX.md`.
+- Für Mahnung existiert eine Vorlage (`renderDunningPdf`), aber keine live Route — `pdfPath` wird
+  bislang nur manuell gepflegt, nicht serverseitig generiert.
 - Vorhandene `pdfVersion`-/`version`-Felder sind keine vollständige Versionierungslogik.
 
 ## Sicherheitsregeln
 
-- Credentials-Login und JWT-Session über `lib/auth/options.ts`.
-- Middleware schützt alle nicht ausdrücklich ausgenommenen Routen.
-- Jede schreibende Server Action/API nutzt `requirePermission`.
+- Credentials-Login und JWT-Session über `lib/auth/options.ts` (intern) bzw.
+  `lib/auth/collaboration-options.ts` (Collaboration/GGA) — zwei getrennte Auth-Domains,
+  siehe `docs/PROJECT_MAP.md`.
+- `proxy.ts` (Next 16, vormals `middleware.ts`) schützt alle nicht ausdrücklich ausgenommenen
+  Routen; Ausnahmen sind exakte Pfad-Matches, keine Präfixe.
+- Jede schreibende Server Action/API nutzt `requirePermission`; Server-Component-Seiten nutzen
+  `requirePagePermission`.
 - UI-Sichtbarkeit ersetzt keine serverseitige Autorisierung.
-- Nur vorhandene Rollen verwenden: `ADMIN`, `OFFICE`, `PROJECT_MANAGER`,
-  `EMPLOYEE`, `ACCOUNTING`.
+- Interne Rollen (`RoleName`): `ADMIN`, `OFFICE`, `PROJECT_MANAGER`, `EMPLOYEE`, `ACCOUNTING`.
+  Collaboration-Rollen (`CollaborationRole`, eigene Domäne): siehe `docs/PROJECT_INDEX.md`.
 - IDs und Objektverknüpfungen gegen unzulässigen Zugriff prüfen.
 - Uploads serverseitig nach Größe, Name, Erweiterung und MIME prüfen.
 - Dokumente nie direkt aus dem Storage-Pfad öffentlich ausliefern.
@@ -158,7 +200,7 @@ Keine fehlenden Begriffe oder Prozessstufen ohne ausdrückliche Freigabe erfinde
 - `.next-dev` muss in `.gitignore` bleiben.
 - `tsconfig.json` muss die generierten Typen aus `.next-dev/types` berücksichtigen.
 - Änderungen an `distDir` oder den Build-Skripten erfordern einen Parallelbetrieb-Test, einen
-  Produktions-Smoke-Test, einen Middleware-Test und die vollständigen Release-Gates.
+  Produktions-Smoke-Test, einen Proxy-Test (`proxy.ts`) und die vollständigen Release-Gates.
 
 ## UI-Regeln
 
