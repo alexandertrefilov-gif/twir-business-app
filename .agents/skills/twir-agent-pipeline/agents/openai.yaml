@@ -1,0 +1,4 @@
+interface:
+  display_name: "TWIR Agent Pipeline"
+  short_description: "Nächsten Task aus der Repo-Queue übernehmen und abarbeiten"
+  default_prompt: "Use $twir-agent-pipeline to pick up and work the next task from .agent/queue/."
