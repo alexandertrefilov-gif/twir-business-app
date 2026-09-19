@@ -16,8 +16,9 @@ import {
   markOrderSent,
 } from '@/lib/services/order.service'
 import type { OrderContentCard } from '@/lib/offers/rich-text'
-import type { OrderStatus } from '@/types/enums'
+import type { OrderStatus, RoleName } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
+import { archiveBusinessDocument } from '@/lib/documents/document-archive.service'
 
 export interface ActionState {
   success?:     boolean
@@ -28,7 +29,8 @@ export interface ActionState {
 async function getActor() {
   const session = await getServerSession(authOptions)
   if (!session?.user) throw new Error('Nicht angemeldet')
-  return { userId: session.user.id, userEmail: session.user.email }
+  const user = session.user as typeof session.user & { role: RoleName }
+  return { userId: user.id, userEmail: user.email, role: user.role }
 }
 
 function parseItems(formData: FormData) {
@@ -68,6 +70,7 @@ export async function createOrderAction(
   let orderId: string
   try {
     orderId = await createOrder(result.data, userId, userEmail)
+    await archiveBusinessDocument('order', orderId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
   }
@@ -107,6 +110,7 @@ export async function updateOrderAction(
 
   try {
     await updateOrder(orderId, result.data, userId, userEmail)
+    await archiveBusinessDocument('order', orderId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
   }
@@ -143,9 +147,10 @@ export async function changeOrderStatusAction(
 
   try {
     await changeOrderStatus(orderId, toStatus, userId, userEmail)
+    const archive = toStatus === 'COMPLETED' ? await archiveBusinessDocument('order', orderId, 'FINAL', await getActor()) : null
     revalidatePath(`/orders/${orderId}`)
     revalidatePath('/orders')
-    return { success: true }
+    return archive?.status === 'failed' ? { success: true, error: `Auftrag abgeschlossen; Archivierung fehlgeschlagen: ${archive.error}` } : { success: true }
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
   }

@@ -28,5 +28,17 @@ Prisma/PostgreSQL.
 - E-Mail-Versand ist nicht implementiert.
 - Eine konkrete Deploymentplattform und CI-Konfiguration sind nicht vorhanden.
 
+## Externes Dokumentenarchiv
+
+Das Notfallarchiv verwendet eine vom Business-Code getrennte Storage-Schnittstelle. Die erste
+Implementierung (`LocalFilesystemArchiveStorage`) schreibt atomar in einen in den
+Firmeneinstellungen konfigurierten Serverpfad. Damit kann bei lokalem Betrieb auch ein durch den
+OneDrive-Desktop-Client synchronisierter Ordner verwendet werden.
+
+Diese Variante ist nicht für das flüchtige Dateisystem von Vercel Functions geeignet und kann von
+einem Cloud-Server nicht direkt auf einen Mac schreiben. Für Cloud-Betrieb muss ein weiterer
+Storage-Adapter (z. B. Microsoft Graph/SharePoint oder S3-kompatibler Objektspeicher) ergänzt
+werden; die Dokument-Lifecycle-Logik bleibt dabei unverändert.
+
 Offen: im vorhandenen Code nicht eindeutig bestimmbar, wie Produktionshosting,
 persistenter Dateispeicher und geplante Jobs betrieben werden.

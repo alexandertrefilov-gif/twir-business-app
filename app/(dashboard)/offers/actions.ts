@@ -18,6 +18,7 @@ import {
 import type { OfferStatus } from '@/types/enums'
 import type { RoleName } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
+import { archiveBusinessDocument } from '@/lib/documents/document-archive.service'
 
 export interface ActionState {
   success?:     boolean
@@ -85,6 +86,7 @@ export async function createOfferAction(
   let offerId: string
   try {
     offerId = await createOffer(result.data, userId, userEmail)
+    await archiveBusinessDocument('offer', offerId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return {
       success: false,
@@ -134,6 +136,7 @@ export async function updateOfferAction(
 
   try {
     await updateOffer(offerId, result.data, userId, userEmail)
+    await archiveBusinessDocument('offer', offerId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return {
       success: false,
@@ -186,9 +189,10 @@ export async function changeOfferStatusAction(
 
   try {
     await changeOfferStatus(offerId, toStatus, userId, userEmail)
+    const archive = toStatus === 'SENT' ? await archiveBusinessDocument('offer', offerId, 'FINAL', await getActor()) : null
     revalidatePath(`/offers/${offerId}`)
     revalidatePath('/offers')
-    return { success: true }
+    return archive?.status === 'failed' ? { success: true, error: `Angebot versendet; Archivierung fehlgeschlagen: ${archive.error}` } : { success: true }
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Statuswechsel fehlgeschlagen' }
   }

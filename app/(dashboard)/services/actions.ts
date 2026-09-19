@@ -16,6 +16,7 @@ import {
 } from '@/lib/services/service-report.service'
 import type { RoleName } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
+import { archiveBusinessDocument } from '@/lib/documents/document-archive.service'
 
 export interface ActionState {
   success?:     boolean
@@ -27,7 +28,7 @@ async function getActor() {
   const session = await getServerSession(authOptions)
   if (!session?.user) throw new Error('Nicht angemeldet')
   const u = session.user as typeof session.user & { id: string; role: RoleName }
-  return { userId: u.id, userEmail: u.email, userRole: u.role }
+  return { userId: u.id, userEmail: u.email, userRole: u.role, role: u.role }
 }
 
 function parseItems(formData: FormData) {
@@ -65,6 +66,7 @@ export async function createServiceReportAction(
   let reportId: string
   try {
     reportId = await createServiceReport(result.data, userId, userEmail)
+    await archiveBusinessDocument('serviceReport', reportId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
   }
@@ -102,6 +104,7 @@ export async function updateServiceReportAction(
 
   try {
     await updateServiceReport(reportId, result.data, userId, userEmail, userRole)
+    await archiveBusinessDocument('serviceReport', reportId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
   }
@@ -132,8 +135,9 @@ export async function finalizeServiceReportAction(reportId: string): Promise<Act
   const actor = await getActor()
   try {
     await finalizeServiceReport(reportId, actor.userId, actor.userEmail)
+    const archive = await archiveBusinessDocument('serviceReport', reportId, 'FINAL', actor)
     revalidatePath(`/services/${reportId}`)
-    return { success: true }
+    return archive.status === 'failed' ? { success: true, error: `Finalisiert; Archivierung fehlgeschlagen: ${archive.error}` } : { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Finalisierung fehlgeschlagen' }
   }
