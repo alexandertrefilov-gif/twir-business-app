@@ -25,7 +25,7 @@ const stageSelect = {
   tasks: { orderBy: { sequence: 'asc' as const }, select: { id: true, title: true, description: true, status: true, priority: true, dueDate: true, sequence: true, isRequired: true } },
   checklistItems: { orderBy: { sequence: 'asc' as const }, select: { id: true, title: true, sequence: true, isRequired: true, completed: true, completedAt: true, responsibleMembershipId: true } },
   blockers: { where: { status: 'OPEN' as const }, orderBy: { createdAt: 'asc' as const }, select: { id: true, title: true, description: true, status: true, cause: true, resolution: true, stageId: true, taskId: true } },
-  approvals: { orderBy: { requestedAt: 'desc' as const }, select: { id: true, status: true, requestedAt: true, decidedAt: true, decisionNote: true } },
+  approvals: { orderBy: { requestedAt: 'desc' as const }, select: { id: true, status: true, requestedAt: true, decidedAt: true, decisionNote: true, cabinetId: true } },
 } as const
 
 type StageRow = Prisma.CollaborationProjectStageGetPayload<{ select: typeof stageSelect }>

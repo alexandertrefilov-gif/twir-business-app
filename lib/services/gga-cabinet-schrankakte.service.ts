@@ -4,11 +4,16 @@
 // PDF-Export, mit zielgruppenabhängiger Filterung (INTERNAL/OPERATOR).
 
 import { format } from 'date-fns'
-import { getGgaCabinetDetail, getGgaCabinetAuditHistory } from '@/lib/services/gga-cabinet.service'
+import { getGgaCabinetDetail, getGgaCabinetAuditHistory, loadGgaCabinetPruefnachweise } from '@/lib/services/gga-cabinet.service'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
 import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.service'
-import { deriveCabinetStatus, GGA_EX_ASSESSMENT_LABELS, GGA_LIFECYCLE_STAGE_LABELS, formatGgaBetriebsstatusLabel } from '@/lib/collaboration/cabinet-workflow'
+import {
+  deriveCabinetStatus, deriveCurrentPruefnachweis, GGA_EX_ASSESSMENT_LABELS, GGA_LIFECYCLE_STAGE_LABELS,
+  GGA_PRUEFART_LABELS, GGA_PRUEFERGEBNIS_LABELS, formatGgaBetriebsstatusLabel, type GgaPruefart,
+} from '@/lib/collaboration/cabinet-workflow'
 import type { GgaCabinetSchrankaktePdfData, SchrankakteSection } from '@/lib/pdf-templates/gga-cabinet-schrankakte.template'
+
+const GGA_PRUEFARTEN: GgaPruefart[] = ['LUEFTUNG', 'ELEKTRO', 'VDE']
 
 export type SchrankakteAudience = 'INTERNAL' | 'OPERATOR'
 
@@ -18,13 +23,6 @@ const entityTypeLabels: Record<string, string> = {
   gga_cabinet: 'Schrank', collaboration_task: 'Maßnahme', collaboration_checklist_item: 'Checkliste',
   collaboration_blocker: 'Blocker', collaboration_approval: 'Freigabe', collaboration_document: 'Dokument',
 }
-// Für audience=OPERATOR erlaubte Historie-Kategorien: technische Prüf-
-// Checklisten IMMER, Freigaben/Dokumente NUR mit erkennbar betreiber-
-// bezogenem metadata.reason (interne Approval-/Upload-Aktionen setzen dieses
-// Feld nicht und fallen dadurch automatisch heraus — keine Positivliste
-// einzelner Nutzer/E-Mails nötig).
-const EXTERNAL_RELEVANT_DOCUMENT_REASONS = new Set(['Dokument für Betreiber freigegeben'])
-const EXTERNAL_RELEVANT_APPROVAL_REASONS = new Set(['Betreiberfreigabe angefordert', 'Betreiberfreigabe erteilt', 'Betreiberfreigabe abgelehnt (Beanstandung)'])
 
 function decimalToStr(value: unknown, unit: string): string {
   return value === null || value === undefined ? '–' : `${value} ${unit}`
@@ -38,10 +36,15 @@ function displayName(person: { firstName: string; lastName: string } | null | un
 }
 
 export async function getGgaCabinetSchrankaktePdfData(cabinetId: string, audience: SchrankakteAudience = 'INTERNAL'): Promise<GgaCabinetSchrankaktePdfData> {
-  const [cabinet, history, company] = await Promise.all([
+  // Betreiber-Zugriff auf die Audit-Historie und die dazu passende Filterung
+  // (nur betreiberrelevante Einträge) sind seit REQ-015.2 innerhalb von
+  // getGgaCabinetAuditHistory() atomar zusammengefasst — audience wird
+  // deshalb unverändert durchgereicht, keine eigene Filterung mehr hier.
+  const [cabinet, history, company, pruefnachweise] = await Promise.all([
     getGgaCabinetDetail(cabinetId),
-    getGgaCabinetAuditHistory(cabinetId),
+    getGgaCabinetAuditHistory(cabinetId, audience),
     getCompanySnapshot(),
+    loadGgaCabinetPruefnachweise(cabinetId),
   ])
   const logo = await loadCompanyLogoForPdf(company.logoStorageKey ?? company.logoPath)
 
@@ -114,6 +117,27 @@ export async function getGgaCabinetSchrankaktePdfData(cabinetId: string, audienc
       { label: 'Betriebsstatus', value: formatGgaBetriebsstatusLabel(status.betriebsstatus, status.betriebsstatusTageBisFaellig) },
       { label: 'Letzte Prüfung', value: fmtDate(cabinet.letztePruefungAm) },
       ...abnahmeChecklist.map((c) => ({ label: c.title, value: c.completed ? 'Geprüft' : 'Nicht geprüft' })),
+      // REQ-018/REQ-018.1: strukturierte Prüfnachweise je Prüfart, zusätzlich
+      // zur bestehenden Checkliste (die weiterhin unverändert oben steht).
+      // Betreiber-Sicht: ausführende Stelle bleibt sichtbar (fachlich
+      // relevant für den Betreiber), Bemerkung wird ausgeschlossen (kann
+      // interne Einschätzungen enthalten — analog zur Bestandsnotiz oben),
+      // der Nachweis-Hinweis nur, wenn das verknüpfte Dokument tatsächlich
+      // EXTERNAL sichtbar ist (dieselbe Regel wie Abschnitt M).
+      ...GGA_PRUEFARTEN.map((pruefart) => {
+        const current = deriveCurrentPruefnachweis(pruefnachweise, pruefart)
+        if (!current) return { label: `Prüfnachweis ${GGA_PRUEFART_LABELS[pruefart]}`, value: `${GGA_PRUEFERGEBNIS_LABELS.OFFEN} — kein Nachweis vorhanden` }
+        const linkedDocument = current.documentId ? cabinet.documents.find((d) => d.id === current.documentId) : null
+        const nachweisSichtbar = !!linkedDocument && (!isOperator || linkedDocument.visibility === 'EXTERNAL')
+        const parts = [
+          GGA_PRUEFERGEBNIS_LABELS[current.ergebnis],
+          current.pruefdatum ? `am ${fmtDate(current.pruefdatum)}` : null,
+          current.ausfuehrendeStelle ? `durch ${current.ausfuehrendeStelle}` : null,
+          current.documentId ? (nachweisSichtbar ? `Nachweis: ${linkedDocument!.originalName}` : 'Nachweis vorhanden') : null,
+          !isOperator && current.bemerkung ? `Bemerkung: ${current.bemerkung}` : null,
+        ].filter(Boolean)
+        return { label: `Prüfnachweis ${GGA_PRUEFART_LABELS[pruefart]}`, value: parts.join(' · ') }
+      }),
     ] },
     // K: für den Betreiber nur die eigenen Betreiberfreigabe-Runden — keine
     // internen Freigabe-Vorgänge/-Namen.
@@ -136,20 +160,8 @@ export async function getGgaCabinetSchrankaktePdfData(cabinetId: string, audienc
       .map((d) => ({ label: d.originalName, value: `${d.documentKind} · hochgeladen von ${d.uploadedBy.firstName} ${d.uploadedBy.lastName} am ${format(d.createdAt, 'dd.MM.yyyy')}` })) },
   ]
 
+  // history ist bereits audience-gefiltert (getGgaCabinetAuditHistory).
   const historyRows = history
-    .filter((entry) => {
-      if (!isOperator) return true
-      if (entry.entityType === 'collaboration_checklist_item') return true
-      if (entry.entityType === 'collaboration_approval') {
-        const reason = (entry.metadata as { reason?: string } | null)?.reason
-        return !!reason && EXTERNAL_RELEVANT_APPROVAL_REASONS.has(reason)
-      }
-      if (entry.entityType === 'collaboration_document') {
-        const reason = (entry.metadata as { reason?: string } | null)?.reason
-        return !!reason && EXTERNAL_RELEVANT_DOCUMENT_REASONS.has(reason)
-      }
-      return false // gga_cabinet, collaboration_task, collaboration_blocker: intern
-    })
     .map((entry) => ({
       at: format(entry.createdAt, 'dd.MM.yyyy HH:mm'),
       bereich: entityTypeLabels[entry.entityType] ?? entry.entityType,

@@ -123,10 +123,33 @@ export type DerivedGgaCabinetStatus = {
   betriebsstatusTageBisFaellig: number | null
 }
 
-const INTAKE_STAGE_CODES = new Set(['KONZEPT'])
-const PLANNING_STAGE_CODES = new Set(['PLANUNG'])
-const EXECUTION_STAGE_CODES = new Set(['UMSETZUNG'])
-const INSPECTION_STAGE_CODES = new Set(['ABNAHME'])
+// GGA-05.1: Single Source of Truth für die fünf kanonischen GGA-Projektphasen
+// — vorher parallel als GGA_FIVE_PHASE_PLAN in collaboration-phase2.service.ts
+// UND (mit abweichenden Codes AUSFUEHRUNG/UEBERGABE) in prisma/seed/seed.ts
+// gepflegt, was reale BusinessRuleError-Abbrüche und stille null-Ergebnisse
+// in progressForStages() zur Folge hatte (siehe PROJECT_MAP → Invariante 13).
+// Dieses Modul ist absichtlich abhängigkeitsfrei (kein Import von prisma/zod)
+// — collaboration-phase2.service.ts UND prisma/seed/seed.ts importieren beide
+// von hier, damit eine zweite, manuell gepflegte Code-Liste nicht mehr
+// entstehen kann.
+export const GGA_STAGE_KONZEPT = 'KONZEPT'
+export const GGA_STAGE_PLANUNG = 'PLANUNG'
+export const GGA_STAGE_UMSETZUNG = 'UMSETZUNG'
+export const GGA_STAGE_ABNAHME = 'ABNAHME'
+export const GGA_STAGE_ABSCHLUSS = 'ABSCHLUSS'
+
+export const GGA_FIVE_PHASE_PLAN = [
+  { code: GGA_STAGE_KONZEPT, title: 'Konzept', weight: 10, requiresApproval: false },
+  { code: GGA_STAGE_PLANUNG, title: 'Planung', weight: 20, requiresApproval: true },
+  { code: GGA_STAGE_UMSETZUNG, title: 'Umsetzung', weight: 35, requiresApproval: false },
+  { code: GGA_STAGE_ABNAHME, title: 'Abnahme', weight: 25, requiresApproval: true },
+  { code: GGA_STAGE_ABSCHLUSS, title: 'Abschluss', weight: 10, requiresApproval: false },
+] as const
+
+const INTAKE_STAGE_CODES = new Set([GGA_STAGE_KONZEPT])
+const PLANNING_STAGE_CODES = new Set([GGA_STAGE_PLANUNG])
+const EXECUTION_STAGE_CODES = new Set([GGA_STAGE_UMSETZUNG])
+const INSPECTION_STAGE_CODES = new Set([GGA_STAGE_ABNAHME])
 
 function progressForStages(
   tasks: GgaCabinetTaskSnapshot[],
@@ -287,6 +310,105 @@ export function deriveCabinetStatus(cabinet: GgaCabinetSnapshot, now = new Date(
     betreiberfreigabeAusstehend, betreiberbeanstandung, betreiberfreigabeErteilt,
     betriebsstatus, betriebsstatusTageBisFaellig,
   }
+}
+
+// ── Freigabe-Kette — gemeinsame Readiness-Prüfung (REQ-015 / GGA-05.2) ──
+// Beide Funktionen lesen ausschließlich den bereits bestehenden
+// deriveCabinetStatus()-Output (dieselbe Quelle, die auch die UI speist) —
+// keine neue, dritte Statuslogik. Unterschiedliche Schwellen sind fachlich
+// korrekt und dürfen nicht auf eine gemeinsame Bedingung reduziert werden
+// (siehe PROJECT_MAP → Invariante 5): die interne Freigabe setzt eine
+// vollständige ABNAHME-Checkliste voraus (die technische Prüfarbeit ist
+// erledigt und kann zur Entscheidung vorgelegt werden); die Betreiber-
+// freigabe setzt zusätzlich eine bereits erteilte, noch gültige interne
+// Freigabe voraus (pruefstatus === 'BESTANDEN') — technisch geprüft ist
+// nicht gleichbedeutend mit Betreiberfreigabe erteilt.
+export function ggaCabinetBereitFuerInterneFreigabe(status: DerivedGgaCabinetStatus): boolean {
+  return status.abnahmeChecklistFortschritt !== null && status.abnahmeChecklistFortschritt >= 100
+}
+
+export function ggaCabinetBereitFuerBetreiberfreigabe(status: DerivedGgaCabinetStatus): boolean {
+  return status.pruefstatus === 'BESTANDEN'
+}
+
+// REQ-015.4: reine Readiness-Abbildung je kanonischem GGA-Stage-Code auf
+// bereits vorhandene, abgeleitete DerivedGgaCabinetStatus-Felder — KEINE
+// neue Statuslogik, nur ein Adapter. Membership (welche Cabinets zählen)
+// wird NICHT hier entschieden, sondern vom Aufrufer aus GgaCabinet.projectId
+// bestimmt (siehe collaboration-phase2.service.ts) — diese Funktion
+// beantwortet ausschließlich "ist EIN bereits bekanntes Cabinet für DIESE
+// Phase fertig". Ein unbekannter/Nicht-GGA-Stage-Code blockiert nichts
+// (default true), damit Nicht-GGA-Projekte unberührt bleiben.
+export function isCabinetReadyForStage(status: DerivedGgaCabinetStatus, stageCode: string): boolean {
+  switch (stageCode) {
+    case GGA_STAGE_KONZEPT:
+      return status.bestandsaufnahmeAbgeschlossen
+    case GGA_STAGE_PLANUNG:
+      return status.planungsfortschritt !== null && status.planungsfortschritt >= 100
+    case GGA_STAGE_UMSETZUNG:
+      return status.montagefortschritt !== null && status.montagefortschritt >= 100
+    case GGA_STAGE_ABNAHME:
+      // Dieselbe Schwelle wie ggaCabinetBereitFuerBetreiberfreigabe():
+      // technisch geprüft UND intern freigegeben (APPROVED), nicht nur
+      // Checkliste vollständig — deckt sich mit dem in REQ-015.3
+      // reproduzierten Bypass-Szenario (Cabinet A "vollständig + APPROVED").
+      return status.pruefstatus === 'BESTANDEN'
+    case GGA_STAGE_ABSCHLUSS:
+      return status.abgeschlossen
+    default:
+      return true
+  }
+}
+
+// ── Strukturierte Prüfnachweise Lüftung/Elektro/VDE (REQ-018/REQ-018.1) ──
+// Reine, zustandslose Ableitung — kein Prisma-/Zod-Import (Modulkonvention,
+// siehe Dateikopf), daher eigene String-Literal-Typen statt der
+// generierten Prisma-Enums (analog zu GgaCabinetApprovalSnapshot.status
+// oben).
+export type GgaPruefart = 'LUEFTUNG' | 'ELEKTRO' | 'VDE'
+export type GgaPruefergebnis = 'OFFEN' | 'BESTANDEN' | 'NICHT_BESTANDEN'
+
+export type GgaCabinetPruefnachweisSnapshot = {
+  id: string
+  pruefart: GgaPruefart
+  ergebnis: GgaPruefergebnis
+  pruefdatum: Date | null
+  ausfuehrendeStelle: string | null
+  bemerkung: string | null
+  documentId: string | null
+  createdAt: Date
+}
+
+// Mehrere Zeilen je (Cabinet, Prüfart) über die Zeit sind ausdrücklich
+// zulässig (Wiederholungsprüfung nach NICHT_BESTANDEN) — der "aktuelle"
+// Stand wird rein abgeleitet, exakt nach demselben Muster wie
+// derivePruefstatus() oben: zeitlich neueste Zeile (pruefdatum, sonst
+// createdAt als Fallback für noch unentschiedene/frisch angelegte
+// Zeilen) je Prüfart gewinnt. Kein Datensatz für eine Prüfart ist KEIN
+// Fehlerzustand — bedeutet fachlich schlicht OFFEN (siehe REQ-018
+// Grundsatz: "ein fehlender Prüfnachweis gilt ebenfalls als OFFEN").
+export function deriveCurrentPruefnachweis(
+  records: GgaCabinetPruefnachweisSnapshot[],
+  pruefart: GgaPruefart,
+): GgaCabinetPruefnachweisSnapshot | null {
+  const relevant = [...records]
+    .filter((record) => record.pruefart === pruefart)
+    .sort((a, b) => (b.pruefdatum ?? b.createdAt).getTime() - (a.pruefdatum ?? a.createdAt).getTime())
+  return relevant[0] ?? null
+}
+
+// OFFEN und NICHT_BESTANDEN gelten beide als nicht erfüllt — nur BESTANDEN
+// erfüllt eine erforderliche Prüfung (REQ-018 A3/A4/A7).
+export function isGgaPruefartBestanden(records: GgaCabinetPruefnachweisSnapshot[], pruefart: GgaPruefart): boolean {
+  return deriveCurrentPruefnachweis(records, pruefart)?.ergebnis === 'BESTANDEN'
+}
+
+export const GGA_PRUEFART_LABELS: Record<GgaPruefart, string> = {
+  LUEFTUNG: 'Lüftung', ELEKTRO: 'Elektro', VDE: 'VDE',
+}
+
+export const GGA_PRUEFERGEBNIS_LABELS: Record<GgaPruefergebnis, string> = {
+  OFFEN: 'Offen', BESTANDEN: 'Bestanden', NICHT_BESTANDEN: 'Nicht bestanden',
 }
 
 // ── Control-Tower-Aggregation (REQ-012) ──────────────────────

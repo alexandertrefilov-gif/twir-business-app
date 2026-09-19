@@ -3,6 +3,12 @@
 
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+// GGA-05.1: relativer statt `@/`-Pfad-Alias-Import — `db:seed` läuft über
+// `ts-node` ohne `tsconfig-paths/register`, das die `@/*`-Alias-Zuordnung
+// aus tsconfig.json zur Laufzeit nicht auflöst (nur `tsc` selbst tut das
+// beim Typecheck). Das Zielmodul ist bewusst abhängigkeitsfrei, ein
+// relativer Import ist hier deshalb sicher.
+import { GGA_FIVE_PHASE_PLAN } from '../../lib/collaboration/cabinet-workflow'
 
 const prisma = new PrismaClient()
 
@@ -229,44 +235,79 @@ async function main() {
       active: true,
     },
   })
-  const planningStage = await prisma.collaborationProjectStage.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000111' },
-    update: {},
-    create: {
-      id: '00000000-0000-0000-0000-000000000111', projectId: collaborationProject.id,
-      code: 'PLANUNG', title: 'Planung', sequence: 1, weight: 40,
-      status: 'READY', isRequired: true,
-    },
+  // GGA-05.1: Vor dieser Korrektur erzeugte dieser Abschnitt fälschlich
+  // PLANUNG/AUSFUEHRUNG/UEBERGABE unter den festen IDs ...111/112/113 —
+  // inkompatibel mit dem produktiven GGA-Cabinet-Workflow (cabinet-workflow.ts
+  // erwartet zwingend KONZEPT/PLANUNG/UMSETZUNG/ABNAHME/ABSCHLUSS). Diese drei
+  // historischen IDs sind eindeutig seed-eigen (ausschließlich dieser Seed
+  // vergibt feste, nicht-zufällige UUIDs) — ihre Bereinigung ist deshalb keine
+  // Migration unklarer Nutzdaten, sondern Selbstkorrektur des Seeds. Nur
+  // entfernt, wenn noch keine Aufgaben/Checklisten/Blocker/Freigaben daran
+  // hängen (sonst würde das auf eine reale, in Bearbeitung befindliche
+  // Installation hindeuten, die hier nicht angefasst wird).
+  const legacyGgaStageIds = [
+    '00000000-0000-0000-0000-000000000111',
+    '00000000-0000-0000-0000-000000000112',
+    '00000000-0000-0000-0000-000000000113',
+  ]
+  const canonicalGgaCodes = GGA_FIVE_PHASE_PLAN.map((phase) => phase.code)
+  const legacyStages = await prisma.collaborationProjectStage.findMany({
+    where: { id: { in: legacyGgaStageIds }, projectId: collaborationProject.id, code: { notIn: canonicalGgaCodes } },
+    select: { id: true, code: true, _count: { select: { tasks: true, checklistItems: true, blockers: true, approvals: true } } },
   })
-  const executionStage = await prisma.collaborationProjectStage.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000112' },
-    update: {},
-    create: {
-      id: '00000000-0000-0000-0000-000000000112', projectId: collaborationProject.id,
-      code: 'AUSFUEHRUNG', title: 'Ausführung', sequence: 2, weight: 40,
-      status: 'NOT_STARTED', isRequired: true,
-    },
-  })
-  await prisma.collaborationProjectStage.upsert({
-    where: { id: '00000000-0000-0000-0000-000000000113' },
-    update: {},
-    create: {
-      id: '00000000-0000-0000-0000-000000000113', projectId: collaborationProject.id,
-      code: 'UEBERGABE', title: 'Übergabe', sequence: 3, weight: 20,
-      status: 'NOT_STARTED', isRequired: true,
-    },
-  })
-  await prisma.collaborationProjectStageDependency.upsert({
-    where: { stageId_dependsOnStageId: { stageId: executionStage.id, dependsOnStageId: planningStage.id } },
-    update: { requiredStatus: 'COMPLETED' },
-    create: { stageId: executionStage.id, dependsOnStageId: planningStage.id, requiredStatus: 'COMPLETED' },
-  })
-  const handoverStage = await prisma.collaborationProjectStage.findUniqueOrThrow({ where: { id: '00000000-0000-0000-0000-000000000113' } })
-  await prisma.collaborationProjectStageDependency.upsert({
-    where: { stageId_dependsOnStageId: { stageId: handoverStage.id, dependsOnStageId: executionStage.id } },
-    update: { requiredStatus: 'COMPLETED' },
-    create: { stageId: handoverStage.id, dependsOnStageId: executionStage.id, requiredStatus: 'COMPLETED' },
-  })
+  const removableLegacyStageIds = legacyStages
+    .filter((stage) => stage._count.tasks + stage._count.checklistItems + stage._count.blockers + stage._count.approvals === 0)
+    .map((stage) => stage.id)
+  if (removableLegacyStageIds.length > 0) {
+    await prisma.collaborationProjectStage.deleteMany({ where: { id: { in: removableLegacyStageIds } } })
+    console.log(`     ↺ ${removableLegacyStageIds.length} veraltete GGA-Phase(n) ohne Abhängigkeiten bereinigt`)
+  }
+  if (legacyStages.length > removableLegacyStageIds.length) {
+    console.warn('     ⚠ veraltete GGA-Phase(n) mit vorhandenen Abhängigkeiten gefunden — NICHT automatisch entfernt, manuelle Prüfung erforderlich')
+  }
+
+  // Kanonische fünf Phasen — Single Source of Truth: GGA_FIVE_PHASE_PLAN
+  // (lib/collaboration/cabinet-workflow.ts). Upsert über die bestehende
+  // @@unique([projectId, code])-Constraint statt fester IDs, damit der Seed
+  // unabhängig davon idempotent bleibt, ob eine Phase ursprünglich vom Seed
+  // selbst oder z. B. über restructureCollaborationProjectStages() angelegt
+  // wurde. `status` bewusst NICHT im `update`-Zweig, um echten, bereits
+  // erarbeiteten Fortschritt bei wiederholten Seed-Läufen nicht zurückzusetzen.
+  const ggaStages: { id: string; code: string }[] = []
+  for (const [index, phase] of GGA_FIVE_PHASE_PLAN.entries()) {
+    const stage = await prisma.collaborationProjectStage.upsert({
+      where: { projectId_code: { projectId: collaborationProject.id, code: phase.code } },
+      update: { title: phase.title, sequence: index + 1, weight: phase.weight, requiresApproval: phase.requiresApproval },
+      create: {
+        projectId: collaborationProject.id, code: phase.code, title: phase.title,
+        sequence: index + 1, weight: phase.weight, requiresApproval: phase.requiresApproval,
+        status: index === 0 ? 'READY' : 'NOT_STARTED', isRequired: true,
+      },
+    })
+    ggaStages.push({ id: stage.id, code: stage.code })
+  }
+  for (let index = 1; index < ggaStages.length; index++) {
+    await prisma.collaborationProjectStageDependency.upsert({
+      where: { stageId_dependsOnStageId: { stageId: ggaStages[index].id, dependsOnStageId: ggaStages[index - 1].id } },
+      update: { requiredStatus: 'COMPLETED' },
+      create: { stageId: ggaStages[index].id, dependsOnStageId: ggaStages[index - 1].id, requiredStatus: 'COMPLETED' },
+    })
+  }
+
+  // GGA-05.1 Selbstprüfung: fail fast, falls die tatsächlich erzeugten
+  // GGA-Phasen-Codes je erneut von der kanonischen Definition abweichen
+  // sollten — verhindert, dass derselbe Stage-Code-Konflikt unbemerkt
+  // zurückkehrt (z. B. durch eine künftige Änderung an dieser Datei, die
+  // GGA_FIVE_PHASE_PLAN nicht mehr importiert).
+  const actualGgaCodes = ggaStages.map((stage) => stage.code)
+  if (JSON.stringify(actualGgaCodes) !== JSON.stringify(canonicalGgaCodes)) {
+    throw new Error(
+      `GGA-Seed-Selbstprüfung fehlgeschlagen: erzeugte Phasen-Codes [${actualGgaCodes.join(', ')}] ` +
+      `weichen von der kanonischen Definition [${canonicalGgaCodes.join(', ')}] ab (GGA_FIVE_PHASE_PLAN, ` +
+      `lib/collaboration/cabinet-workflow.ts). Seed-Ausführung abgebrochen.`,
+    )
+  }
+
   console.log('     ✓ admin@demo.local → GGA Lagerplanung (COLLAB_MANAGER)')
 
   // ── 5. Firmeneinstellungen ─────────────────────────────────

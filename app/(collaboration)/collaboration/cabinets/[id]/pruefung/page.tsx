@@ -1,6 +1,7 @@
 import Link from 'next/link'
-import { getGgaCabinetDetail, cabinetEditorRoles, GGA_CABINET_CHECKLIST_TEMPLATES } from '@/lib/services/gga-cabinet.service'
+import { getGgaCabinetDetail, cabinetEditorRoles, GGA_CABINET_CHECKLIST_TEMPLATES, getGgaCabinetPruefnachweisOverview } from '@/lib/services/gga-cabinet.service'
 import { editorRoles, approverRoles } from '@/lib/services/collaboration-phase2.service'
+import { ggaCabinetBereitFuerInterneFreigabe } from '@/lib/collaboration/cabinet-workflow'
 import { GgaCabinetInspectionWizard } from '@/components/collaboration/GgaCabinetInspectionWizard'
 import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
 
@@ -44,6 +45,21 @@ export default async function GgaCabinetInspectionPage({ params }: { params: Pro
     ? 'Bestandsaufnahme, Planung oder Umsetzung sind noch nicht vollständig abgeschlossen. Die Prüfung kann trotzdem vorbereitet werden, sollte aber erst final durchgeführt werden, wenn die Umsetzung abgeschlossen ist.'
     : null
 
+  // REQ-018/REQ-018.1: strukturierte Prüfnachweise je Prüfart, zusätzlich
+  // zur bestehenden booleschen ABNAHME-Checkliste oben.
+  const pruefnachweisOverview = await getGgaCabinetPruefnachweisOverview(cabinet.id)
+  const pruefnachweise = pruefnachweisOverview.map((entry) => ({
+    pruefart: entry.pruefart,
+    current: entry.current ? {
+      id: entry.current.id,
+      ergebnis: entry.current.ergebnis,
+      pruefdatum: toDateInput(entry.current.pruefdatum),
+      ausfuehrendeStelle: entry.current.ausfuehrendeStelle,
+      bemerkung: entry.current.bemerkung,
+      documentId: entry.current.documentId,
+    } : null,
+  }))
+
   return <div>
     <p className="text-xs text-muted-foreground"><Link href={`/collaboration/cabinets/${cabinet.id}`} className="hover:underline">{cabinet.kennung}</Link> / Prüfung &amp; Abnahme</p>
     <h1 className="mt-1 text-3xl font-600 tracking-tight">Prüfung &amp; Abnahme — {cabinet.kennung}</h1>
@@ -58,6 +74,7 @@ export default async function GgaCabinetInspectionPage({ params }: { params: Pro
         canApprove={canApprove}
         canEditStammdaten={canEditStammdaten}
         lifecycleWarning={lifecycleWarning}
+        pruefnachweise={pruefnachweise}
         initial={{
           checklist,
           abluftVolumenstromIstM3h: toDecimalString(cabinet.abluftVolumenstromIstM3h),
@@ -68,6 +85,7 @@ export default async function GgaCabinetInspectionPage({ params }: { params: Pro
           pruefstatus: cabinet.status.pruefstatus,
           betreiberstatus: cabinet.status.betreiberstatus,
           canRequestBetreiberfreigabe,
+          interneFreigabeBereit: ggaCabinetBereitFuerInterneFreigabe(cabinet.status),
         }}
         recap={{
           kennung: cabinet.kennung,

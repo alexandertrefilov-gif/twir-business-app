@@ -189,12 +189,14 @@ describe.skipIf(!RUN_INTEGRATION)(
   () => {
     let testPrisma: any
     let cabinetService: typeof import('@/lib/services/gga-cabinet.service')
+    let phase2Service: typeof import('@/lib/services/collaboration-phase2.service')
     let managerUserId = ''
     let managerEmail = ''
     let operatorUserId = ''
     let operatorEmail = ''
     let projectId = ''
     let cabinetId = ''
+    let stageAbnahmeId = ''
     const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
     function asUser(id: string, email: string) {
@@ -213,9 +215,11 @@ describe.skipIf(!RUN_INTEGRATION)(
       projectId = project.id
       await testPrisma.collaborationMembership.create({ data: { userId: managerUserId, projectId, role: 'COLLAB_MANAGER', active: true } })
       await testPrisma.collaborationMembership.create({ data: { userId: operatorUserId, projectId, role: 'OPERATOR', active: true } })
-      await testPrisma.collaborationProjectStage.create({ data: { projectId, code: 'ABNAHME', title: 'Abnahme', sequence: 1, weight: 100 } })
+      const stage = await testPrisma.collaborationProjectStage.create({ data: { projectId, code: 'ABNAHME', title: 'Abnahme', sequence: 1, weight: 100 } })
+      stageAbnahmeId = stage.id
 
       cabinetService = await import('@/lib/services/gga-cabinet.service')
+      phase2Service = await import('@/lib/services/collaboration-phase2.service')
       await asUser(managerUserId, managerEmail)
       const cabinet = await cabinetService.createGgaCabinet(projectId, { kennung: `GGA-RACE-${suffix}`, bezeichnung: 'Race Test Schrank' })
       cabinetId = cabinet.id
@@ -236,6 +240,21 @@ describe.skipIf(!RUN_INTEGRATION)(
 
     it('zwei parallele Entscheidungen derselben Betreiberfreigabe: genau eine gewinnt, genau ein Audit-Eintrag', async () => {
       await asUser(managerUserId, managerEmail)
+      // REQ-015.1: requestGgaCabinetOperatorApproval() verlangt seit REQ-015
+      // serverseitig eine bereits bestandene interne Prüfung
+      // (ggaCabinetBereitFuerBetreiberfreigabe) — vorher genügte hier die
+      // reine Existenz der ABNAHME-Stage. Ausschließlich über bestehende
+      // produktive Service-Funktionen hergestellt, keine direkte DB-
+      // Manipulation. Der eigentliche Testzweck (Race Condition bei der
+      // PARALLELEN ENTSCHEIDUNG derselben Betreiberfreigabe) bleibt
+      // unverändert — nur der Ausgangszustand vor der Anforderung wird jetzt
+      // fachlich gültig hergestellt.
+      for (const title of cabinetService.GGA_CABINET_CHECKLIST_TEMPLATES.ABNAHME.items) {
+        await cabinetService.setGgaCabinetInspectionItem(cabinetId, title, true)
+      }
+      const internalApproval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinetId)
+      await phase2Service.decideCollaborationApproval(internalApproval.id, 'APPROVED')
+
       const approval = await cabinetService.requestGgaCabinetOperatorApproval(cabinetId)
 
       await asUser(operatorUserId, operatorEmail)

@@ -3,7 +3,20 @@ import { prisma } from '@/lib/db/prisma'
 import { requireCollaborationManager, requireCollaborationProjectAccess, requireCollaborationSession, requireCollaborationStageAccess, requireInternalCollaborationProjectAccess } from '@/lib/auth/collaboration-guards'
 import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
 import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service'
-import { calculateProjectHealth, calculateProjectProgress, deriveNextAction, deriveStageStatuses, getStageCompletionBlocker, isCollaborationStageTransitionAllowed } from '@/lib/collaboration/project-workflow'
+import {
+  calculateProjectHealth, calculateProjectProgress, deriveNextAction, deriveStageStatuses, getProjectCompletionBlocker,
+  getStageCompletionBlocker, isCollaborationProjectStatusTransitionAllowed, isCollaborationStageTransitionAllowed,
+} from '@/lib/collaboration/project-workflow'
+import {
+  GGA_FIVE_PHASE_PLAN, GGA_STAGE_ABNAHME, deriveCabinetStatus, ggaCabinetBereitFuerInterneFreigabe, isCabinetReadyForStage,
+  type DerivedGgaCabinetStatus, type GgaCabinetSnapshot,
+} from '@/lib/collaboration/cabinet-workflow'
+
+// GGA-05.1: Re-Export statt eigener Definition — kanonische Quelle ist
+// cabinet-workflow.ts (siehe dortigen Kommentar). Bestehende Aufrufer
+// (z. B. tests/integration/collaboration-gga-restructure-db.test.ts über
+// `services.GGA_FIVE_PHASE_PLAN`) bleiben dadurch unverändert funktionsfähig.
+export { GGA_FIVE_PHASE_PLAN }
 
 // GGA-04.2: 'OPERATOR' stand hier ursprünglich mit in der Liste, obwohl
 // KEINER der ca. 14 Aufrufer dieser Konstante (Task-/Checklisten-/Blocker-
@@ -25,6 +38,51 @@ const taskInputSchema = z.object({ title: z.string().trim().min(1).max(200), des
 const checklistInputSchema = z.object({ title: z.string().trim().min(1).max(200), sequence: z.number().int().nonnegative().default(0), isRequired: z.boolean().default(true), responsibleMembershipId: z.string().min(1).nullable().optional() })
 const blockerInputSchema = z.object({ title: z.string().trim().min(1).max(200), description: z.string().max(5000).optional(), cause: z.string().max(2000).optional(), stageId: z.string().min(1).optional(), taskId: z.string().min(1).optional(), responsibleMembershipId: z.string().min(1).optional(), cabinetId: z.string().min(1).nullable().optional() })
 
+// REQ-015.4: Membership-SSOT ist ausschließlich GgaCabinet.projectId — KEIN
+// neues Modell, KEINE Prisma-Migration. Diese Funktion lädt die vollständige
+// Cabinet-Menge eines Projekts (Membership) und leitet je Cabinet den
+// bestehenden deriveCabinetStatus() (Progress) ab — dieselbe Select-Form wie
+// requireGgaCabinetInterneFreigabeReady() unten, nur als findMany() über
+// alle Cabinets statt findFirst() über eines. deriveCabinetStatus() selbst
+// bleibt unverändert und ist NICHT die Membership-Quelle (siehe dortigen
+// Kommentar in cabinet-workflow.ts) — nur ihr bereits vorhandener Output
+// wird hier wiederverwendet.
+const GGA_STAGE_CODES: Set<string> = new Set(GGA_FIVE_PHASE_PLAN.map((phase) => phase.code))
+
+async function getGgaCabinetReadiness(projectId: string): Promise<Array<{ id: string; status: DerivedGgaCabinetStatus }>> {
+  const cabinets = await prisma.ggaCabinet.findMany({
+    where: { projectId, deletedAt: null },
+    select: {
+      id: true, bestandsaufnahmeAm: true, pruefintervallMonate: true, letztePruefungAm: true,
+      tasks: { select: { id: true, title: true, status: true, isRequired: true, sequence: true, stage: { select: { code: true } } } },
+      checklistItems: { select: { id: true, title: true, completed: true, isRequired: true, sequence: true, stage: { select: { code: true } } } },
+      blockers: { select: { id: true, title: true, status: true } },
+      approvals: { select: { id: true, status: true, approvalType: true, requestedAt: true, decidedAt: true, stage: { select: { code: true } } } },
+    },
+  })
+  return cabinets.map((cabinet) => {
+    const snapshot: GgaCabinetSnapshot = {
+      bestandsaufnahmeAm: cabinet.bestandsaufnahmeAm,
+      pruefintervallMonate: cabinet.pruefintervallMonate,
+      letztePruefungAm: cabinet.letztePruefungAm,
+      tasks: cabinet.tasks.map((task) => ({ id: task.id, title: task.title, status: task.status as never, isRequired: task.isRequired, sequence: task.sequence, stageCode: task.stage.code })),
+      checklistItems: cabinet.checklistItems.map((item) => ({ id: item.id, title: item.title, completed: item.completed, isRequired: item.isRequired, sequence: item.sequence, stageCode: item.stage.code })),
+      blockers: cabinet.blockers.map((blocker) => ({ id: blocker.id, title: blocker.title, status: blocker.status as never })),
+      approvals: cabinet.approvals.map((approval) => ({ id: approval.id, status: approval.status as never, approvalType: approval.approvalType as never, requestedAt: approval.requestedAt, decidedAt: approval.decidedAt, stageCode: approval.stage.code })),
+    }
+    return { id: cabinet.id, status: deriveCabinetStatus(snapshot) }
+  })
+}
+
+// cabinets wird NUR für kanonische GGA-Stage-Codes befüllt — ein
+// Nicht-GGA-Projekt (eigene Stage-Codes) oder eine Nicht-GGA-Stage bleibt
+// dadurch unverändert (cabinets: undefined, siehe CollaborationStageSnapshot),
+// unabhängig davon, ob das Projekt zufällig GgaCabinet-Zeilen besitzt.
+function attachCabinetReadiness<T extends { code: string }>(stage: T, readiness: Array<{ id: string; status: DerivedGgaCabinetStatus }>) {
+  if (!GGA_STAGE_CODES.has(stage.code)) return { ...stage, cabinets: undefined }
+  return { ...stage, cabinets: readiness.map((cabinet) => ({ id: cabinet.id, ready: isCabinetReadyForStage(cabinet.status, stage.code) })) }
+}
+
 export async function getCollaborationPhase2Project(projectId: string) {
   const { userId } = await requireCollaborationSession()
   const membership = await requireInternalCollaborationProjectAccess(userId, projectId)
@@ -39,13 +97,14 @@ export async function getCollaborationPhase2Project(projectId: string) {
         tasks: { orderBy: { sequence: 'asc' }, select: { id: true, title: true, description: true, status: true, priority: true, dueDate: true, sequence: true, isRequired: true, completedAt: true } },
         checklistItems: { orderBy: { sequence: 'asc' }, select: { id: true, title: true, sequence: true, isRequired: true, completed: true, completedAt: true, responsibleMembershipId: true } },
         blockers: { orderBy: { createdAt: 'asc' }, select: { id: true, title: true, description: true, status: true, cause: true, resolution: true, stageId: true, taskId: true } },
-        approvals: { orderBy: { requestedAt: 'desc' }, select: { id: true, status: true, requestedAt: true, decidedAt: true, decisionNote: true, requestedById: true, decidedById: true } },
+        approvals: { orderBy: { requestedAt: 'desc' }, select: { id: true, status: true, requestedAt: true, decidedAt: true, decisionNote: true, requestedById: true, decidedById: true, cabinetId: true } },
         dependencies: { select: { dependsOnStageId: true, requiredStatus: true } },
       } },
     },
   })
   if (!project) throw new NotFoundError('Projekt nicht gefunden')
-  const snapshots = project.stages.map((stage) => ({ ...stage, weight: Number(stage.weight), dependencies: stage.dependencies, blockers: stage.blockers, tasks: stage.tasks, checklistItems: stage.checklistItems, approvals: stage.approvals }))
+  const cabinetReadiness = await getGgaCabinetReadiness(projectId)
+  const snapshots = project.stages.map((stage) => attachCabinetReadiness({ ...stage, weight: Number(stage.weight), dependencies: stage.dependencies, blockers: stage.blockers, tasks: stage.tasks, checklistItems: stage.checklistItems, approvals: stage.approvals }, cabinetReadiness))
   const stages = deriveStageStatuses(snapshots)
   return { ...project, role: membership.role, stages, healthStatus: project.blockers[0] ? 'RED' as const : calculateProjectHealth(snapshots), progressPercent: calculateProjectProgress(snapshots), nextAction: project.blockers[0]?.title ?? deriveNextAction(stages) }
 }
@@ -208,12 +267,50 @@ export async function resolveCollaborationBlocker(blockerId: string, resolution:
   return updated
 }
 
+// REQ-015 / GGA-05.2: gemeinsame serverseitige Readiness-Prüfung für die
+// interne Freigabe eines GGA-Schranks — liest ausschließlich den bereits
+// bestehenden deriveCabinetStatus()-Ableitungspfad (identisch zur UI,
+// ggaCabinetBereitFuerInterneFreigabe() in cabinet-workflow.ts), keine
+// eigene Statuslogik. Gilt bewusst NUR, wenn sowohl eine cabinetId als
+// auch die ABNAHME-Phase betroffen sind — projektweite oder andere-Phasen-
+// Freigaben (z. B. PLANUNG, die laut GGA_FIVE_PHASE_PLAN ebenfalls
+// requiresApproval ist) bleiben davon unberührt, siehe PROJECT_MAP →
+// Invariante 5 ("Freigaben müssen fachlich der ABNAHME zugeordnet bleiben").
+async function requireGgaCabinetInterneFreigabeReady(projectId: string, cabinetId: string) {
+  const cabinet = await prisma.ggaCabinet.findFirst({
+    where: { id: cabinetId, projectId, deletedAt: null },
+    select: {
+      bestandsaufnahmeAm: true, pruefintervallMonate: true, letztePruefungAm: true,
+      tasks: { select: { id: true, title: true, status: true, isRequired: true, sequence: true, stage: { select: { code: true } } } },
+      checklistItems: { select: { id: true, title: true, completed: true, isRequired: true, sequence: true, stage: { select: { code: true } } } },
+      blockers: { select: { id: true, title: true, status: true } },
+      approvals: { select: { id: true, status: true, approvalType: true, requestedAt: true, decidedAt: true, stage: { select: { code: true } } } },
+    },
+  })
+  if (!cabinet) throw new NotFoundError('Schrank nicht gefunden')
+  const snapshot: GgaCabinetSnapshot = {
+    bestandsaufnahmeAm: cabinet.bestandsaufnahmeAm,
+    pruefintervallMonate: cabinet.pruefintervallMonate,
+    letztePruefungAm: cabinet.letztePruefungAm,
+    tasks: cabinet.tasks.map((task) => ({ id: task.id, title: task.title, status: task.status as never, isRequired: task.isRequired, sequence: task.sequence, stageCode: task.stage.code })),
+    checklistItems: cabinet.checklistItems.map((item) => ({ id: item.id, title: item.title, completed: item.completed, isRequired: item.isRequired, sequence: item.sequence, stageCode: item.stage.code })),
+    blockers: cabinet.blockers.map((blocker) => ({ id: blocker.id, title: blocker.title, status: blocker.status as never })),
+    approvals: cabinet.approvals.map((approval) => ({ id: approval.id, status: approval.status as never, approvalType: approval.approvalType as never, requestedAt: approval.requestedAt, decidedAt: approval.decidedAt, stageCode: approval.stage.code })),
+  }
+  if (!ggaCabinetBereitFuerInterneFreigabe(deriveCabinetStatus(snapshot))) {
+    throw new BusinessRuleError('Die ABNAHME-Checkliste dieses Schranks ist noch nicht vollständig — eine interne Freigabe kann erst danach angefordert werden.')
+  }
+}
+
 export async function requestCollaborationApproval(stageId: string, cabinetId?: string | null) {
   const { userId, userEmail } = await requireCollaborationSession()
   const access = await requireCollaborationStageAccess(userId, stageId, editorRoles)
   if (cabinetId) {
     const cabinet = await prisma.ggaCabinet.findFirst({ where: { id: cabinetId, projectId: access.projectId, deletedAt: null } })
     if (!cabinet) throw new NotFoundError('Schrank nicht gefunden')
+    if (access.code === GGA_STAGE_ABNAHME) {
+      await requireGgaCabinetInterneFreigabeReady(access.projectId, cabinetId)
+    }
   }
   const approval = await prisma.collaborationApproval.create({ data: { projectId: access.projectId, stageId, requestedById: userId, cabinetId: cabinetId ?? null } })
   await writeAuditLog({ userId, userEmail, action: 'CREATE', entityType: 'collaboration_approval', entityId: approval.id, newValue: { stageId, status: 'REQUESTED', cabinetId: cabinetId ?? null } })
@@ -222,12 +319,21 @@ export async function requestCollaborationApproval(stageId: string, cabinetId?: 
 
 export async function decideCollaborationApproval(approvalId: string, decision: 'APPROVED' | 'REJECTED', decisionNote?: string) {
   const { userId, userEmail } = await requireCollaborationSession()
-  const approval = await prisma.collaborationApproval.findUnique({ where: { id: approvalId }, select: { id: true, stageId: true, projectId: true, status: true } })
+  const approval = await prisma.collaborationApproval.findUnique({ where: { id: approvalId }, select: { id: true, stageId: true, projectId: true, status: true, cabinetId: true } })
   if (!approval) throw new NotFoundError('Freigabe nicht gefunden')
   const access = await requireCollaborationStageAccess(userId, approval.stageId, approverRoles)
   if (access.projectId !== approval.projectId) throw new NotFoundError('Freigabe nicht gefunden')
   if (approval.status !== 'REQUESTED') throw new ValidationError('Diese Freigabe ist bereits entschieden')
   if (decision === 'REJECTED' && !decisionNote?.trim()) throw new ValidationError('Eine Ablehnung erfordert eine Begründung')
+  // REQ-015 / GGA-05.2: Verteidigung gegen eine zwischenzeitliche Regression
+  // zwischen Anforderung und Entscheidung (z. B. ein bereits abgehakter
+  // ABNAHME-Checklistenpunkt wird nach der Anforderung wieder zurückgesetzt)
+  // — nur für APPROVED relevant; eine Ablehnung ist immer zulässig, gerade
+  // weil sie der korrekte Weg ist, eine verfrühte/ungültige Anforderung
+  // wieder zu schließen.
+  if (decision === 'APPROVED' && access.code === GGA_STAGE_ABNAHME && approval.cabinetId) {
+    await requireGgaCabinetInterneFreigabeReady(access.projectId, approval.cabinetId)
+  }
   const updated = await prisma.$transaction(async (tx) => {
     // Optimistische Bedingung auf den Ausgangsstatus: verhindert, dass zwei
     // parallele Entscheidungen dieselbe Freigabe beide "erfolgreich" entscheiden.
@@ -244,12 +350,18 @@ export async function transitionCollaborationStage(stageId: string, target: stri
   const { userId, userEmail } = await requireCollaborationSession()
   const access = await requireCollaborationStageAccess(userId, stageId, editorRoles)
   const stage = await prisma.collaborationProjectStage.findUnique({ where: { id: stageId }, select: {
-    id: true, projectId: true, status: true, requiresApproval: true,
+    id: true, projectId: true, status: true, requiresApproval: true, code: true,
     dependencies: { select: { dependsOnStageId: true, requiredStatus: true, dependsOnStage: { select: { status: true } } } },
     tasks: { select: { status: true, isRequired: true } },
     checklistItems: { select: { completed: true, isRequired: true } },
     blockers: { where: { status: 'OPEN' }, select: { id: true } },
-    approvals: { where: { status: 'APPROVED' }, select: { id: true } },
+    // REQ-015.2: vormals where: { status: 'APPROVED' } — das ließ getStage-
+    // CompletionBlocker() nur die BEREITS genehmigten Freigaben sehen und
+    // verdeckte dadurch offene/abgelehnte Freigaben ANDERER Cabinets auf
+    // derselben Stage ("Multi-Cabinet Approval Undercounting"). Jetzt werden
+    // alle Freigaben inkl. cabinetId geladen, damit die Funktion selbst je
+    // Cabinet korrekt prüfen kann.
+    approvals: { select: { id: true, status: true, cabinetId: true } },
   } })
   if (!stage || stage.projectId !== access.projectId) throw new NotFoundError('Projektstufe nicht gefunden')
   if (!isCollaborationStageTransitionAllowed(stage.status, target as never)) throw new ValidationError(`Übergang von ${stage.status} nach ${target} ist nicht erlaubt`)
@@ -258,9 +370,13 @@ export async function transitionCollaborationStage(stageId: string, target: stri
     return dependency.requiredStatus === 'COMPLETED' || dependency.requiredStatus === 'SKIPPED' ? !completed : dependency.dependsOnStage.status !== dependency.requiredStatus
   })) throw new ValidationError('Vorgelagerte Projektphasen sind noch nicht abgeschlossen')
   if (target === 'COMPLETED') {
-    const blocker = getStageCompletionBlocker({
+    // REQ-015.4: Cabinet-Readiness nur für den COMPLETED-Übergang geladen
+    // (Query-Kosten) — dieselbe Ableitung wie getCollaborationPhase2Project(),
+    // damit Lese- und Schreibpfad niemals unterschiedliche Ergebnisse liefern
+    // können.
+    const cabinetReadiness = await getGgaCabinetReadiness(access.projectId)
+    const blocker = getStageCompletionBlocker(attachCabinetReadiness({
       ...stage,
-      code: '',
       title: '',
       sequence: 0,
       weight: 0,
@@ -271,8 +387,8 @@ export async function transitionCollaborationStage(stageId: string, target: stri
       tasks: stage.tasks.map((task, index) => ({ id: String(index), title: '', priority: 'MEDIUM' as const, dueDate: null, sequence: index, ...task })),
       checklistItems: stage.checklistItems.map((item, index) => ({ id: String(index), title: '', sequence: index, completedAt: null, ...item })),
       blockers: stage.blockers.map((item) => ({ id: item.id, title: '', status: 'OPEN' as const })),
-      approvals: stage.approvals.map((item) => ({ id: item.id, status: 'APPROVED' as const, requestedAt: new Date(0), decidedAt: null })),
-    })
+      approvals: stage.approvals.map((item) => ({ id: item.id, status: item.status as never, requestedAt: new Date(0), decidedAt: null, cabinetId: item.cabinetId })),
+    }, cabinetReadiness))
     if (blocker) throw new ValidationError(blocker)
   }
   const updated = await prisma.$transaction(async (tx) => {
@@ -282,6 +398,46 @@ export async function transitionCollaborationStage(stageId: string, target: stri
     if (result.count === 0) throw new ConflictError('Die Projektstufe wurde zwischenzeitlich bereits geändert.')
     const value = await tx.collaborationProjectStage.findUniqueOrThrow({ where: { id: stageId } })
     await buildAuditLogCreate(tx, { userId, userEmail, action: 'STATUS_CHANGE', entityType: 'collaboration_project_stage', entityId: stageId, oldValue: { status: stage.status }, newValue: { status: target } })
+    return value
+  })
+  return updated
+}
+
+// ── Projektabschluss (REQ-016) ────────────────────────────────
+// CollaborationProject.status existiert bereits im Schema, wurde aber von
+// keinem Codepfad je gesetzt (activateCollaboration() legt das Projekt nur
+// an — siehe GGA-05-Audit, GAP "Projektabschluss"). Analog zu
+// transitionCollaborationStage() oben: nur COLLAB_MANAGER (dieselbe Rolle,
+// die bereits restructureCollaborationProjectStages() vorbehalten ist —
+// keine Abschwächung, sondern dieselbe bestehende Schwelle für strukturelle
+// Projektänderungen), Optimistic Locking, Audit-Log. Der COMPLETED-Gate
+// nutzt ausschließlich die bereits bestehende getCollaborationPhase2Project()
+// /deriveStageStatuses()-Ableitung (identisch zu deriveNextAction()'s
+// "Projektabschluss prüfen") — keine zweite, parallele Vollständigkeits-
+// prüfung und kein Zugriff auf GgaCabinet direkt (siehe GGA-05.2: die
+// bekannte Lücke, dass ein Stage-weites requiresApproval-Gate bei mehreren
+// Schränken bereits durch EINE genehmigte Freigabe erfüllt ist, bleibt
+// bestehen und wird hier bewusst NICHT mitbehoben).
+export async function transitionCollaborationProjectStatus(projectId: string, target: string) {
+  const { userId, userEmail } = await requireCollaborationSession()
+  await requireCollaborationManager(userId, projectId)
+  const project = await prisma.collaborationProject.findFirst({ where: { id: projectId, active: true, deletedAt: null }, select: { id: true, status: true } })
+  if (!project) throw new NotFoundError('Projekt nicht gefunden')
+  if (!isCollaborationProjectStatusTransitionAllowed(project.status, target as never)) {
+    throw new ValidationError(`Übergang von ${project.status} nach ${target} ist nicht erlaubt`)
+  }
+  if (target === 'COMPLETED') {
+    const detail = await getCollaborationPhase2Project(projectId)
+    const blocker = getProjectCompletionBlocker(detail.stages)
+    if (blocker) throw new BusinessRuleError(blocker)
+  }
+  const updated = await prisma.$transaction(async (tx) => {
+    // Optimistische Bedingung auf den Ausgangsstatus: verhindert doppelte
+    // Statusübergänge bei parallelen Requests.
+    const result = await tx.collaborationProject.updateMany({ where: { id: projectId, status: project.status }, data: { status: target as never } })
+    if (result.count === 0) throw new ConflictError('Der Projektstatus wurde zwischenzeitlich bereits geändert.')
+    const value = await tx.collaborationProject.findUniqueOrThrow({ where: { id: projectId } })
+    await buildAuditLogCreate(tx, { userId, userEmail, action: 'STATUS_CHANGE', entityType: 'collaboration_project', entityId: projectId, oldValue: { status: project.status }, newValue: { status: target } })
     return value
   })
   return updated
@@ -387,14 +543,6 @@ const stagePlanInputSchema = z.object({
   weight: z.number().min(0).max(100),
   requiresApproval: z.boolean().default(false),
 })
-
-export const GGA_FIVE_PHASE_PLAN = [
-  { code: 'KONZEPT', title: 'Konzept', weight: 10, requiresApproval: false },
-  { code: 'PLANUNG', title: 'Planung', weight: 20, requiresApproval: true },
-  { code: 'UMSETZUNG', title: 'Umsetzung', weight: 35, requiresApproval: false },
-  { code: 'ABNAHME', title: 'Abnahme', weight: 25, requiresApproval: true },
-  { code: 'ABSCHLUSS', title: 'Abschluss', weight: 10, requiresApproval: false },
-] as const
 
 export async function restructureCollaborationProjectStages(projectId: string, plan: Array<{ code: string; title: string; weight: number; requiresApproval?: boolean }>) {
   const { userId, userEmail } = await requireCollaborationSession()

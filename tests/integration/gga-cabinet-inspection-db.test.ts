@@ -18,6 +18,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
   let cabinetService: typeof import('@/lib/services/gga-cabinet.service')
   let phase2Service: typeof import('@/lib/services/collaboration-phase2.service')
   let schrankakteService: typeof import('@/lib/services/gga-cabinet-schrankakte.service')
+  let cabinetWorkflow: typeof import('@/lib/collaboration/cabinet-workflow')
   const marker = `GGA-INSP-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
   let managerUserId = '', managerEmail = ''
@@ -65,6 +66,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
     cabinetService = await import('@/lib/services/gga-cabinet.service')
     phase2Service = await import('@/lib/services/collaboration-phase2.service')
     schrankakteService = await import('@/lib/services/gga-cabinet-schrankakte.service')
+    cabinetWorkflow = await import('@/lib/collaboration/cabinet-workflow')
   })
 
   afterAll(async () => {
@@ -86,6 +88,18 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
     await db.$disconnect()
   })
 
+  // REQ-015.2: requestCollaborationApproval() verlangt seit REQ-015 serverseitig
+  // eine vollständige ABNAHME-Checkliste (ggaCabinetBereitFuerInterneFreigabe) —
+  // vorher genügte hier die reine Existenz der ABNAHME-Stage. Ausschließlich über
+  // die bestehende produktive setGgaCabinetInspectionItem()-Funktion hergestellt
+  // (siehe auch Test „setGgaCabinetInspectionItem legt den Prüfpunkt bei Bedarf
+  // an…" weiter unten in dieser Datei), keine direkte DB-Manipulation.
+  async function completeAbnahmeChecklist(cabinetId: string) {
+    for (const title of cabinetService.GGA_CABINET_CHECKLIST_TEMPLATES.ABNAHME.items) {
+      await cabinetService.setGgaCabinetInspectionItem(cabinetId, title, true)
+    }
+  }
+
   // ── Approval/Blocker mit Cabinet-Bezug ────────────────────────
   it('Freigabe mit Cabinet-Bezug: fremde cabinetId wird abgelehnt', async () => {
     asUser(plannerUserId, plannerEmail)
@@ -95,6 +109,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
 
     asUser(plannerUserId, plannerEmail)
     await expect(phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinetB.id)).rejects.toThrow('nicht gefunden')
+    await completeAbnahmeChecklist(cabinetA.id)
     const approval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinetA.id)
     expect(approval.cabinetId).toBe(cabinetA.id)
   })
@@ -102,6 +117,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
   it('Ablehnung einer Freigabe erfordert eine Begründung', async () => {
     asUser(plannerUserId, plannerEmail)
     const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-REJ`, bezeichnung: 'Ablehnungstest' })
+    await completeAbnahmeChecklist(cabinet.id)
     const approval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
     asUser(managerUserId, managerEmail)
     await expect(phase2Service.decideCollaborationApproval(approval.id, 'REJECTED')).rejects.toThrow('Begründung')
@@ -113,6 +129,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
   it('unberechtigte Freigabe: OPERATOR kann keine Freigabe entscheiden', async () => {
     asUser(plannerUserId, plannerEmail)
     const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-UNAUTH`, bezeichnung: 'Unautorisierte Freigabe' })
+    await completeAbnahmeChecklist(cabinet.id)
     const approval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
     asUser(operatorUserId, operatorEmail)
     await expect(phase2Service.decideCollaborationApproval(approval.id, 'APPROVED')).rejects.toThrow('Keine Berechtigung')
@@ -134,6 +151,62 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
     await cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Elektro/VDE geprüft', true)
     const after = await db.collaborationChecklistItem.findFirst({ where: { cabinetId: cabinet.id, title: 'Elektro/VDE geprüft' } })
     expect(after.completed).toBe(true)
+  })
+
+  // REQ-018.2 (T2/T3): setGgaCabinetInspectionItem() materialisiert VOR dem
+  // Setzen des einzelnen Punkts die vollständige 8-Punkte-ABNAHME-Vorlage —
+  // real reproduzierter Fehler aus der REQ-018.1-Browser-QA (Q14): vorher
+  // erzeugte ein einzelner Aufruf NUR den angefragten Titel, wodurch
+  // progressForStages() 2/2 = 100% statt korrekt 2/8 = 25% meldete.
+  it('setGgaCabinetInspectionItem materialisiert immer alle 8 ABNAHME-Pflichtpunkte — nie ein falsches 100%-Signal aus einer Teilmenge (REQ-018.2 T2/T3)', async () => {
+    asUser(plannerUserId, plannerEmail)
+    const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-PROG1`, bezeichnung: 'Progress-Integrity-Test' })
+
+    const beforeCount = await db.collaborationChecklistItem.count({ where: { cabinetId: cabinet.id } })
+    expect(beforeCount).toBe(0)
+
+    // Nur EIN Punkt wird explizit gesetzt — analog zum REQ-018.1-Sync, der
+    // nur "Abluft geprüft" bzw. "Elektro/VDE geprüft" anfasst.
+    await cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Abluft geprüft', true)
+
+    const allItems = await db.collaborationChecklistItem.findMany({ where: { cabinetId: cabinet.id } })
+    expect(allItems.length).toBe(cabinetService.GGA_CABINET_CHECKLIST_TEMPLATES.ABNAHME.items.length) // 8, nicht 1
+    const completedTitles = allItems.filter((i: any) => i.completed).map((i: any) => i.title)
+    expect(completedTitles).toEqual(['Abluft geprüft']) // die restlichen 7 wurden materialisiert, aber NICHT fälschlich als erledigt markiert
+
+    const detail = await cabinetService.getGgaCabinetDetail(cabinet.id)
+    expect(detail.status.abnahmeChecklistFortschritt).toBe(13) // round(1/8*100), NICHT 100
+    expect(cabinetWorkflow.ggaCabinetBereitFuerInterneFreigabe(detail.status)).toBe(false)
+
+    // Zweiter Punkt gesetzt — bleibt bei 8 materialisierten Zeilen (Idempotenz), jetzt 2/8 = 25%.
+    await cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Elektro/VDE geprüft', true)
+    const countAfterSecond = await db.collaborationChecklistItem.count({ where: { cabinetId: cabinet.id } })
+    expect(countAfterSecond).toBe(8)
+    const detail2 = await cabinetService.getGgaCabinetDetail(cabinet.id)
+    expect(detail2.status.abnahmeChecklistFortschritt).toBe(25)
+    expect(cabinetWorkflow.ggaCabinetBereitFuerInterneFreigabe(detail2.status)).toBe(false)
+  })
+
+  // REQ-018.2 (T4): 8/8 materialisiert, 8/8 erledigt ⇒ 100% — regressionsfrei.
+  it('bei vollständig erledigter ABNAHME-Checkliste (8/8) meldet der Fortschritt korrekt 100% (REQ-018.2 T4)', async () => {
+    asUser(plannerUserId, plannerEmail)
+    const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-PROG2`, bezeichnung: 'Progress-Vollstaendig-Test' })
+    await completeAbnahmeChecklist(cabinet.id)
+    const detail = await cabinetService.getGgaCabinetDetail(cabinet.id)
+    expect(detail.status.abnahmeChecklistFortschritt).toBe(100)
+    expect(cabinetWorkflow.ggaCabinetBereitFuerInterneFreigabe(detail.status)).toBe(true)
+  })
+
+  // REQ-018.2 (T9): serverseitige Freigabe-Anforderung (requestCollaborationApproval)
+  // kann NICHT umgangen werden, auch wenn nur ein Teil der Pflichtpunkte
+  // erledigt ist — bestätigt, dass der Fix nicht nur eine UI-Anzeige,
+  // sondern das tatsächliche Server-Gate (requireGgaCabinetInterneFreigabeReady) schützt.
+  it('interne Freigabe-Anforderung lehnt ein Cabinet mit nur 2/8 erledigten Pflichtpunkten ab (REQ-018.2 T9)', async () => {
+    asUser(plannerUserId, plannerEmail)
+    const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-PROG3`, bezeichnung: 'Freigabe-Blockade-Test' })
+    await cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Abluft geprüft', true)
+    await cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Elektro/VDE geprüft', true)
+    await expect(phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)).rejects.toThrow('noch nicht vollständig')
   })
 
   it('Viewer kann keinen Prüfpunkt verändern', async () => {
@@ -208,6 +281,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
     await phase2Service.createCollaborationTask(stagePlanungId, { title: 'Planung fertig (nacharbeit)', cabinetId: ctNacharbeit.id })
     await phase2Service.createCollaborationTask(stageUmsetzungId, { title: 'Montage fertig (nacharbeit)', cabinetId: ctNacharbeit.id })
     await db.collaborationTask.updateMany({ where: { cabinetId: ctNacharbeit.id }, data: { status: 'DONE' } })
+    await completeAbnahmeChecklist(ctNacharbeit.id)
     const nacharbeitApproval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, ctNacharbeit.id)
     asUser(managerUserId, managerEmail)
     await phase2Service.decideCollaborationApproval(nacharbeitApproval.id, 'REJECTED', 'Volumenstrom nicht erreicht')
@@ -219,6 +293,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Umsetzung/Prüfung/Abnahme/Schrankakte �
     await phase2Service.createCollaborationTask(stagePlanungId, { title: 'Planung fertig (done)', cabinetId: ctDone.id })
     await phase2Service.createCollaborationTask(stageUmsetzungId, { title: 'Montage fertig (done)', cabinetId: ctDone.id })
     await db.collaborationTask.updateMany({ where: { cabinetId: ctDone.id }, data: { status: 'DONE' } })
+    await completeAbnahmeChecklist(ctDone.id)
     const doneApproval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, ctDone.id)
     asUser(managerUserId, managerEmail)
     await phase2Service.decideCollaborationApproval(doneApproval.id, 'APPROVED', undefined)

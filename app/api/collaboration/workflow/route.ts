@@ -13,6 +13,7 @@ import {
   setCollaborationChecklistCompleted,
   setCollaborationTaskStatus,
   transitionCollaborationStage,
+  transitionCollaborationProjectStatus,
 } from '@/lib/services/collaboration-phase2.service'
 import {
   createGgaCabinet,
@@ -23,6 +24,7 @@ import {
   setGgaCabinetInspectionItem,
   requestGgaCabinetOperatorApproval,
   decideGgaCabinetOperatorApproval,
+  recordGgaCabinetPruefnachweis,
 } from '@/lib/services/gga-cabinet.service'
 import { setCollaborationDocumentVisibility } from '@/lib/services/collaboration-document.service'
 
@@ -30,10 +32,11 @@ const bodySchema = z.object({
   action: z.enum([
     'create-task', 'update-task', 'task-status', 'create-checklist', 'checklist',
     'create-blocker', 'resolve-blocker', 'request-approval', 'decide-approval',
-    'transition-stage', 'restructure-stages',
+    'transition-stage', 'transition-project', 'restructure-stages',
     'create-cabinet', 'update-cabinet', 'delete-cabinet', 'set-cabinet',
     'apply-cabinet-checklist-template', 'set-cabinet-inspection-item',
     'request-operator-approval', 'decide-operator-approval', 'set-document-visibility',
+    'record-pruefnachweis',
   ]),
   id: z.string().min(1),
   projectId: z.string().min(1).optional(),
@@ -50,6 +53,8 @@ const bodySchema = z.object({
   title: z.string().min(1).max(200).optional(),
   unterlagenGeprueft: z.boolean().optional(),
   visibility: z.enum(['INTERNAL', 'EXTERNAL']).optional(),
+  pruefart: z.enum(['LUEFTUNG', 'ELEKTRO', 'VDE']).optional(),
+  ergebnis: z.enum(['OFFEN', 'BESTANDEN', 'NICHT_BESTANDEN']).optional(),
 })
 
 export async function POST(request: Request) {
@@ -103,6 +108,12 @@ export async function POST(request: Request) {
       if (!input.visibility) throw new ValidationError('Sichtbarkeit fehlt')
       result = await setCollaborationDocumentVisibility(input.id, input.visibility)
     }
+    else if (input.action === 'record-pruefnachweis') {
+      if (!input.pruefart) throw new ValidationError('Prüfart fehlt')
+      if (!input.ergebnis) throw new ValidationError('Ergebnis fehlt')
+      result = await recordGgaCabinetPruefnachweis(input.id, input.pruefart, input.ergebnis, input.data ?? {})
+    }
+    else if (input.action === 'transition-project') result = await transitionCollaborationProjectStatus(input.id, input.status ?? '')
     else result = await transitionCollaborationStage(input.id, input.status ?? '')
     return NextResponse.json({ ok: true, result })
   } catch (error: unknown) {

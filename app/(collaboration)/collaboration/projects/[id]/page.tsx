@@ -3,9 +3,11 @@ import { notFound } from 'next/navigation'
 import { getCollaborationPhase2Project, getRecentCollaborationActivity } from '@/lib/services/collaboration-phase2.service'
 import { getGgaCabinetControlTowerSummary, getGgaCabinetProjectWorklist } from '@/lib/services/gga-cabinet.service'
 import { GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS, GGA_WORKLIST_URGENCY_LABELS, GGA_WORKLIST_URGENCY_BADGE_CLASS } from '@/lib/collaboration/cabinet-workflow'
+import { COLLABORATION_PROJECT_STATUS_TRANSITIONS, getProjectCompletionBlocker } from '@/lib/collaboration/project-workflow'
 import { NotFoundError } from '@/lib/auth/permissions'
 import { COLLABORATION_STAGE_STATUS_LABELS, COLLABORATION_PROJECT_STATUS_LABELS, COLLABORATION_ROLE_LABELS, COLLABORATION_HEALTH_STATUS_LABELS, type CollaborationRole } from '@/types/enums'
 import { CollaborationStageActions } from '@/components/collaboration/CollaborationStageActions'
+import { CollaborationProjectStatusActions } from '@/components/collaboration/CollaborationProjectStatusActions'
 
 const healthBadgeClass: Record<string, string> = { GREEN: 'bg-emerald-50 text-emerald-700', YELLOW: 'bg-amber-50 text-amber-700', RED: 'bg-red-50 text-red-700' }
 
@@ -24,9 +26,17 @@ export default async function CollaborationProjectPage({ params }: { params: Pro
   const blockers = project.stages.flatMap((stage) => (stage.blockers ?? []).map((blocker) => ({ ...blocker, stageTitle: stage.title }))).filter((item) => item.status === 'OPEN')
   const approvals = project.stages.flatMap((stage) => (stage.approvals ?? []).map((approval) => ({ ...approval, stageTitle: stage.title }))).filter((item) => item.status === 'REQUESTED')
   const canSeeCreationForms = !['COLLAB_VIEWER', 'OPERATOR'].includes(project.role)
+  // REQ-016: dieselbe Bedingung wie project.nextAction === 'Projektabschluss
+  // prüfen' (deriveNextAction), hier explizit ausgewertet, um den COMPLETED-
+  // Übergang in der UI nur anzubieten, wenn er auch serverseitig zulässig
+  // wäre — kein Ersatz für den Server-Guard, nur dieselbe Ableitung gespiegelt.
+  const canCompleteNow = getProjectCompletionBlocker(project.stages) === null
+  const allowedProjectTransitions = (COLLABORATION_PROJECT_STATUS_TRANSITIONS[project.status as keyof typeof COLLABORATION_PROJECT_STATUS_TRANSITIONS] ?? [])
+    .filter((target) => target !== 'COMPLETED' || canCompleteNow)
 
   return <div>
     <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-600 uppercase tracking-[0.18em] text-blue-700">Projektsteuerung</p><h1 className="mt-2 text-3xl font-600 tracking-tight">{project.projectNumber ? `${project.projectNumber} · ` : ''}{project.name}</h1></div><div className="flex items-center gap-2"><span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-600">{COLLABORATION_PROJECT_STATUS_LABELS[project.status as keyof typeof COLLABORATION_PROJECT_STATUS_LABELS]}</span><span className={`rounded-full px-3 py-1.5 text-xs font-600 ${healthBadgeClass[project.healthStatus] ?? healthBadgeClass.GREEN}`}>{COLLABORATION_HEALTH_STATUS_LABELS[project.healthStatus]}</span></div></div>
+    <div className="mt-3"><CollaborationProjectStatusActions projectId={project.id} role={project.role} allowedTransitions={allowedProjectTransitions} /></div>
 
     <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
       <div className="rounded-xl border border-stone-200 bg-white p-5"><p className="text-sm text-muted-foreground">Fortschritt</p><p className="mt-2 text-2xl font-600">{project.progressPercent === null ? '—' : `${project.progressPercent} %`}</p></div>

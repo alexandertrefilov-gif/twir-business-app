@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaControlTowerOverview, deriveGgaProjectWorklist, formatGgaBetriebsstatusLabel,
+  GGA_FIVE_PHASE_PLAN, GGA_STAGE_ABNAHME, GGA_STAGE_ABSCHLUSS, GGA_STAGE_KONZEPT, GGA_STAGE_PLANUNG, GGA_STAGE_UMSETZUNG,
+  ggaCabinetBereitFuerInterneFreigabe, ggaCabinetBereitFuerBetreiberfreigabe, isCabinetReadyForStage,
+  deriveCurrentPruefnachweis, isGgaPruefartBestanden, type GgaCabinetPruefnachweisSnapshot,
   type GgaCabinetControlTowerEntry, type GgaCabinetSnapshot, type GgaControlTowerCabinetEntry, type GgaWorklistCabinetBlocker,
   type GgaWorklistCabinetInput, type GgaWorklistCabinetTask,
 } from '@/lib/collaboration/cabinet-workflow'
+import { GGA_FIVE_PHASE_PLAN as GGA_FIVE_PHASE_PLAN_FROM_SERVICE } from '@/lib/services/collaboration-phase2.service'
 
 function entry(id: string, kennung: string, snapshot: GgaCabinetSnapshot, now?: Date): GgaCabinetControlTowerEntry {
   return { id, kennung, ...deriveCabinetStatus(snapshot, now) }
@@ -975,5 +979,314 @@ describe('deriveGgaControlTowerOverview (REQ-014): Projektübergreifender GGA Co
     expect(overview.gesamt.abgeschlossen).toBe(1)
     expect(overview.projekte[0].abgeschlossen).toBe(1)
     expect(overview.gesamt.mitBlocker).toBe(1) // gleichzeitig weiterhin als dringend sichtbar
+  })
+})
+
+// GGA-05.1: Stage-Code-Konsistenz. Vor dieser Korrektur pflegten
+// cabinet-workflow.ts, collaboration-phase2.service.ts und prisma/seed/seed.ts
+// jeweils eigene Stage-Code-Listen — der Seed erzeugte PLANUNG/AUSFUEHRUNG/
+// UEBERGABE, während dieses Modul zwingend KONZEPT/PLANUNG/UMSETZUNG/ABNAHME
+// erwartet (3 BusinessRuleError-Pfade + 1 stiller progressForStages()→null-
+// Pfad, siehe GGA-05/-05.1-Audit). GGA_FIVE_PHASE_PLAN ist jetzt die einzige
+// Quelle (hier + prisma/seed/seed.ts importieren beide von hier).
+describe('GGA_FIVE_PHASE_PLAN (GGA-05.1): Single Source of Truth', () => {
+  it('T1a) collaboration-phase2.service.ts re-exportiert exakt dieselbe Konstante (Referenzidentität, keine zweite Definition)', () => {
+    expect(GGA_FIVE_PHASE_PLAN_FROM_SERVICE).toBe(GGA_FIVE_PHASE_PLAN)
+  })
+
+  it('T1b) die kanonischen Codes sind exakt und in dieser Reihenfolge: KONZEPT, PLANUNG, UMSETZUNG, ABNAHME, ABSCHLUSS', () => {
+    expect(GGA_FIVE_PHASE_PLAN.map((phase) => phase.code)).toEqual([
+      GGA_STAGE_KONZEPT, GGA_STAGE_PLANUNG, GGA_STAGE_UMSETZUNG, GGA_STAGE_ABNAHME, GGA_STAGE_ABSCHLUSS,
+    ])
+    expect(GGA_FIVE_PHASE_PLAN.map((phase) => phase.code)).toEqual(['KONZEPT', 'PLANUNG', 'UMSETZUNG', 'ABNAHME', 'ABSCHLUSS'])
+  })
+
+  it('T1c) enthält weder AUSFUEHRUNG noch UEBERGABE (historische, inkompatible Seed-Codes)', () => {
+    const codes = GGA_FIVE_PHASE_PLAN.map((phase) => phase.code)
+    expect(codes).not.toContain('AUSFUEHRUNG')
+    expect(codes).not.toContain('UEBERGABE')
+  })
+
+  // T4 — progressForStages(): für jede der vier Cabinet-relevanten Phasen
+  // (ABSCHLUSS hat bewusst keinen eigenen Cabinet-Fortschrittswert, siehe
+  // GGA-05-Audit — rein organisatorische Projektphase ohne Schrankbezug)
+  // muss ein erforderlicher, offener Checklistenpunkt unter genau diesem
+  // Code einen NICHT-null-Fortschritt liefern. Ein unbekannter/abweichender
+  // Stage-Code würde hier still auf null zurückfallen (kein Fehler, aber
+  // ein für immer bei 0% hängender Schrank) — das ist exakt der stille
+  // Fehlerpfad, den GGA-05.1 schließt.
+  const cabinetRelevantPhases: Array<{ code: string; field: keyof ReturnType<typeof deriveCabinetStatus> }> = [
+    { code: GGA_STAGE_KONZEPT, field: 'bestandsaufnahmeFortschritt' },
+    { code: GGA_STAGE_PLANUNG, field: 'planungsfortschritt' },
+    { code: GGA_STAGE_UMSETZUNG, field: 'montagefortschritt' },
+    { code: GGA_STAGE_ABNAHME, field: 'abnahmeChecklistFortschritt' },
+  ]
+
+  for (const { code, field } of cabinetRelevantPhases) {
+    it(`T4) progressForStages liefert einen gültigen Wert (nicht null) für die kanonische Phase ${code}`, () => {
+      const snapshot = baseSnapshot({
+        checklistItems: [{ id: 'c1', title: 'Punkt', isRequired: true, completed: false, sequence: 1, stageCode: code }],
+      })
+      const status = deriveCabinetStatus(snapshot)
+      expect(status[field]).not.toBeNull()
+      expect(status[field]).toBe(0) // ein offener, erforderlicher Punkt → 0%, nicht null
+    })
+  }
+
+  it('T4) ein Checklistenpunkt unter einem unbekannten/historischen Stage-Code (z. B. AUSFUEHRUNG) wird von keiner Phase erfasst — dokumentiert den stillen Fehlerpfad, den GGA-05.1 durch den Seed-Fix verhindert', () => {
+    const snapshot = baseSnapshot({
+      checklistItems: [{ id: 'c1', title: 'Punkt', isRequired: true, completed: false, sequence: 1, stageCode: 'AUSFUEHRUNG' }],
+    })
+    const status = deriveCabinetStatus(snapshot)
+    expect(status.bestandsaufnahmeFortschritt).toBeNull()
+    expect(status.planungsfortschritt).toBeNull()
+    expect(status.montagefortschritt).toBeNull()
+    expect(status.abnahmeChecklistFortschritt).toBeNull()
+  })
+})
+
+// REQ-015 / GGA-05.2: gemeinsame Readiness-Prüfung für die Freigabe-Kette.
+// Beide Prädikate lesen ausschließlich deriveCabinetStatus()-Felder — keine
+// eigene Statuslogik, siehe Kommentar in cabinet-workflow.ts. Die vollständige
+// Rollenmatrix + Server-Enforcement laufen als Integrationstest gegen eine
+// echte DB, siehe tests/integration/gga-cabinet-db.test.ts → "REQ-015".
+describe('ggaCabinetBereitFuerInterneFreigabe / ggaCabinetBereitFuerBetreiberfreigabe (REQ-015)', () => {
+  it('interne Freigabe: NICHT bereit ohne jeden ABNAHME-Checklistenpunkt (kein Punkt → null → nicht bereit)', () => {
+    const status = deriveCabinetStatus(baseSnapshot())
+    expect(status.abnahmeChecklistFortschritt).toBeNull()
+    expect(ggaCabinetBereitFuerInterneFreigabe(status)).toBe(false)
+  })
+
+  it('interne Freigabe: NICHT bereit bei teilweise abgehakter ABNAHME-Checkliste', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      checklistItems: [
+        { id: 'c1', title: 'Abluft geprüft', isRequired: true, completed: true, sequence: 1, stageCode: GGA_STAGE_ABNAHME },
+        { id: 'c2', title: 'Elektro/VDE geprüft', isRequired: true, completed: false, sequence: 2, stageCode: GGA_STAGE_ABNAHME },
+      ],
+    }))
+    expect(status.abnahmeChecklistFortschritt).toBe(50)
+    expect(ggaCabinetBereitFuerInterneFreigabe(status)).toBe(false)
+  })
+
+  it('interne Freigabe: bereit, wenn die vollständige ABNAHME-Checkliste abgehakt ist', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      checklistItems: [
+        { id: 'c1', title: 'Abluft geprüft', isRequired: true, completed: true, sequence: 1, stageCode: GGA_STAGE_ABNAHME },
+        { id: 'c2', title: 'Elektro/VDE geprüft', isRequired: true, completed: true, sequence: 2, stageCode: GGA_STAGE_ABNAHME },
+      ],
+    }))
+    expect(status.abnahmeChecklistFortschritt).toBe(100)
+    expect(ggaCabinetBereitFuerInterneFreigabe(status)).toBe(true)
+  })
+
+  it('interne Freigabe: nicht-erforderliche (optionale) Punkte zählen nicht mit — bereit auch wenn ein optionaler Punkt offen bleibt', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      checklistItems: [
+        { id: 'c1', title: 'Pflicht', isRequired: true, completed: true, sequence: 1, stageCode: GGA_STAGE_ABNAHME },
+        { id: 'c2', title: 'Optional', isRequired: false, completed: false, sequence: 2, stageCode: GGA_STAGE_ABNAHME },
+      ],
+    }))
+    expect(ggaCabinetBereitFuerInterneFreigabe(status)).toBe(true)
+  })
+
+  it('Betreiberfreigabe: NICHT bereit ohne entschiedene interne ABNAHME-Freigabe (pruefstatus NICHT_GEPLANT)', () => {
+    const status = deriveCabinetStatus(baseSnapshot())
+    expect(status.pruefstatus).toBe('NICHT_GEPLANT')
+    expect(ggaCabinetBereitFuerBetreiberfreigabe(status)).toBe(false)
+  })
+
+  it('Betreiberfreigabe: NICHT bereit bei lediglich angeforderter (noch nicht entschiedener) interner Freigabe', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      approvals: [{ id: 'a1', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: null, stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(status.pruefstatus).toBe('GEPLANT')
+    expect(ggaCabinetBereitFuerBetreiberfreigabe(status)).toBe(false)
+  })
+
+  it('Betreiberfreigabe: NICHT bereit nach abgelehnter interner Freigabe (BEANSTANDET)', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      approvals: [{ id: 'a1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-02'), stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(status.pruefstatus).toBe('BEANSTANDET')
+    expect(ggaCabinetBereitFuerBetreiberfreigabe(status)).toBe(false)
+  })
+
+  it('Betreiberfreigabe: bereit nach genehmigter, noch gültiger interner ABNAHME-Freigabe (pruefstatus BESTANDEN)', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      approvals: [{ id: 'a1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-02'), stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(status.pruefstatus).toBe('BESTANDEN')
+    expect(ggaCabinetBereitFuerBetreiberfreigabe(status)).toBe(true)
+  })
+
+  it('Betreiberfreigabe: NICHT bereit, wenn die genehmigte interne Prüfung inzwischen wieder überfällig ist (UEBERFAELLIG)', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      pruefintervallMonate: 1,
+      letztePruefungAm: new Date('2026-01-01'),
+      approvals: [{ id: 'a1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-01'), stageCode: GGA_STAGE_ABNAHME }],
+    }), new Date('2026-06-01'))
+    expect(status.pruefstatus).toBe('UEBERFAELLIG')
+    expect(ggaCabinetBereitFuerBetreiberfreigabe(status)).toBe(false)
+  })
+
+  it('eine vollständige ABNAHME-Checkliste allein macht NICHT automatisch auch für die Betreiberfreigabe bereit — die beiden Schwellen sind fachlich unterschiedlich (Invariante 5)', () => {
+    const status = deriveCabinetStatus(baseSnapshot({
+      checklistItems: [{ id: 'c1', title: 'Abluft geprüft', isRequired: true, completed: true, sequence: 1, stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(ggaCabinetBereitFuerInterneFreigabe(status)).toBe(true)
+    expect(ggaCabinetBereitFuerBetreiberfreigabe(status)).toBe(false)
+  })
+})
+
+// REQ-015.4: isCabinetReadyForStage() ist ein reiner Adapter auf bereits
+// vorhandene DerivedGgaCabinetStatus-Felder (keine neue Statuslogik) —
+// siehe cabinet-workflow.ts. Membership (welche Cabinets zählen) wird hier
+// bewusst NICHT getestet (das ist Aufgabe von collaboration-phase2.service.ts
+// über GgaCabinet.projectId, siehe die REQ-015.4-DB-Tests) — nur die reine
+// Fortschritts-zu-Bereitschaft-Abbildung je Stage-Code.
+describe('isCabinetReadyForStage (REQ-015.4)', () => {
+  it('KONZEPT: bereit erst nach abgeschlossener Bestandsaufnahme', () => {
+    const offen = deriveCabinetStatus(baseSnapshot({}))
+    expect(isCabinetReadyForStage(offen, GGA_STAGE_KONZEPT)).toBe(false)
+    const fertig = deriveCabinetStatus(baseSnapshot({ bestandsaufnahmeAm: new Date('2026-01-01') }))
+    expect(isCabinetReadyForStage(fertig, GGA_STAGE_KONZEPT)).toBe(true)
+  })
+
+  it('PLANUNG: bereit erst bei 100% Fortschritt der Pflichtpunkte', () => {
+    const offen = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      checklistItems: [{ id: 'p1', title: 'Soll-Abluft definiert', isRequired: true, completed: false, sequence: 1, stageCode: GGA_STAGE_PLANUNG }],
+    }))
+    expect(isCabinetReadyForStage(offen, GGA_STAGE_PLANUNG)).toBe(false)
+    const fertig = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      checklistItems: [{ id: 'p1', title: 'Soll-Abluft definiert', isRequired: true, completed: true, sequence: 1, stageCode: GGA_STAGE_PLANUNG }],
+    }))
+    expect(isCabinetReadyForStage(fertig, GGA_STAGE_PLANUNG)).toBe(true)
+  })
+
+  it('UMSETZUNG: bereit erst bei 100% Montagefortschritt', () => {
+    const offen = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [{ id: 't1', title: 'Montage', isRequired: true, status: 'TODO', sequence: 1, stageCode: GGA_STAGE_UMSETZUNG }],
+    }))
+    expect(isCabinetReadyForStage(offen, GGA_STAGE_UMSETZUNG)).toBe(false)
+    const fertig = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [{ id: 't1', title: 'Montage', isRequired: true, status: 'DONE', sequence: 1, stageCode: GGA_STAGE_UMSETZUNG }],
+    }))
+    expect(isCabinetReadyForStage(fertig, GGA_STAGE_UMSETZUNG)).toBe(true)
+  })
+
+  it('ABNAHME: bereit erst bei pruefstatus BESTANDEN (technisch geprüft UND intern APPROVED) — reine Checklisten-Vollständigkeit reicht NICHT (Invariante 5)', () => {
+    const nurChecklisteFertig = deriveCabinetStatus(baseSnapshot({
+      checklistItems: [{ id: 'c1', title: 'Abluft geprüft', isRequired: true, completed: true, sequence: 1, stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(isCabinetReadyForStage(nurChecklisteFertig, GGA_STAGE_ABNAHME)).toBe(false)
+    const approved = deriveCabinetStatus(baseSnapshot({
+      checklistItems: [{ id: 'c1', title: 'Abluft geprüft', isRequired: true, completed: true, sequence: 1, stageCode: GGA_STAGE_ABNAHME }],
+      approvals: [{ id: 'a1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-02'), stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(isCabinetReadyForStage(approved, GGA_STAGE_ABNAHME)).toBe(true)
+  })
+
+  it('ABNAHME: REQUESTED oder REJECTED zählen nicht als bereit', () => {
+    const requested = deriveCabinetStatus(baseSnapshot({
+      approvals: [{ id: 'a1', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: null, stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(isCabinetReadyForStage(requested, GGA_STAGE_ABNAHME)).toBe(false)
+    const rejected = deriveCabinetStatus(baseSnapshot({
+      approvals: [{ id: 'a1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-02'), stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(isCabinetReadyForStage(rejected, GGA_STAGE_ABNAHME)).toBe(false)
+  })
+
+  it('ABSCHLUSS: bereit nur, wenn das Cabinet insgesamt als abgeschlossen abgeleitet ist', () => {
+    const nurAbnahmeApproved = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      approvals: [{ id: 'a1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-02'), stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    // Planung/Umsetzung haben keine Pflichtpunkte -> Fortschritt null ->
+    // lifecycleStage bleibt auf PLANUNG stehen, ABSCHLUSS also NICHT bereit.
+    expect(isCabinetReadyForStage(nurAbnahmeApproved, GGA_STAGE_ABSCHLUSS)).toBe(false)
+
+    const vollstaendig = deriveCabinetStatus(baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 'p1', title: 'Planung fertig', isRequired: true, status: 'DONE', sequence: 1, stageCode: GGA_STAGE_PLANUNG },
+        { id: 't1', title: 'Montage fertig', isRequired: true, status: 'DONE', sequence: 1, stageCode: GGA_STAGE_UMSETZUNG },
+      ],
+      approvals: [{ id: 'a1', status: 'APPROVED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-02'), stageCode: GGA_STAGE_ABNAHME }],
+    }))
+    expect(vollstaendig.abgeschlossen).toBe(true)
+    expect(isCabinetReadyForStage(vollstaendig, GGA_STAGE_ABSCHLUSS)).toBe(true)
+  })
+
+  it('unbekannter/Nicht-GGA-Stage-Code blockiert nie (default true)', () => {
+    const offen = deriveCabinetStatus(baseSnapshot({}))
+    expect(isCabinetReadyForStage(offen, 'IRGENDEINE_STAGE')).toBe(true)
+  })
+})
+
+// REQ-018/REQ-018.1: strukturierte Prüfnachweise Lüftung/Elektro/VDE.
+// deriveCurrentPruefnachweis()/isGgaPruefartBestanden() sind reine
+// Funktionen (kein DB-Zugriff) — die Membership-/Zugriffs-Logik lebt im
+// Service-Layer (siehe tests/integration/gga-cabinet-pruefnachweise-db.test.ts).
+describe('Prüfnachweise (REQ-018/REQ-018.1)', () => {
+  function pn(overrides: Partial<GgaCabinetPruefnachweisSnapshot> = {}): GgaCabinetPruefnachweisSnapshot {
+    return {
+      id: 'p1', pruefart: 'LUEFTUNG', ergebnis: 'OFFEN', pruefdatum: null,
+      ausfuehrendeStelle: null, bemerkung: null, documentId: null, createdAt: new Date('2026-01-01'),
+      ...overrides,
+    }
+  }
+
+  it('T18: fehlender Prüfnachweis (keine Datensätze) gilt als OFFEN/nicht bestanden', () => {
+    expect(deriveCurrentPruefnachweis([], 'ELEKTRO')).toBeNull()
+    expect(isGgaPruefartBestanden([], 'ELEKTRO')).toBe(false)
+  })
+
+  it('AC4: OFFEN gilt nicht als bestanden', () => {
+    const records = [pn({ id: 'a', pruefart: 'ELEKTRO', ergebnis: 'OFFEN' })]
+    expect(isGgaPruefartBestanden(records, 'ELEKTRO')).toBe(false)
+  })
+
+  it('AC5: NICHT_BESTANDEN gilt nicht als bestanden', () => {
+    const records = [pn({ id: 'a', pruefart: 'VDE', ergebnis: 'NICHT_BESTANDEN' })]
+    expect(isGgaPruefartBestanden(records, 'VDE')).toBe(false)
+  })
+
+  it('AC1: Lüftung/Elektro/VDE bleiben unabhängig voneinander — ein BESTANDEN bei einer Prüfart beeinflusst die anderen nicht', () => {
+    const records = [
+      pn({ id: 'a', pruefart: 'LUEFTUNG', ergebnis: 'BESTANDEN' }),
+      pn({ id: 'b', pruefart: 'ELEKTRO', ergebnis: 'OFFEN' }),
+      pn({ id: 'c', pruefart: 'VDE', ergebnis: 'NICHT_BESTANDEN' }),
+    ]
+    expect(isGgaPruefartBestanden(records, 'LUEFTUNG')).toBe(true)
+    expect(isGgaPruefartBestanden(records, 'ELEKTRO')).toBe(false)
+    expect(isGgaPruefartBestanden(records, 'VDE')).toBe(false)
+  })
+
+  it('T20/T21: Wiederholungsprüfung — die zeitlich neueste Zeile (pruefdatum, sonst createdAt) bestimmt den aktuellen Stand, Historie bleibt erhalten', () => {
+    const records = [
+      pn({ id: 'alt', pruefart: 'ELEKTRO', ergebnis: 'NICHT_BESTANDEN', pruefdatum: new Date('2026-01-01'), createdAt: new Date('2026-01-01') }),
+      pn({ id: 'neu', pruefart: 'ELEKTRO', ergebnis: 'BESTANDEN', pruefdatum: new Date('2026-03-01'), createdAt: new Date('2026-03-01') }),
+    ]
+    const current = deriveCurrentPruefnachweis(records, 'ELEKTRO')
+    expect(current?.id).toBe('neu')
+    expect(current?.ergebnis).toBe('BESTANDEN')
+    expect(isGgaPruefartBestanden(records, 'ELEKTRO')).toBe(true)
+    // Historie bleibt vollständig erhalten (keine Zeile wird durch die
+    // Ableitung entfernt oder überschrieben).
+    expect(records).toHaveLength(2)
+    expect(records.some((r) => r.id === 'alt' && r.ergebnis === 'NICHT_BESTANDEN')).toBe(true)
+  })
+
+  it('deriveCurrentPruefnachweis: ohne pruefdatum entscheidet createdAt als Fallback', () => {
+    const records = [
+      pn({ id: 'a', pruefart: 'VDE', ergebnis: 'NICHT_BESTANDEN', pruefdatum: null, createdAt: new Date('2026-01-01') }),
+      pn({ id: 'b', pruefart: 'VDE', ergebnis: 'BESTANDEN', pruefdatum: null, createdAt: new Date('2026-02-01') }),
+    ]
+    expect(deriveCurrentPruefnachweis(records, 'VDE')?.id).toBe('b')
   })
 })

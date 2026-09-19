@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { BusinessRuleError } from '@/lib/auth/permissions'
 
 const RUN_INTEGRATION = !!process.env.TEST_DATABASE_URL
 
@@ -449,6 +450,16 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     it('J) OPERATOR kann weiterhin seine eigene Betreiberfreigabe entscheiden (legitimer Betreiberprozess bleibt unverändert)', async () => {
       asPlanner()
       const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-042-J`, bezeichnung: 'Betreiberentscheidungstest' })
+      // REQ-015 / GGA-05.2: Betreiberfreigabe ist jetzt serverseitig an eine
+      // bereits bestandene interne Prüfung gekoppelt (vorher nur UI-Gate,
+      // siehe cabinet-workflow.ts → ggaCabinetBereitFuerBetreiberfreigabe) —
+      // dieser bereits bestehende Test muss diese Voraussetzung jetzt real
+      // herstellen, statt sie (wie vor REQ-015 möglich) zu überspringen.
+      for (const title of cabinetService.GGA_CABINET_CHECKLIST_TEMPLATES.ABNAHME.items) {
+        await cabinetService.setGgaCabinetInspectionItem(cabinet.id, title, true)
+      }
+      const internal = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
+      await phase2Service.decideCollaborationApproval(internal.id, 'APPROVED')
       const approvalRequest = await cabinetService.requestGgaCabinetOperatorApproval(cabinet.id)
       asProjectAOperator()
       const decided = await cabinetService.decideGgaCabinetOperatorApproval(approvalRequest.id, { decision: 'APPROVED', unterlagenGeprueft: true })
@@ -624,6 +635,161 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
       await expect(phase2Service.getVisibleCollaborationTasks({ projectId: projectBId })).rejects.toThrow('nicht gefunden')
       await expect(phase2Service.getVisibleCollaborationChecklistItems({ projectId: projectBId })).rejects.toThrow('nicht gefunden')
       await expect(phase2Service.getVisibleCollaborationBlockers({ projectId: projectBId })).rejects.toThrow('nicht gefunden')
+    })
+  })
+
+  // ── REQ-015 / GGA-05.2: Freigabe-Kette — serverseitige Readiness-Gates ──
+  // Vorher: interne Freigabe hatte KEIN Gate (weder UI noch Server);
+  // Betreiberfreigabe hatte nur ein UI-Gate. Beide Aufrufe hier gehen direkt
+  // gegen die Service-Funktionen — exakt der Pfad, den ein direkter API-
+  // Aufruf (app/api/collaboration/workflow/route.ts) ebenfalls nimmt und
+  // damit kein UI-Gate umgehen kann, weil serverseitig gar kein UI existiert.
+  describe('REQ-015: Freigabe-Kette-Readiness (interne Freigabe + Betreiberfreigabe)', () => {
+    async function markAbnahmeChecklistComplete(cabinetId: string) {
+      for (const title of cabinetService.GGA_CABINET_CHECKLIST_TEMPLATES.ABNAHME.items) {
+        await cabinetService.setGgaCabinetInspectionItem(cabinetId, title, true)
+      }
+    }
+
+    it('1) interne Freigabe zu früh (ABNAHME-Checkliste leer) → serverseitig BLOCKED', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-1`, bezeichnung: 'Zu früh (intern)' })
+      await expect(phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)).rejects.toThrow('ABNAHME-Checkliste')
+      const approvalCount = await db.collaborationApproval.count({ where: { cabinetId: cabinet.id } })
+      expect(approvalCount).toBe(0)
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('2) interne Freigabe bei vollständiger ABNAHME-Checkliste (erfüllte Voraussetzungen) → ALLOWED', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-2`, bezeichnung: 'Bereit (intern)' })
+      await markAbnahmeChecklistComplete(cabinet.id)
+      const approval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
+      expect(approval.status).toBe('REQUESTED')
+      await db.collaborationApproval.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('3) Betreiberfreigabe zu früh (keine bestandene interne Prüfung) → serverseitig BLOCKED', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-3`, bezeichnung: 'Zu früh (Betreiber)' })
+      await expect(cabinetService.requestGgaCabinetOperatorApproval(cabinet.id)).rejects.toThrow('interne Prüfung')
+      const approvalCount = await db.collaborationApproval.count({ where: { cabinetId: cabinet.id, approvalType: 'OPERATOR_ACCEPTANCE' } })
+      expect(approvalCount).toBe(0)
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('4) Betreiberfreigabe nach bestandener interner Prüfung (erfüllte Voraussetzungen) → ALLOWED', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-4`, bezeichnung: 'Bereit (Betreiber)' })
+      await markAbnahmeChecklistComplete(cabinet.id)
+      const internal = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
+      await phase2Service.decideCollaborationApproval(internal.id, 'APPROVED')
+      const operatorApproval = await cabinetService.requestGgaCabinetOperatorApproval(cabinet.id)
+      expect(operatorApproval.status).toBe('REQUESTED')
+      await db.collaborationApproval.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('5) direkter Service-Aufruf kann das (nur clientseitig existierende) UI-Gate nicht umgehen — derselbe Server-Guard gilt unabhängig vom Aufrufpfad', async () => {
+      // Es gibt serverseitig keinen separaten "UI-Pfad" — jede Aufrufstelle
+      // (Wizard-Fetch, direkter API-Aufruf, dieser Test) landet in exakt
+      // derselben requestCollaborationApproval()/requestGgaCabinetOperatorApproval()
+      // -Funktion. Dieser Test bestätigt das explizit für beide Freigabearten
+      // in einem Aufruf ohne jede vorbereitende UI-Interaktion.
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-5`, bezeichnung: 'Direkter Aufruf' })
+      await expect(phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)).rejects.toBeInstanceOf(BusinessRuleError)
+      await expect(cabinetService.requestGgaCabinetOperatorApproval(cabinet.id)).rejects.toBeInstanceOf(BusinessRuleError)
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('6) falsche Rolle (COLLAB_VIEWER) bleibt BLOCKED — unabhängig vom fachlichen Zustand, Rollenprüfung hat Vorrang', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-6`, bezeichnung: 'Falsche Rolle' })
+      await markAbnahmeChecklistComplete(cabinet.id) // fachlich bereit — Rollenfehler muss trotzdem zuerst greifen
+      asViewer()
+      await expect(phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)).rejects.toThrow('Keine Berechtigung für diese Projektstufe')
+      const approvalCount = await db.collaborationApproval.count({ where: { cabinetId: cabinet.id } })
+      expect(approvalCount).toBe(0)
+      await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('7) gültige Rolle + ungültiger fachlicher Zustand bleibt BLOCKED (interne Freigabe, Checkliste unvollständig)', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-7`, bezeichnung: 'Ungültiger Zustand' })
+      // Vollständige Vorlage anwenden (8 Pflichtpunkte), aber nur einen davon
+      // abhaken — der Nenner muss die volle Vorlage sein, sonst wäre "1 von 1
+      // angelegtem Punkt" fälschlich bereits 100 %.
+      await cabinetService.applyGgaCabinetChecklistTemplate(cabinet.id, 'ABNAHME')
+      await cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Abluft geprüft', true) // nur 1 von 8 Pflichtpunkten
+      await expect(phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)).rejects.toThrow('ABNAHME-Checkliste')
+      await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('8) gültige Rolle + gültiger fachlicher Zustand → ALLOWED (beide Freigabearten im selben Ablauf)', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-8`, bezeichnung: 'Gültiger Zustand' })
+      await markAbnahmeChecklistComplete(cabinet.id)
+      const internal = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
+      expect(internal.status).toBe('REQUESTED')
+      const decided = await phase2Service.decideCollaborationApproval(internal.id, 'APPROVED')
+      expect(decided.status).toBe('APPROVED')
+      const operatorApproval = await cabinetService.requestGgaCabinetOperatorApproval(cabinet.id)
+      expect(operatorApproval.status).toBe('REQUESTED')
+      await db.collaborationApproval.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('9) bestehender korrekter Freigabeprozess bleibt regressionsfrei — REQ-011-Mangelbehebung + Ablehnung/Nacharbeit weiterhin unverändert möglich', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-9`, bezeichnung: 'Regressionstest' })
+      await markAbnahmeChecklistComplete(cabinet.id)
+      const firstRequest = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
+      // Eine Ablehnung darf trotz vollständiger Checkliste weiterhin möglich
+      // sein — REJECTED wird nie durch das neue Gate blockiert (siehe Kommentar
+      // in decideCollaborationApproval).
+      const rejected = await phase2Service.decideCollaborationApproval(firstRequest.id, 'REJECTED', 'Bitte Dokumentation nachbessern')
+      expect(rejected.status).toBe('REJECTED')
+      // Nach Nacharbeit erneut anforderbar und genehmigbar — unverändertes
+      // Verhalten aus GGA-05.2/vor REQ-015.
+      const secondRequest = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
+      const approved = await phase2Service.decideCollaborationApproval(secondRequest.id, 'APPROVED')
+      expect(approved.status).toBe('APPROVED')
+      await db.collaborationApproval.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('10) Entscheidungsweg: eine Regression zwischen Anforderung und Entscheidung (Checklistenpunkt nachträglich zurückgesetzt) blockiert APPROVED, erlaubt aber weiterhin REJECTED', async () => {
+      asPlanner()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-015-10`, bezeichnung: 'Regression nach Anforderung' })
+      await markAbnahmeChecklistComplete(cabinet.id)
+      const request = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cabinet.id)
+      // Nach der Anforderung wird ein Pflichtpunkt versehentlich zurückgesetzt.
+      await cabinetService.setGgaCabinetInspectionItem(cabinet.id, 'Abluft geprüft', false)
+      await expect(phase2Service.decideCollaborationApproval(request.id, 'APPROVED')).rejects.toThrow('ABNAHME-Checkliste')
+      const rejected = await phase2Service.decideCollaborationApproval(request.id, 'REJECTED', 'Nachträglich unvollständig festgestellt')
+      expect(rejected.status).toBe('REJECTED')
+      await db.collaborationApproval.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
+    })
+
+    it('11) andere Phasen (PLANUNG) mit requiresApproval bleiben vom ABNAHME-spezifischen Gate unberührt', async () => {
+      // GGA_FIVE_PHASE_PLAN definiert requiresApproval auch für PLANUNG —
+      // dieselbe requestCollaborationApproval()-Funktion wird hier ohne
+      // cabinetId aufgerufen und darf durch das neue, ABNAHME-spezifische
+      // Gate nicht beeinträchtigt werden.
+      asPlanner()
+      const approval = await phase2Service.requestCollaborationApproval(stagePlanungId)
+      expect(approval.status).toBe('REQUESTED')
+      await db.collaborationApproval.deleteMany({ where: { id: approval.id } })
     })
   })
 })

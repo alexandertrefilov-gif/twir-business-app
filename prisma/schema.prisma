@@ -245,21 +245,22 @@ model User {
   lastLoginAt DateTime? @map("last_login_at")
 
   // Relations
-  createdOffers          Offer[]                 @relation("OfferCreatedBy")
-  createdOrders          Order[]                 @relation("OrderCreatedBy")
-  createdInvoices        Invoice[]               @relation("InvoiceCreatedBy")
-  createdServiceReports  ServiceReport[]         @relation("ServiceReportCreatedBy")
-  auditLogs              AuditLog[]
-  customerPurchaseOrders CustomerPurchaseOrder[]
-  collaborationMemberships CollaborationMembership[]
-  collaborationApprovalRequests CollaborationApproval[] @relation("ApprovalRequestedBy")
-  collaborationApprovalDecisions CollaborationApproval[] @relation("ApprovalDecidedBy")
-  collaborationBlockersCreated CollaborationBlocker[] @relation("BlockerCreatedBy")
-  collaborationBlockersResolved CollaborationBlocker[] @relation("BlockerResolvedBy")
-  ggaCabinetsCreated      GgaCabinet[] @relation("GgaCabinetCreatedBy")
-  collaborationDocumentsUploaded CollaborationDocument[] @relation("CollaborationDocumentUploadedBy")
-  ledProjects            Project[] @relation("ProjectLead")
-  projectParticipations  ProjectParticipant[]
+  createdOffers                    Offer[]                   @relation("OfferCreatedBy")
+  createdOrders                    Order[]                   @relation("OrderCreatedBy")
+  createdInvoices                  Invoice[]                 @relation("InvoiceCreatedBy")
+  createdServiceReports            ServiceReport[]           @relation("ServiceReportCreatedBy")
+  auditLogs                        AuditLog[]
+  customerPurchaseOrders           CustomerPurchaseOrder[]
+  collaborationMemberships         CollaborationMembership[]
+  collaborationApprovalRequests    CollaborationApproval[]   @relation("ApprovalRequestedBy")
+  collaborationApprovalDecisions   CollaborationApproval[]   @relation("ApprovalDecidedBy")
+  collaborationBlockersCreated     CollaborationBlocker[]    @relation("BlockerCreatedBy")
+  collaborationBlockersResolved    CollaborationBlocker[]    @relation("BlockerResolvedBy")
+  ggaCabinetsCreated               GgaCabinet[]              @relation("GgaCabinetCreatedBy")
+  ggaCabinetPruefnachweiseRecorded GgaCabinetPruefnachweis[]
+  collaborationDocumentsUploaded   CollaborationDocument[]   @relation("CollaborationDocumentUploadedBy")
+  ledProjects                      Project[]                 @relation("ProjectLead")
+  projectParticipations            ProjectParticipant[]
 
   @@index([email])
   @@index([roleId])
@@ -268,35 +269,35 @@ model User {
 }
 
 model CollaborationProject {
-  id            String @id @default(uuid())
-  projectNumber String? @unique @map("project_number")
-  name          String
-  description   String?
-  year          Int?
-  status        CollaborationProjectStatus @default(DRAFT)
-  healthStatus  CollaborationHealthStatus @default(GREEN) @map("health_status")
-  location      String?
-  building      String?
-  floor         String?
-  area          String?
-  plannedStart  DateTime? @map("planned_start")
-  plannedEnd    DateTime? @map("planned_end")
-  actualStart   DateTime? @map("actual_start")
-  actualEnd     DateTime? @map("actual_end")
-  active        Boolean @default(true)
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  deletedAt     DateTime? @map("deleted_at")
-  internalProjectId String? @unique @map("internal_project_id")
-  internalProject   Project? @relation(fields: [internalProjectId], references: [id], onDelete: SetNull)
-  memberships   CollaborationMembership[]
-  stages        CollaborationProjectStage[]
-  tasks         CollaborationTask[]
-  checklistItems CollaborationChecklistItem[]
-  blockers      CollaborationBlocker[]
-  approvals     CollaborationApproval[]
-  ggaCabinets   GgaCabinet[]
-  documents     CollaborationDocument[]
+  id                String                       @id @default(uuid())
+  projectNumber     String?                      @unique @map("project_number")
+  name              String
+  description       String?
+  year              Int?
+  status            CollaborationProjectStatus   @default(DRAFT)
+  healthStatus      CollaborationHealthStatus    @default(GREEN) @map("health_status")
+  location          String?
+  building          String?
+  floor             String?
+  area              String?
+  plannedStart      DateTime?                    @map("planned_start")
+  plannedEnd        DateTime?                    @map("planned_end")
+  actualStart       DateTime?                    @map("actual_start")
+  actualEnd         DateTime?                    @map("actual_end")
+  active            Boolean                      @default(true)
+  createdAt         DateTime                     @default(now()) @map("created_at")
+  updatedAt         DateTime                     @updatedAt @map("updated_at")
+  deletedAt         DateTime?                    @map("deleted_at")
+  internalProjectId String?                      @unique @map("internal_project_id")
+  internalProject   Project?                     @relation(fields: [internalProjectId], references: [id], onDelete: SetNull)
+  memberships       CollaborationMembership[]
+  stages            CollaborationProjectStage[]
+  tasks             CollaborationTask[]
+  checklistItems    CollaborationChecklistItem[]
+  blockers          CollaborationBlocker[]
+  approvals         CollaborationApproval[]
+  ggaCabinets       GgaCabinet[]
+  documents         CollaborationDocument[]
 
   @@index([active, deletedAt])
   @@index([status, deletedAt])
@@ -325,13 +326,13 @@ model Project {
   updatedAt     DateTime      @updatedAt @map("updated_at")
   deletedAt     DateTime?     @map("deleted_at")
 
-  customer       Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  leadUser       User?                 @relation("ProjectLead", fields: [leadUserId], references: [id], onDelete: SetNull)
-  participants   ProjectParticipant[]
-  offers         Offer[]
-  orders         Order[]
-  invoices       Invoice[]
-  documents      Document[]
+  customer             Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  leadUser             User?                 @relation("ProjectLead", fields: [leadUserId], references: [id], onDelete: SetNull)
+  participants         ProjectParticipant[]
+  offers               Offer[]
+  orders               Order[]
+  invoices             Invoice[]
+  documents            Document[]
   collaborationProject CollaborationProject?
 
   @@index([customerId, deletedAt])
@@ -356,21 +357,21 @@ model ProjectParticipant {
 }
 
 model CollaborationMembership {
-  id        String @id @default(uuid())
-  userId    String @map("user_id")
-  projectId String @map("project_id")
-  role      CollaborationRole
-  active    Boolean @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
-  project   CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  responsibleStages CollaborationProjectStage[] @relation("StageResponsibleMembership")
-  responsibleTasks CollaborationTask[]
+  id                        String                       @id @default(uuid())
+  userId                    String                       @map("user_id")
+  projectId                 String                       @map("project_id")
+  role                      CollaborationRole
+  active                    Boolean                      @default(true)
+  createdAt                 DateTime                     @default(now()) @map("created_at")
+  updatedAt                 DateTime                     @updatedAt @map("updated_at")
+  user                      User                         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  project                   CollaborationProject         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  responsibleStages         CollaborationProjectStage[]  @relation("StageResponsibleMembership")
+  responsibleTasks          CollaborationTask[]
   responsibleChecklistItems CollaborationChecklistItem[] @relation("ChecklistResponsible")
-  completedChecklistItems CollaborationChecklistItem[] @relation("ChecklistCompletedBy")
-  responsibleBlockers CollaborationBlocker[]
-  responsibleGgaCabinets GgaCabinet[]
+  completedChecklistItems   CollaborationChecklistItem[] @relation("ChecklistCompletedBy")
+  responsibleBlockers       CollaborationBlocker[]
+  responsibleGgaCabinets    GgaCabinet[]
 
   @@unique([userId, projectId])
   @@index([userId, active])
@@ -379,33 +380,33 @@ model CollaborationMembership {
 }
 
 model CollaborationProjectStage {
-  id                       String @id @default(uuid())
-  projectId                String @map("project_id")
-  code                     String
-  title                    String
-  sequence                 Int
-  status                   CollaborationStageStatus @default(NOT_STARTED)
-  weight                   Decimal @default(0) @db.Decimal(5, 2)
-  isRequired               Boolean @default(true) @map("is_required")
-  requiresApproval         Boolean @default(false) @map("requires_approval")
-  responsibleMembershipId  String? @map("responsible_membership_id")
-  plannedStart             DateTime? @map("planned_start")
-  plannedEnd               DateTime? @map("planned_end")
-  actualStart              DateTime? @map("actual_start")
-  actualEnd                DateTime? @map("actual_end")
-  completedAt              DateTime? @map("completed_at")
-  blockedReason            String? @map("blocked_reason")
-  createdAt                DateTime @default(now()) @map("created_at")
-  updatedAt                DateTime @updatedAt @map("updated_at")
+  id                      String                   @id @default(uuid())
+  projectId               String                   @map("project_id")
+  code                    String
+  title                   String
+  sequence                Int
+  status                  CollaborationStageStatus @default(NOT_STARTED)
+  weight                  Decimal                  @default(0) @db.Decimal(5, 2)
+  isRequired              Boolean                  @default(true) @map("is_required")
+  requiresApproval        Boolean                  @default(false) @map("requires_approval")
+  responsibleMembershipId String?                  @map("responsible_membership_id")
+  plannedStart            DateTime?                @map("planned_start")
+  plannedEnd              DateTime?                @map("planned_end")
+  actualStart             DateTime?                @map("actual_start")
+  actualEnd               DateTime?                @map("actual_end")
+  completedAt             DateTime?                @map("completed_at")
+  blockedReason           String?                  @map("blocked_reason")
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  updatedAt               DateTime                 @updatedAt @map("updated_at")
 
-  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  responsibleMembership   CollaborationMembership? @relation("StageResponsibleMembership", fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
-  dependencies            CollaborationProjectStageDependency[] @relation("StageDependencies")
-  dependents              CollaborationProjectStageDependency[] @relation("StageDependents")
-  tasks                   CollaborationTask[]
-  checklistItems          CollaborationChecklistItem[]
-  blockers                CollaborationBlocker[]
-  approvals               CollaborationApproval[]
+  project               CollaborationProject                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  responsibleMembership CollaborationMembership?              @relation("StageResponsibleMembership", fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  dependencies          CollaborationProjectStageDependency[] @relation("StageDependencies")
+  dependents            CollaborationProjectStageDependency[] @relation("StageDependents")
+  tasks                 CollaborationTask[]
+  checklistItems        CollaborationChecklistItem[]
+  blockers              CollaborationBlocker[]
+  approvals             CollaborationApproval[]
 
   @@unique([projectId, code])
   @@unique([projectId, sequence])
@@ -415,26 +416,27 @@ model CollaborationProjectStage {
 }
 
 model CollaborationTask {
-  id                       String @id @default(uuid())
-  projectId                String @map("project_id")
-  stageId                  String @map("stage_id")
-  title                    String
-  description              String?
-  status                   CollaborationTaskStatus @default(TODO)
-  priority                 CollaborationTaskPriority @default(MEDIUM)
-  responsibleMembershipId  String? @map("responsible_membership_id")
-  dueDate                  DateTime? @map("due_date")
-  sequence                 Int @default(0)
-  isRequired               Boolean @default(true) @map("is_required")
-  completedAt              DateTime? @map("completed_at")
-  cabinetId                String? @map("cabinet_id")
-  createdAt                DateTime @default(now()) @map("created_at")
-  updatedAt                DateTime @updatedAt @map("updated_at")
-  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                      String                    @id @default(uuid())
+  projectId               String                    @map("project_id")
+  stageId                 String                    @map("stage_id")
+  title                   String
+  description             String?
+  status                  CollaborationTaskStatus   @default(TODO)
+  priority                CollaborationTaskPriority @default(MEDIUM)
+  responsibleMembershipId String?                   @map("responsible_membership_id")
+  dueDate                 DateTime?                 @map("due_date")
+  sequence                Int                       @default(0)
+  isRequired              Boolean                   @default(true) @map("is_required")
+  completedAt             DateTime?                 @map("completed_at")
+  cabinetId               String?                   @map("cabinet_id")
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  updatedAt               DateTime                  @updatedAt @map("updated_at")
+  project                 CollaborationProject      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage                   CollaborationProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
-  responsibleMembership   CollaborationMembership? @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
-  cabinet                 GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  responsibleMembership   CollaborationMembership?  @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  cabinet                 GgaCabinet?               @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
   blockers                CollaborationBlocker[]
+
   @@index([projectId, status])
   @@index([stageId, sequence])
   @@index([responsibleMembershipId])
@@ -443,24 +445,25 @@ model CollaborationTask {
 }
 
 model CollaborationChecklistItem {
-  id                       String @id @default(uuid())
-  projectId                String @map("project_id")
-  stageId                  String @map("stage_id")
-  title                    String
-  sequence                 Int @default(0)
-  isRequired               Boolean @default(true) @map("is_required")
-  completed                Boolean @default(false)
-  completedAt              DateTime? @map("completed_at")
-  responsibleMembershipId  String? @map("responsible_membership_id")
-  completedByMembershipId  String? @map("completed_by_membership_id")
-  cabinetId                String? @map("cabinet_id")
-  createdAt                DateTime @default(now()) @map("created_at")
-  updatedAt                DateTime @updatedAt @map("updated_at")
-  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                      String                    @id @default(uuid())
+  projectId               String                    @map("project_id")
+  stageId                 String                    @map("stage_id")
+  title                   String
+  sequence                Int                       @default(0)
+  isRequired              Boolean                   @default(true) @map("is_required")
+  completed               Boolean                   @default(false)
+  completedAt             DateTime?                 @map("completed_at")
+  responsibleMembershipId String?                   @map("responsible_membership_id")
+  completedByMembershipId String?                   @map("completed_by_membership_id")
+  cabinetId               String?                   @map("cabinet_id")
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  updatedAt               DateTime                  @updatedAt @map("updated_at")
+  project                 CollaborationProject      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage                   CollaborationProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
-  responsibleMembership   CollaborationMembership? @relation("ChecklistResponsible", fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
-  completedByMembership   CollaborationMembership? @relation("ChecklistCompletedBy", fields: [completedByMembershipId], references: [id], onDelete: SetNull)
-  cabinet                 GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  responsibleMembership   CollaborationMembership?  @relation("ChecklistResponsible", fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  completedByMembership   CollaborationMembership?  @relation("ChecklistCompletedBy", fields: [completedByMembershipId], references: [id], onDelete: SetNull)
+  cabinet                 GgaCabinet?               @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+
   @@index([projectId, completed])
   @@index([stageId, sequence])
   @@index([cabinetId])
@@ -469,29 +472,30 @@ model CollaborationChecklistItem {
 }
 
 model CollaborationBlocker {
-  id                       String @id @default(uuid())
-  projectId                String @map("project_id")
-  stageId                  String? @map("stage_id")
-  taskId                   String? @map("task_id")
-  title                    String
-  description              String?
-  status                   CollaborationBlockerStatus @default(OPEN)
-  responsibleMembershipId  String? @map("responsible_membership_id")
-  cause                    String?
-  resolution               String?
-  resolvedAt               DateTime? @map("resolved_at")
-  resolvedById             String? @map("resolved_by_id")
-  createdById              String? @map("created_by_id")
-  cabinetId                String? @map("cabinet_id")
-  createdAt                DateTime @default(now()) @map("created_at")
-  updatedAt                DateTime @updatedAt @map("updated_at")
-  project                 CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                      String                     @id @default(uuid())
+  projectId               String                     @map("project_id")
+  stageId                 String?                    @map("stage_id")
+  taskId                  String?                    @map("task_id")
+  title                   String
+  description             String?
+  status                  CollaborationBlockerStatus @default(OPEN)
+  responsibleMembershipId String?                    @map("responsible_membership_id")
+  cause                   String?
+  resolution              String?
+  resolvedAt              DateTime?                  @map("resolved_at")
+  resolvedById            String?                    @map("resolved_by_id")
+  createdById             String?                    @map("created_by_id")
+  cabinetId               String?                    @map("cabinet_id")
+  createdAt               DateTime                   @default(now()) @map("created_at")
+  updatedAt               DateTime                   @updatedAt @map("updated_at")
+  project                 CollaborationProject       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage                   CollaborationProjectStage? @relation(fields: [stageId], references: [id], onDelete: Cascade)
-  task                    CollaborationTask? @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  responsibleMembership   CollaborationMembership? @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
-  createdBy               User? @relation("BlockerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  resolvedBy              User? @relation("BlockerResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
-  cabinet                 GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  task                    CollaborationTask?         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  responsibleMembership   CollaborationMembership?   @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
+  createdBy               User?                      @relation("BlockerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  resolvedBy              User?                      @relation("BlockerResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  cabinet                 GgaCabinet?                @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+
   @@index([projectId, status])
   @@index([stageId, status])
   @@index([taskId, status])
@@ -500,27 +504,28 @@ model CollaborationBlocker {
 }
 
 model CollaborationApproval {
-  id              String @id @default(uuid())
-  projectId       String @map("project_id")
-  stageId         String @map("stage_id")
-  status          CollaborationApprovalStatus @default(REQUESTED)
-  requestedById   String @map("requested_by_id")
-  decidedById     String? @map("decided_by_id")
-  requestedAt     DateTime @default(now()) @map("requested_at")
-  decidedAt       DateTime? @map("decided_at")
-  decisionNote    String? @map("decision_note")
-  cabinetId       String? @map("cabinet_id")
+  id            String                      @id @default(uuid())
+  projectId     String                      @map("project_id")
+  stageId       String                      @map("stage_id")
+  status        CollaborationApprovalStatus @default(REQUESTED)
+  requestedById String                      @map("requested_by_id")
+  decidedById   String?                     @map("decided_by_id")
+  requestedAt   DateTime                    @default(now()) @map("requested_at")
+  decidedAt     DateTime?                   @map("decided_at")
+  decisionNote  String?                     @map("decision_note")
+  cabinetId     String?                     @map("cabinet_id")
   // Eindeutige fachliche Typisierung der Freigabe — niemals aus decidedBy.role
   // oder stageId erschlossen. Default INTERNAL: bestehende Zeilen bleiben
   // automatisch INTERNAL, nie rückwirkend als Betreiberfreigabe klassifiziert.
-  approvalType    CollaborationApprovalType @default(INTERNAL) @map("approval_type")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-  project         CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  stage           CollaborationProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
-  requestedBy     User @relation("ApprovalRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
-  decidedBy       User? @relation("ApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
-  cabinet         GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  approvalType  CollaborationApprovalType   @default(INTERNAL) @map("approval_type")
+  createdAt     DateTime                    @default(now()) @map("created_at")
+  updatedAt     DateTime                    @updatedAt @map("updated_at")
+  project       CollaborationProject        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage         CollaborationProjectStage   @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  requestedBy   User                        @relation("ApprovalRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  decidedBy     User?                       @relation("ApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  cabinet       GgaCabinet?                 @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+
   @@index([projectId, status])
   @@index([stageId, status])
   @@index([cabinetId])
@@ -536,11 +541,11 @@ model CollaborationApproval {
 }
 
 model CollaborationProjectStageDependency {
-  id               String @id @default(uuid())
-  stageId          String @map("stage_id")
-  dependsOnStageId String @map("depends_on_stage_id")
+  id               String                   @id @default(uuid())
+  stageId          String                   @map("stage_id")
+  dependsOnStageId String                   @map("depends_on_stage_id")
   requiredStatus   CollaborationStageStatus @map("required_status")
-  createdAt        DateTime @default(now()) @map("created_at")
+  createdAt        DateTime                 @default(now()) @map("created_at")
 
   stage          CollaborationProjectStage @relation("StageDependencies", fields: [stageId], references: [id], onDelete: Cascade)
   dependsOnStage CollaborationProjectStage @relation("StageDependents", fields: [dependsOnStageId], references: [id], onDelete: Cascade)
@@ -575,6 +580,25 @@ enum CollaborationApprovalType {
   OPERATOR_ACCEPTANCE
 }
 
+/// REQ-018: strukturierte, technisch unterscheidbare Prüfarten je
+/// GGA-Schrank. Keine Ableitung aus Freitext/Dateinamen — siehe
+/// GgaCabinetPruefnachweis.
+enum GgaPruefart {
+  LUEFTUNG
+  ELEKTRO
+  VDE
+}
+
+/// REQ-018: Prüfergebnis-Tri-State. OFFEN und NICHT_BESTANDEN gelten
+/// beide fachlich als "nicht erfüllt" — nur BESTANDEN erfüllt eine
+/// erforderliche Prüfung (siehe ggaCabinetPruefartBestanden() in
+/// lib/collaboration/cabinet-workflow.ts).
+enum GgaPruefergebnis {
+  OFFEN
+  BESTANDEN
+  NICHT_BESTANDEN
+}
+
 /// Fachobjekt für einen realen GGA-/Gefahrstoffschrank. Gehört ausschließlich
 /// zur Collaboration-Domäne (kein direkter Bezug zum internen Project) — folgt
 /// damit demselben Muster wie CollaborationTask/ChecklistItem/Blocker/Approval.
@@ -582,8 +606,8 @@ enum CollaborationApprovalType {
 /// werden aus verknüpften Tasks/Checklistenpunkten/Approvals abgeleitet
 /// (siehe lib/collaboration/cabinet-workflow.ts).
 model GgaCabinet {
-  id        String @id @default(uuid())
-  projectId String @map("project_id")
+  id        String               @id @default(uuid())
+  projectId String               @map("project_id")
   project   CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   // Identität
@@ -614,7 +638,7 @@ model GgaCabinet {
   abluftVorhanden                  Boolean  @default(false) @map("abluft_vorhanden")
   abluftAnschlussdurchmesserSollMm Int?     @map("abluft_anschlussdurchmesser_soll_mm")
   abluftVolumenstromSollM3h        Decimal? @map("abluft_volumenstrom_soll_m3h") @db.Decimal(8, 2)
-  abluftUeberwachung                Boolean  @default(false) @map("abluft_ueberwachung")
+  abluftUeberwachung               Boolean  @default(false) @map("abluft_ueberwachung")
 
   // Abluft — aktuellster bekannter Messwert (Ist), fortgeschrieben bei jeder
   // entschiedenen Prüfung (CollaborationApproval). Volle Historie lebt in den
@@ -628,8 +652,8 @@ model GgaCabinet {
   potentialausgleich     Boolean  @default(false)
 
   // Ex-Schutz — Tri-State (siehe GgaExAssessmentStatus), niemals default "Nein"
-  exAssessmentStatus    GgaExAssessmentStatus @default(NOT_ASSESSED) @map("ex_assessment_status")
-  exZoneKlassifikation  String?               @map("ex_zone_klassifikation")
+  exAssessmentStatus   GgaExAssessmentStatus @default(NOT_ASSESSED) @map("ex_assessment_status")
+  exZoneKlassifikation String?               @map("ex_zone_klassifikation")
 
   // Prüfung — Fristen/Normbezug. Der aktuelle Prüfstatus (fällig/bestanden/
   // überfällig) wird abgeleitet, nicht gespeichert.
@@ -638,7 +662,7 @@ model GgaCabinet {
   pruefpflichtNorm     String?   @map("pruefpflicht_norm")
 
   // Verantwortlichkeit — bestehendes Membership-Muster (wie CollaborationTask)
-  responsibleMembershipId String? @map("responsible_membership_id")
+  responsibleMembershipId String?                  @map("responsible_membership_id")
   responsibleMembership   CollaborationMembership? @relation(fields: [responsibleMembershipId], references: [id], onDelete: SetNull)
 
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -652,6 +676,7 @@ model GgaCabinet {
   blockers       CollaborationBlocker[]
   approvals      CollaborationApproval[]
   documents      CollaborationDocument[]
+  pruefnachweise GgaCabinetPruefnachweis[]
 
   @@unique([projectId, kennung])
   @@index([projectId, deletedAt])
@@ -668,11 +693,11 @@ model GgaCabinet {
 /// machen. Die physische Storage-Schicht (Validator, Ablage-Abstraktion) wird
 /// dagegen vollständig wiederverwendet — siehe lib/services/collaboration-document.service.ts.
 model CollaborationDocument {
-  id        String @id @default(uuid())
-  projectId String @map("project_id")
+  id        String               @id @default(uuid())
+  projectId String               @map("project_id")
   project   CollaborationProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  cabinetId String? @map("cabinet_id")
-  cabinet   GgaCabinet? @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
+  cabinetId String?              @map("cabinet_id")
+  cabinet   GgaCabinet?          @relation(fields: [cabinetId], references: [id], onDelete: SetNull)
 
   documentKind String  @map("document_kind") // Foto, Protokoll, Pruefbericht, Planzeichnung, Sonstiges
   filename     String
@@ -682,19 +707,63 @@ model CollaborationDocument {
   storagePath  String  @map("storage_path")
   checksum     String?
 
-  uploadedById String   @map("uploaded_by_id")
-  uploadedBy   User     @relation("CollaborationDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
-  createdAt    DateTime @default(now()) @map("created_at")
+  uploadedById String    @map("uploaded_by_id")
+  uploadedBy   User      @relation("CollaborationDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime  @default(now()) @map("created_at")
   deletedAt    DateTime? @map("deleted_at")
 
   // Default INTERNAL — niemals automatisch extern sichtbar. EXTERNAL heißt
   // "sichtbar für Projektmitglieder mit Cabinet-Zugriff", nicht öffentlich.
-  visibility   CollaborationDocumentVisibility @default(INTERNAL) @map("visibility")
+  visibility CollaborationDocumentVisibility @default(INTERNAL) @map("visibility")
+
+  pruefnachweise GgaCabinetPruefnachweis[]
 
   @@index([projectId, deletedAt])
   @@index([cabinetId])
   @@index([cabinetId, visibility])
   @@map("collaboration_documents")
+}
+
+/// GGA-05.2/REQ-015-Muster bewusst wiederverwendet (wie CollaborationApproval):
+/// KEIN @@unique([cabinetId, pruefart]) — mehrere Zeilen je (Cabinet, Prüfart)
+/// über die Zeit sind ausdrücklich zulässig (Wiederholungsprüfung nach
+/// NICHT_BESTANDEN), der "aktuelle" Stand wird rein abgeleitet (zeitlich
+/// neueste Zeile je pruefart, siehe deriveCurrentPruefnachweis() in
+/// lib/collaboration/cabinet-workflow.ts) statt gespeichert — keine zweite,
+/// parallele Statusfeld-Wahrheit. REQ-018/REQ-018.1: strukturierte
+/// Prüfnachweise für Lüftung/Elektro/VDE, getrennt von reinen
+/// Checklistenpunkten (CollaborationChecklistItem bleibt unverändert und
+/// wird NUR aus diesen strukturierten Ergebnissen heraus synchronisiert,
+/// niemals umgekehrt — siehe gga-cabinet.service.ts).
+model GgaCabinetPruefnachweis {
+  id        String     @id @default(uuid())
+  cabinetId String     @map("cabinet_id")
+  cabinet   GgaCabinet @relation(fields: [cabinetId], references: [id], onDelete: Cascade)
+
+  pruefart GgaPruefart
+  ergebnis GgaPruefergebnis @default(OFFEN)
+
+  pruefdatum         DateTime? @map("pruefdatum")
+  // Freitext bewusst: die ausführende Stelle ist häufig eine externe
+  // Prüforganisation, kein System-User — daher kein FK auf User.
+  ausfuehrendeStelle String?   @map("ausfuehrende_stelle")
+  // Freitext-Bemerkung kann interne Einschätzungen enthalten — analog zu
+  // GgaCabinet.bestandsBeschreibung für den Betreiber nicht ausgegeben,
+  // siehe gga-cabinet-schrankakte.service.ts Abschnitt J.
+  bemerkung          String?
+
+  documentId String?                @map("document_id")
+  document   CollaborationDocument? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  recordedById String @map("recorded_by_id")
+  recordedBy   User   @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([cabinetId, pruefart])
+  @@index([documentId])
+  @@map("gga_cabinet_pruefnachweise")
 }
 
 model Role {
@@ -798,7 +867,7 @@ model Customer {
   invoices               Invoice[]
   documents              Document[]
   customerPurchaseOrders CustomerPurchaseOrder[]
-  projects                Project[]
+  projects               Project[]
 
   @@index([name])
   @@index([number])

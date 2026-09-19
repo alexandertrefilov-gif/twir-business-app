@@ -24,7 +24,9 @@ import { buildAuditLogCreate, writeAuditLog } from '@/lib/services/audit.service
 import { editorRoles, setCollaborationChecklistCompleted } from '@/lib/services/collaboration-phase2.service'
 import {
   deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaControlTowerOverview, deriveGgaProjectWorklist,
+  ggaCabinetBereitFuerBetreiberfreigabe, deriveCurrentPruefnachweis, isGgaPruefartBestanden,
   type GgaCabinetSnapshot, type GgaControlTowerCabinetEntry,
+  type GgaPruefart, type GgaPruefergebnis, type GgaCabinetPruefnachweisSnapshot,
 } from '@/lib/collaboration/cabinet-workflow'
 import { getVisibleCollaborationProjects } from '@/lib/services/collaboration-project.service'
 import { Prisma } from '@prisma/client'
@@ -329,7 +331,23 @@ export async function applyGgaCabinetChecklistTemplate(cabinetId: string, templa
 // UMSETZUNG, PRÜFUNG, ABNAHME") funktioniert damit unabhängig davon, ob die
 // Checklisten-Vorlage vorher angewendet wurde. Reine Wiederverwendung von
 // CollaborationChecklistItem + der bestehenden setCollaborationChecklistCompleted.
+//
+// REQ-018.2: BEVOR der einzelne Punkt gesetzt wird, wird zuerst die
+// VOLLSTÄNDIGE ABNAHME-Vorlage materialisiert (Wiederverwendung der
+// bestehenden, idempotenten applyGgaCabinetChecklistTemplate() — erstellt
+// nur fehlende Titel, überschreibt nie vorhandene, kein Audit-Log-Eintrag
+// bei No-op). Ohne diesen Schritt konnte ein isoliert erzeugter
+// Teil-Datensatz (z. B. nur "Abluft geprüft") progressForStages() einen
+// falschen 100%-Fortschritt vortäuschen lassen, weil diese Funktion
+// ausschließlich über tatsächlich existierende Zeilen rechnet, nie über
+// die Soll-Anzahl der Vorlage — real reproduziert in der REQ-018.1-
+// Browser-QA (Q14). progressForStages()/deriveCabinetStatus() bleiben
+// bewusst unverändert (keine zweite parallele Readiness-Logik) —
+// CollaborationChecklistItem-Zeilen bleiben die einzige materialisierte
+// Workflow-Wahrheit, jetzt nur zuverlässig vollständig.
 export async function setGgaCabinetInspectionItem(cabinetId: string, title: string, completed: boolean) {
+  await applyGgaCabinetChecklistTemplate(cabinetId, 'ABNAHME')
+
   const { userId } = await requireCollaborationSession()
   const access = await requireCollaborationCabinetAccess(userId, cabinetId, editorRoles)
 
@@ -343,17 +361,156 @@ export async function setGgaCabinetInspectionItem(cabinetId: string, title: stri
   return setCollaborationChecklistCompleted(item.id, completed)
 }
 
+// ── Strukturierte Prüfnachweise Lüftung/Elektro/VDE (REQ-018/REQ-018.1) ──
+// GgaCabinetPruefnachweis ist ein eigenständiges Modell (nicht
+// CollaborationChecklistItem) — strukturierte Prüfart + Tri-State-Ergebnis
+// + Prüfdaten, getrennt von der bestehenden booleschen ABNAHME-Checkliste.
+// Mehrere Zeilen je (Cabinet, Prüfart) sind ausdrücklich zulässig
+// (Wiederholungsprüfung) — siehe deriveCurrentPruefnachweis() in
+// cabinet-workflow.ts, das den aktuellen Stand rein aus der zeitlich
+// neuesten Zeile ableitet. Kein Update bestehender Zeilen — jede
+// Entscheidung ist eine neue, historisch erhaltene Zeile.
+const pruefnachweisInputSchema = z.object({
+  pruefdatum: z.coerce.date().nullable().optional(),
+  ausfuehrendeStelle: z.string().trim().max(200).nullable().optional(),
+  bemerkung: z.string().trim().max(2000).nullable().optional(),
+  documentId: z.string().min(1).nullable().optional(),
+})
+
+function toPruefnachweisSnapshot(row: {
+  id: string; pruefart: string; ergebnis: string; pruefdatum: Date | null
+  ausfuehrendeStelle: string | null; bemerkung: string | null; documentId: string | null; createdAt: Date
+}): GgaCabinetPruefnachweisSnapshot {
+  return {
+    id: row.id, pruefart: row.pruefart as GgaPruefart, ergebnis: row.ergebnis as GgaPruefergebnis,
+    pruefdatum: row.pruefdatum, ausfuehrendeStelle: row.ausfuehrendeStelle, bemerkung: row.bemerkung,
+    documentId: row.documentId, createdAt: row.createdAt,
+  }
+}
+
+// Reiner, UNGEFILTERTER Datenzugriff — prüft selbst KEINE Berechtigung und
+// filtert NICHT nach Zielgruppe. Wird von getGgaCabinetPruefnachweisOverview()
+// unten (interne Übersicht) UND von gga-cabinet-schrankakte.service.ts
+// (dort mit eigener audience-Filterung, exakt wie bereits bei
+// cabinet.documents/cabinet.approvals in derselben Datei) genutzt — jeder
+// Aufrufer ist selbst für Zugriffsprüfung und Sichtbarkeit verantwortlich.
+export async function loadGgaCabinetPruefnachweise(cabinetId: string): Promise<GgaCabinetPruefnachweisSnapshot[]> {
+  const rows = await prisma.ggaCabinetPruefnachweis.findMany({
+    where: { cabinetId },
+    select: { id: true, pruefart: true, ergebnis: true, pruefdatum: true, ausfuehrendeStelle: true, bemerkung: true, documentId: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  })
+  return rows.map(toPruefnachweisSnapshot)
+}
+
+// REQ-018 Elektro/VDE-Legacy-Entscheidung: strukturierte Ergebnisse →
+// bestehender Checklistenzustand, NIEMALS umgekehrt — der bereits
+// bestehende, kombinierte Checklistenpunkt 'Elektro/VDE geprüft' wird
+// NICHT aufgeteilt (keine stille Umdeutung historischer Häkchen), sondern
+// erst dann automatisch bestanden, wenn BEIDE aktuellen Ergebnisse
+// (ELEKTRO UND VDE) BESTANDEN sind. LUEFTUNG bildet 1:1 auf das
+// bestehende 'Abluft geprüft' ab. Reine Synchronisation über die bereits
+// bestehende, unveränderte setGgaCabinetInspectionItem() — keine neue
+// Statuslogik, keine Änderung der geschützten REQ-015-Gate-Funktionen.
+const GGA_CHECKLIST_TITEL_LUEFTUNG = 'Abluft geprüft'
+const GGA_CHECKLIST_TITEL_ELEKTRO_VDE = 'Elektro/VDE geprüft'
+
+async function syncGgaCabinetPruefnachweisToChecklist(cabinetId: string) {
+  const records = await loadGgaCabinetPruefnachweise(cabinetId)
+  await setGgaCabinetInspectionItem(cabinetId, GGA_CHECKLIST_TITEL_LUEFTUNG, isGgaPruefartBestanden(records, 'LUEFTUNG'))
+  await setGgaCabinetInspectionItem(
+    cabinetId, GGA_CHECKLIST_TITEL_ELEKTRO_VDE,
+    isGgaPruefartBestanden(records, 'ELEKTRO') && isGgaPruefartBestanden(records, 'VDE'),
+  )
+}
+
+// Erfasst EIN neues Prüfergebnis (eigene Zeile, kein Update) für eine
+// Prüfart eines Cabinets. AC3/T4: ein referenziertes Nachweisdokument muss
+// zwingend demselben Cabinet zugeordnet sein — sonst könnte ein Nachweis
+// eines fremden Schranks die Prüfung erfüllen. AC6/T19: das bloße
+// Vorhandensein eines documentId erzwingt kein BESTANDEN — ergebnis wird
+// immer explizit übergeben, niemals aus dem Dokument abgeleitet.
+export async function recordGgaCabinetPruefnachweis(cabinetId: string, pruefart: GgaPruefart, ergebnis: GgaPruefergebnis, input: unknown) {
+  const { userId, userEmail } = await requireCollaborationSession()
+  await requireCollaborationCabinetAccess(userId, cabinetId, editorRoles)
+  const data = pruefnachweisInputSchema.parse(input ?? {})
+
+  if (data.documentId) {
+    const document = await prisma.collaborationDocument.findFirst({ where: { id: data.documentId, cabinetId, deletedAt: null } })
+    if (!document) throw new NotFoundError('Nachweisdokument nicht gefunden')
+  }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.ggaCabinetPruefnachweis.create({
+      data: {
+        cabinetId, pruefart, ergebnis,
+        pruefdatum: data.pruefdatum ?? null,
+        ausfuehrendeStelle: data.ausfuehrendeStelle ?? null,
+        bemerkung: data.bemerkung ?? null,
+        documentId: data.documentId ?? null,
+        recordedById: userId,
+      },
+    })
+    await buildAuditLogCreate(tx, {
+      userId, userEmail, action: 'CREATE', entityType: 'gga_cabinet_pruefnachweis', entityId: row.id,
+      newValue: { cabinetId, pruefart, ergebnis, pruefdatum: data.pruefdatum ?? null, documentId: data.documentId ?? null },
+    })
+    return row
+  })
+
+  await syncGgaCabinetPruefnachweisToChecklist(cabinetId)
+  return created
+}
+
+// Interne Übersicht (aktueller Stand je Prüfart + volle Historie) für die
+// bestehende Prüf-/Abnahme-Oberfläche (GgaCabinetInspectionWizard) —
+// rollenagnostischer Zugriff wie getGgaCabinetDetail() (dieselbe Seite),
+// vollständige Daten inkl. Bemerkung. NICHT für Betreiber-Ausgabe
+// gedacht/geeignet — die Schrankakte lädt Prüfnachweise separat und
+// filtert selbst (siehe gga-cabinet-schrankakte.service.ts).
+export async function getGgaCabinetPruefnachweisOverview(cabinetId: string) {
+  const { userId } = await requireCollaborationSession()
+  await requireCollaborationCabinetAccess(userId, cabinetId)
+  const records = await loadGgaCabinetPruefnachweise(cabinetId)
+  const arten: GgaPruefart[] = ['LUEFTUNG', 'ELEKTRO', 'VDE']
+  return arten.map((pruefart) => ({
+    pruefart,
+    current: deriveCurrentPruefnachweis(records, pruefart),
+    history: records.filter((record) => record.pruefart === pruefart),
+  }))
+}
+
 // ── Historie (Audit-Trail) ────────────────────────────────────
 // Vollständige Historie: eigene Cabinet-Einträge PLUS alle Audit-Einträge
 // der aktuell verknüpften Tasks/Checklistenpunkte/Blocker/Freigaben/
 // Dokumente. Bestehendes AuditLog wird nur breiter abgefragt — keine zweite
 // Historientabelle.
-export async function getGgaCabinetAuditHistory(cabinetId: string) {
+//
+// audience=OPERATOR (Betreiber-Schrankakte, siehe gga-cabinet-schrankakte.
+// service.ts): technische Prüf-Checklisten IMMER sichtbar, Freigaben/
+// Dokumente NUR mit erkennbar betreiberbezogenem metadata.reason (interne
+// Approval-/Upload-Aktionen setzen dieses Feld nicht und fallen dadurch
+// automatisch heraus — keine Positivliste einzelner Nutzer/E-Mails nötig).
+// Die Filterung lebt bewusst HIER (statt beim Aufrufer), damit ein
+// berechtigter Betreiber-Zugriff und die dazu passend gefilterten Daten nie
+// auseinanderfallen können.
+export type GgaCabinetHistoryAudience = 'INTERNAL' | 'OPERATOR'
+
+const EXTERNAL_RELEVANT_APPROVAL_REASONS = new Set(['Betreiberfreigabe angefordert', 'Betreiberfreigabe erteilt', 'Betreiberfreigabe abgelehnt (Beanstandung)'])
+const EXTERNAL_RELEVANT_DOCUMENT_REASONS = new Set(['Dokument für Betreiber freigegeben'])
+
+export async function getGgaCabinetAuditHistory(cabinetId: string, audience: GgaCabinetHistoryAudience = 'INTERNAL') {
   const { userId } = await requireCollaborationSession()
-  // Nur intern genutzt (Historie-Sektion der internen Schrankseite) — anders
-  // als getGgaCabinetDetail() nicht vom Betreiberportal aufgerufen, deshalb
-  // hier ausdrücklich auf interne Rollen beschränkt.
-  await requireCollaborationCabinetAccess(userId, cabinetId, internalCollaborationRoles)
+  // Interne Rollen (Standardfall, Historie-Sektion der internen
+  // Schrankseite): unverändert auf interne Rollen beschränkt. Betreiber
+  // (audience=OPERATOR, von der Schrankakte-PDF-Route mit serverseitig
+  // ermittelter Rolle aufgerufen): rollenagnostischer Zugriff wie bei
+  // getGgaCabinetDetail(), dafür wird unten gefiltert — siehe Kommentar oben.
+  if (audience === 'INTERNAL') {
+    await requireCollaborationCabinetAccess(userId, cabinetId, internalCollaborationRoles)
+  } else {
+    await requireCollaborationCabinetAccess(userId, cabinetId)
+  }
 
   const [tasks, checklistItems, blockers, approvals, documents] = await Promise.all([
     prisma.collaborationTask.findMany({ where: { cabinetId }, select: { id: true } }),
@@ -363,7 +520,7 @@ export async function getGgaCabinetAuditHistory(cabinetId: string) {
     prisma.collaborationDocument.findMany({ where: { cabinetId }, select: { id: true } }),
   ])
 
-  return prisma.auditLog.findMany({
+  const rows = await prisma.auditLog.findMany({
     where: {
       OR: [
         { entityType: 'gga_cabinet', entityId: cabinetId },
@@ -376,6 +533,20 @@ export async function getGgaCabinetAuditHistory(cabinetId: string) {
     },
     orderBy: { createdAt: 'desc' },
     select: { id: true, action: true, entityType: true, userEmail: true, oldValue: true, newValue: true, metadata: true, createdAt: true, user: { select: { firstName: true, lastName: true } } },
+  })
+
+  if (audience === 'INTERNAL') return rows
+  return rows.filter((entry) => {
+    if (entry.entityType === 'collaboration_checklist_item') return true
+    if (entry.entityType === 'collaboration_approval') {
+      const reason = (entry.metadata as { reason?: string } | null)?.reason
+      return !!reason && EXTERNAL_RELEVANT_APPROVAL_REASONS.has(reason)
+    }
+    if (entry.entityType === 'collaboration_document') {
+      const reason = (entry.metadata as { reason?: string } | null)?.reason
+      return !!reason && EXTERNAL_RELEVANT_DOCUMENT_REASONS.has(reason)
+    }
+    return false // gga_cabinet, collaboration_task, collaboration_blocker: intern
   })
 }
 
@@ -489,6 +660,17 @@ export async function requestGgaCabinetOperatorApproval(cabinetId: string) {
 
   const abnahmeStage = await prisma.collaborationProjectStage.findFirst({ where: { projectId: access.projectId, code: 'ABNAHME' } })
   if (!abnahmeStage) throw new BusinessRuleError('Projekt hat keine ABNAHME-Phase — Betreiberfreigabe kann nicht angefordert werden.')
+
+  // REQ-015 / GGA-05.2: bislang nur UI-seitig geprüft (initial.pruefstatus
+  // === 'BESTANDEN' im Inspektions-Wizard) — jetzt zusätzlich serverseitig
+  // erzwungen, damit ein direkter API-Aufruf dieses Gate nicht umgehen kann.
+  // Dieselbe Ableitung wie überall sonst (deriveCabinetStatus()), keine
+  // neue Statuslogik.
+  const cabinetForReadiness = await prisma.ggaCabinet.findFirst({ where: { id: cabinetId, projectId: access.projectId, deletedAt: null }, select: cabinetListSelect })
+  if (!cabinetForReadiness) throw new NotFoundError('Schrank nicht gefunden')
+  if (!ggaCabinetBereitFuerBetreiberfreigabe(deriveCabinetStatus(toCabinetSnapshot(cabinetForReadiness)))) {
+    throw new BusinessRuleError('Die interne Prüfung dieses Schranks ist noch nicht bestanden — eine Betreiberfreigabe kann erst danach angefordert werden.')
+  }
 
   const openExisting = await prisma.collaborationApproval.findFirst({ where: { cabinetId, approvalType: 'OPERATOR_ACCEPTANCE', status: 'REQUESTED' } })
   if (openExisting) throw new BusinessRuleError('Es liegt bereits eine offene Betreiberfreigabe für diesen Schrank vor.')

@@ -34,7 +34,11 @@ describe('Collaboration-Phase-3-Mutationen', () => {
   })
 
   it('verhindert Stage-Abschluss bei offenen Pflichtaufgaben', async () => {
-    vi.mocked(prisma.collaborationProjectStage.findUnique).mockResolvedValue({ id: 's1', projectId: 'p1', status: 'IN_PROGRESS', requiresApproval: false, dependencies: [], tasks: [{ status: 'TODO', isRequired: true }], checklistItems: [], blockers: [], approvals: [] } as never)
+    vi.mocked(prisma.collaborationProjectStage.findUnique).mockResolvedValue({ id: 's1', projectId: 'p1', status: 'IN_PROGRESS', requiresApproval: false, code: 'PLAN', dependencies: [], tasks: [{ status: 'TODO', isRequired: true }], checklistItems: [], blockers: [], approvals: [] } as never)
+    // REQ-015.4: transitionCollaborationStage() lädt bei target COMPLETED
+    // zusätzlich die Cabinet-Readiness des Projekts (GgaCabinet.projectId) —
+    // dieses Projekt hat keine GGA-Cabinets, daher leere Liste.
+    vi.mocked(prisma.ggaCabinet.findMany).mockResolvedValue([])
     await expect(transitionCollaborationStage('s1', 'COMPLETED')).rejects.toBeInstanceOf(ValidationError)
     expect(prisma.collaborationProjectStage.updateMany).not.toHaveBeenCalled()
   })

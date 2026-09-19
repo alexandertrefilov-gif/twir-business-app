@@ -5,6 +5,20 @@ import { useRouter } from 'next/navigation'
 
 type Blocker = { id: string; title: string; status: 'OPEN' | 'RESOLVED'; cause: string | null }
 type CabinetDoc = { id: string; documentKind: string; originalName: string }
+type GgaPruefart = 'LUEFTUNG' | 'ELEKTRO' | 'VDE'
+type GgaPruefergebnis = 'OFFEN' | 'BESTANDEN' | 'NICHT_BESTANDEN'
+type PruefnachweisEntry = {
+  pruefart: GgaPruefart
+  current: { id: string; ergebnis: GgaPruefergebnis; pruefdatum: string | null; ausfuehrendeStelle: string | null; bemerkung: string | null; documentId: string | null } | null
+}
+
+const PRUEFART_LABELS: Record<GgaPruefart, string> = { LUEFTUNG: 'Lüftung', ELEKTRO: 'Elektro', VDE: 'VDE' }
+const PRUEFERGEBNIS_LABELS: Record<GgaPruefergebnis, string> = { OFFEN: 'Offen', BESTANDEN: 'Bestanden', NICHT_BESTANDEN: 'Nicht bestanden' }
+const PRUEFERGEBNIS_BADGE_CLASS: Record<GgaPruefergebnis, string> = {
+  OFFEN: 'border-amber-300 bg-amber-50 text-amber-900',
+  BESTANDEN: 'border-emerald-600 bg-emerald-50 text-emerald-900',
+  NICHT_BESTANDEN: 'border-red-400 bg-red-50 text-red-900',
+}
 
 const STEP_TITLES = [
   'Übersicht', 'Maßnahmen abgeschlossen', 'Abluft & Ist-Volumenstrom', 'Elektro/VDE & Potentialausgleich',
@@ -27,9 +41,86 @@ async function mutate(body: Record<string, unknown>) {
   return result.result
 }
 
+// REQ-018/REQ-018.1: strukturierter Prüfnachweis je Prüfart — getrennt von
+// der bestehenden booleschen ABNAHME-Checkliste (CheckToggle oben). Zeigt
+// den aktuellen Stand (Ergebnis/Datum/ausführende Stelle/Nachweis) und
+// erlaubt, ein NEUES Ergebnis zu erfassen (eigene, historisch erhaltene
+// Zeile — kein Überschreiben). Ein Datei-Upload allein setzt nie
+// automatisch BESTANDEN — das Ergebnis muss hier immer explizit gewählt
+// werden.
+function PruefnachweisPanel({ pruefart, current, documents, canInspect, pending, onRecord }: {
+  pruefart: GgaPruefart
+  current: PruefnachweisEntry['current']
+  documents: CabinetDoc[]
+  canInspect: boolean
+  pending: boolean
+  onRecord: (pruefart: GgaPruefart, ergebnis: GgaPruefergebnis, data: { pruefdatum: string | null; ausfuehrendeStelle: string | null; bemerkung: string | null; documentId: string | null }) => void
+}) {
+  const [ergebnis, setErgebnis] = useState<GgaPruefergebnis>('BESTANDEN')
+  const [pruefdatum, setPruefdatum] = useState('')
+  const [ausfuehrendeStelle, setAusfuehrendeStelle] = useState('')
+  const [bemerkung, setBemerkung] = useState('')
+  const [documentId, setDocumentId] = useState('')
+
+  const currentErgebnis = current?.ergebnis ?? 'OFFEN'
+
+  return <div className="rounded-lg border border-stone-200 p-4">
+    <div className="flex items-center justify-between">
+      <h4 className="text-sm font-600 text-stone-800">Prüfnachweis {PRUEFART_LABELS[pruefart]}</h4>
+      <span className={`rounded-full border px-3 py-1 text-xs font-600 ${PRUEFERGEBNIS_BADGE_CLASS[currentErgebnis]}`}>{PRUEFERGEBNIS_LABELS[currentErgebnis]}</span>
+    </div>
+    {current && <p className="mt-2 text-xs text-muted-foreground">
+      {current.pruefdatum ? `Geprüft am ${current.pruefdatum}` : 'Kein Prüfdatum hinterlegt'}
+      {current.ausfuehrendeStelle ? ` · durch ${current.ausfuehrendeStelle}` : ''}
+      {current.documentId ? ' · Nachweis verknüpft' : ' · kein Nachweis verknüpft'}
+    </p>}
+    {!current && <p className="mt-2 text-xs text-muted-foreground">Noch kein Prüfnachweis erfasst — gilt als „Offen“, nicht als erfüllt.</p>}
+
+    {canInspect && <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        onRecord(pruefart, ergebnis, { pruefdatum: pruefdatum || null, ausfuehrendeStelle: ausfuehrendeStelle.trim() || null, bemerkung: bemerkung.trim() || null, documentId: documentId || null })
+        setPruefdatum(''); setAusfuehrendeStelle(''); setBemerkung(''); setDocumentId('')
+      }}
+      className="mt-3 space-y-3 border-t border-stone-100 pt-3"
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm">
+          <span className="font-600 text-stone-800">Ergebnis</span>
+          <select value={ergebnis} onChange={(e) => setErgebnis(e.target.value as GgaPruefergebnis)} className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm">
+            <option value="BESTANDEN">Bestanden</option>
+            <option value="NICHT_BESTANDEN">Nicht bestanden</option>
+            <option value="OFFEN">Offen</option>
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="font-600 text-stone-800">Prüfdatum</span>
+          <input type="date" value={pruefdatum} onChange={(e) => setPruefdatum(e.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
+        </label>
+        <label className="block text-sm">
+          <span className="font-600 text-stone-800">Ausführende Stelle</span>
+          <input value={ausfuehrendeStelle} onChange={(e) => setAusfuehrendeStelle(e.target.value)} placeholder="z. B. externe Prüforganisation" className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
+        </label>
+        <label className="block text-sm">
+          <span className="font-600 text-stone-800">Nachweisdokument</span>
+          <select value={documentId} onChange={(e) => setDocumentId(e.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm">
+            <option value="">Kein Nachweis verknüpfen</option>
+            {documents.map((d) => <option key={d.id} value={d.id}>{d.originalName}</option>)}
+          </select>
+        </label>
+      </div>
+      <label className="block text-sm">
+        <span className="font-600 text-stone-800">Bemerkung (intern)</span>
+        <textarea value={bemerkung} onChange={(e) => setBemerkung(e.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" />
+      </label>
+      <button type="submit" disabled={pending} className="rounded-lg bg-stone-800 px-5 py-2.5 text-sm font-600 text-white disabled:opacity-50">Prüfergebnis erfassen</button>
+    </form>}
+  </div>
+}
+
 type ChecklistState = Record<string, boolean>
 
-export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageId, canInspect, canApprove, canEditStammdaten, initial, recap, lifecycleWarning }: {
+export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageId, canInspect, canApprove, canEditStammdaten, initial, recap, lifecycleWarning, pruefnachweise }: {
   cabinetId: string
   projectId: string
   abnahmeStageId: string
@@ -46,6 +137,10 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
     pruefstatus: string
     betreiberstatus: 'NICHT_ANGEFORDERT' | 'AUSSTEHEND' | 'BEANSTANDET' | 'ERTEILT'
     canRequestBetreiberfreigabe: boolean
+    // REQ-015 / GGA-05.2: spiegelt exakt dieselbe serverseitige Bedingung,
+    // die requestCollaborationApproval() jetzt erzwingt (ABNAHME-Checkliste
+    // vollständig) — reine Anzeige, kein Ersatz für den Server-Guard.
+    interneFreigabeBereit: boolean
   }
   recap: {
     kennung: string
@@ -57,6 +152,7 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
     openRequiredMeasures: string[]
   }
   lifecycleWarning: string | null
+  pruefnachweise: PruefnachweisEntry[]
 }) {
   const router = useRouter()
   const storageKey = `gga-inspection-step-${cabinetId}`
@@ -70,6 +166,7 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
   const [blockers, setBlockers] = useState(initial.openBlockers)
   const [mangelTitle, setMangelTitle] = useState('')
   const [documents, setDocuments] = useState(initial.documents)
+  const [pruefnachweisEntries, setPruefnachweisEntries] = useState(pruefnachweise)
   const [decisionNote, setDecisionNote] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const [docKind, setDocKind] = useState<string>('Pruefbericht')
@@ -139,6 +236,13 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
   const requestFreigabe = () => run(() => mutate({ action: 'request-approval', id: abnahmeStageId, cabinetId }))
   const requestBetreiberfreigabe = () => run(() => mutate({ action: 'request-operator-approval', id: cabinetId }))
 
+  const recordPruefnachweis = (pruefart: GgaPruefart, ergebnis: GgaPruefergebnis, data: { pruefdatum: string | null; ausfuehrendeStelle: string | null; bemerkung: string | null; documentId: string | null }) => {
+    run(async () => {
+      const created = await mutate({ action: 'record-pruefnachweis', id: cabinetId, pruefart, ergebnis, data }) as { id: string }
+      setPruefnachweisEntries((prev) => prev.map((entry) => entry.pruefart === pruefart ? { pruefart, current: { id: created.id, ergebnis, ...data } } : entry))
+    })
+  }
+
   const inputCls = 'mt-2 w-full rounded-lg border border-stone-300 px-4 py-3 text-base'
   const labelCls = 'block text-sm font-600 text-stone-800'
 
@@ -179,11 +283,36 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
         {canEditStammdaten && <button disabled={pending} onClick={saveIstVolumenstrom} className="rounded-lg bg-stone-800 px-5 py-3 text-base font-600 text-white disabled:opacity-50">Messwert speichern</button>}
         <CheckToggle title="Abluft geprüft" checked={checklist['Abluft geprüft']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Abluft geprüft', !checklist['Abluft geprüft'])} />
         <CheckToggle title="Ist-Volumenstrom dokumentiert" checked={checklist['Ist-Volumenstrom dokumentiert']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Ist-Volumenstrom dokumentiert', !checklist['Ist-Volumenstrom dokumentiert'])} />
+        <PruefnachweisPanel
+          pruefart="LUEFTUNG"
+          current={pruefnachweisEntries.find((e) => e.pruefart === 'LUEFTUNG')?.current ?? null}
+          documents={documents}
+          canInspect={canInspect}
+          pending={pending}
+          onRecord={recordPruefnachweis}
+        />
       </div>}
 
       {step === 3 && <div className="mt-5 space-y-3">
         <CheckToggle title="Elektro/VDE geprüft" checked={checklist['Elektro/VDE geprüft']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Elektro/VDE geprüft', !checklist['Elektro/VDE geprüft'])} />
         <CheckToggle title="Potentialausgleich geprüft" checked={checklist['Potentialausgleich geprüft']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Potentialausgleich geprüft', !checklist['Potentialausgleich geprüft'])} />
+        <p className="pt-2 text-xs text-muted-foreground">Der bestehende Haken „Elektro/VDE geprüft“ wird automatisch gesetzt, sobald sowohl Elektro als auch VDE unten als „Bestanden“ erfasst sind.</p>
+        <PruefnachweisPanel
+          pruefart="ELEKTRO"
+          current={pruefnachweisEntries.find((e) => e.pruefart === 'ELEKTRO')?.current ?? null}
+          documents={documents}
+          canInspect={canInspect}
+          pending={pending}
+          onRecord={recordPruefnachweis}
+        />
+        <PruefnachweisPanel
+          pruefart="VDE"
+          current={pruefnachweisEntries.find((e) => e.pruefart === 'VDE')?.current ?? null}
+          documents={documents}
+          canInspect={canInspect}
+          pending={pending}
+          onRecord={recordPruefnachweis}
+        />
       </div>}
 
       {step === 4 && <div className="mt-5 space-y-3">
@@ -223,7 +352,8 @@ export function GgaCabinetInspectionWizard({ cabinetId, projectId, abnahmeStageI
           <CheckToggle title="Dokumentation vollständig" checked={checklist['Dokumentation vollständig']} disabled={!canInspect || pending} onToggle={() => toggleChecklist('Dokumentation vollständig', !checklist['Dokumentation vollständig'])} />
           {initial.latestApprovalStatus === 'REQUESTED' && <p className="mt-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Interne Freigabe wurde angefragt und ist noch nicht entschieden.</p>}
           {initial.latestApprovalStatus === 'REJECTED' && <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-900">Die letzte interne Freigabe wurde abgelehnt. Nach Nacharbeit kann hier eine erneute Freigabe angefragt werden.</p>}
-          {canApprove && initial.latestApprovalStatus !== 'REQUESTED' && <button disabled={pending} onClick={requestFreigabe} className="mt-2 rounded-lg bg-stone-800 px-6 py-3 text-base font-600 text-white disabled:opacity-50">Interne Freigabe anfordern</button>}
+          {initial.latestApprovalStatus !== 'REQUESTED' && !initial.interneFreigabeBereit && <p className="mt-2 rounded-lg bg-stone-50 p-3 text-sm text-muted-foreground">Erst anforderbar, wenn die ABNAHME-Checkliste vollständig ist.</p>}
+          {canApprove && initial.latestApprovalStatus !== 'REQUESTED' && initial.interneFreigabeBereit && <button disabled={pending} onClick={requestFreigabe} className="mt-2 rounded-lg bg-stone-800 px-6 py-3 text-base font-600 text-white disabled:opacity-50">Interne Freigabe anfordern</button>}
           {!canApprove && <p className="mt-2 text-sm text-muted-foreground">Freigabe anfordern/entscheiden erfordert die Rolle Interner Planer oder Projektleiter.</p>}
         </div>
 

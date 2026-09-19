@@ -36,6 +36,16 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Betreiberportal — Datenbankintegration'
     await phase2Service.createCollaborationTask(stagePlanungId, { title: 'Planung fertig', cabinetId: cid })
     await phase2Service.createCollaborationTask(stageUmsetzungId, { title: 'Montage fertig', cabinetId: cid })
     await db.collaborationTask.updateMany({ where: { cabinetId: cid }, data: { status: 'DONE' } })
+    // REQ-015.1: requestCollaborationApproval() verlangt seit REQ-015
+    // serverseitig eine vollständige ABNAHME-Checkliste
+    // (ggaCabinetBereitFuerInterneFreigabe) — vorher genügte hier die reine
+    // Existenz der ABNAHME-Stage. Ausschließlich über die bestehende
+    // produktive setGgaCabinetInspectionItem()-Funktion hergestellt, keine
+    // direkte DB-Manipulation. Aufrufer ist an dieser Stelle immer bereits
+    // als plannerUserId (INTERNAL_PLANNER, editorRoles) angemeldet.
+    for (const title of cabinetService.GGA_CABINET_CHECKLIST_TEMPLATES.ABNAHME.items) {
+      await cabinetService.setGgaCabinetInspectionItem(cid, title, true)
+    }
     const internalApproval = await phase2Service.requestCollaborationApproval(stageAbnahmeId, cid)
     asUser(managerUserId, managerEmail)
     await phase2Service.decideCollaborationApproval(internalApproval.id, 'APPROVED')
@@ -325,5 +335,53 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Betreiberportal — Datenbankintegration'
     expect(data.sections.some((s) => s.key === 'G')).toBe(true)
     const docSection = data.sections.find((s) => s.key === 'M')!
     expect(docSection.rows.some((r) => r.label === 'internes-notiz.txt')).toBe(true)
+  })
+
+  // ── REQ-015.2: Betreiber-Schrankakte — Audit-Historie-Zugriffsfehler ────
+  // getGgaCabinetSchrankaktePdfData() rief bislang unbedingt die interne
+  // getGgaCabinetAuditHistory() auf, die OPERATOR generell ausschloss — ein
+  // berechtigter Betreiber konnte seine eigene Schrankakte dadurch nie laden
+  // (D7/D8 scheiterten deshalb bereits am Zugriff, nicht erst an der
+  // Filterung). Seit REQ-015.2 kennt getGgaCabinetAuditHistory() ein eigenes
+  // audience-Argument und filtert selbst — siehe gga-cabinet.service.ts.
+  it('T1: berechtigter OPERATOR kann seine eigene Betreiber-Schrankakte laden', async () => {
+    asUser(operatorUserId, operatorEmail)
+    const data = await schrankakteService.getGgaCabinetSchrankaktePdfData(cabinetId, 'OPERATOR')
+    expect(data.cabinetLabel).toContain(`${marker}-001`)
+  })
+
+  it('T2: OPERATOR eines fremden Projekts kann die Betreiber-Schrankakte nicht laden (IDOR)', async () => {
+    asUser(outsiderOperatorUserId, outsiderOperatorEmail)
+    await expect(schrankakteService.getGgaCabinetSchrankaktePdfData(cabinetId, 'OPERATOR')).rejects.toThrow('nicht gefunden')
+  })
+
+  it('T3: interner Benutzer (audience=INTERNAL) erhält weiterhin die vollständige, ungefilterte Historie', async () => {
+    asUser(plannerUserId, plannerEmail)
+    const history = await cabinetService.getGgaCabinetAuditHistory(cabinetId)
+    expect(history.some((h: any) => h.entityType === 'gga_cabinet')).toBe(true)
+    expect(history.length).toBeGreaterThan(0)
+  })
+
+  it('T4: die audience=OPERATOR-Historie enthält keine internen Cabinet-/Task-/Blocker-Einträge', async () => {
+    asUser(operatorUserId, operatorEmail)
+    const history = await cabinetService.getGgaCabinetAuditHistory(cabinetId, 'OPERATOR')
+    expect(history.every((h: any) => h.entityType !== 'gga_cabinet')).toBe(true)
+    expect(history.every((h: any) => h.entityType !== 'collaboration_task')).toBe(true)
+    expect(history.every((h: any) => h.entityType !== 'collaboration_blocker')).toBe(true)
+  })
+
+  it('T5a: ein OPERATOR kann sich durch direkten audience=INTERNAL-Aufruf keine interne Sicht erschleichen', async () => {
+    asUser(operatorUserId, operatorEmail)
+    await expect(cabinetService.getGgaCabinetAuditHistory(cabinetId, 'INTERNAL')).rejects.toThrow('Keine Berechtigung')
+    await expect(schrankakteService.getGgaCabinetSchrankaktePdfData(cabinetId, 'INTERNAL')).rejects.toThrow('Keine Berechtigung')
+  })
+
+  it('T5b: ein interner Nutzer, der bewusst audience=OPERATOR anfordert (Vorschau), erhält exakt dieselbe gefilterte Sicht wie ein echter Betreiber', async () => {
+    asUser(plannerUserId, plannerEmail)
+    const previewAsInternal = await schrankakteService.getGgaCabinetSchrankaktePdfData(cabinetId, 'OPERATOR')
+    asUser(operatorUserId, operatorEmail)
+    const realOperatorView = await schrankakteService.getGgaCabinetSchrankaktePdfData(cabinetId, 'OPERATOR')
+    expect(previewAsInternal.sections.map((s) => s.key)).toEqual(realOperatorView.sections.map((s) => s.key))
+    expect(previewAsInternal.sections.some((s) => s.key === 'G' || s.key === 'H' || s.key === 'L')).toBe(false)
   })
 })
