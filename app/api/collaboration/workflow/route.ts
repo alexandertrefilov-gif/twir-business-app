@@ -44,6 +44,7 @@ const bodySchema = z.object({
   status: z.string().optional(),
   completed: z.boolean().optional(),
   resolution: z.string().max(2000).optional(),
+  confirmedKennung: z.string().optional(),
   decision: z.enum(['APPROVED', 'REJECTED']).optional(),
   decisionNote: z.string().max(2000).optional(),
   plan: z.array(z.object({ code: z.string(), title: z.string(), weight: z.number(), requiresApproval: z.boolean().optional() })).optional(),
@@ -86,7 +87,10 @@ export async function POST(request: Request) {
     }
     else if (input.action === 'create-cabinet') result = await createGgaCabinet(input.id, input.data ?? {})
     else if (input.action === 'update-cabinet') result = await updateGgaCabinet(input.id, input.data ?? {})
-    else if (input.action === 'delete-cabinet') result = await softDeleteGgaCabinet(input.id, input.resolution?.trim() || 'Nicht angegeben')
+    else if (input.action === 'delete-cabinet') {
+      if (!input.confirmedKennung) throw new ValidationError('Zur Bestätigung wird die Kennung des Schranks benötigt')
+      result = await softDeleteGgaCabinet(input.id, input.confirmedKennung, input.resolution)
+    }
     else if (input.action === 'set-cabinet') {
       if (!input.entityType) throw new ValidationError('Entitätstyp fehlt')
       result = await setCabinetOnEntity(input.entityType, input.id, input.cabinetId ?? null)

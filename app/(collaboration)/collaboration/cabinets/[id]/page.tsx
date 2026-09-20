@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
-import { getGgaCabinetDetail, getGgaCabinetAuditHistory, getGgaCabinetPruefnachweisOverview, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'
+import { getGgaCabinetDetail, getGgaCabinetAuditHistory, getGgaCabinetPruefnachweisOverview, getGgaCabinetDeleteBlockersFor, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'
 import { editorRoles, getVisibleCollaborationMemberships } from '@/lib/services/collaboration-phase2.service'
 import { GgaCabinetBlockerList } from '@/components/collaboration/GgaCabinetBlockerList'
 import {
@@ -95,16 +95,20 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
     handleCollaborationPageError(error)
   }
 
-  const [memberships, history, pruefnachweisOverview] = await Promise.all([
+  const canDelete = cabinet.role === 'COLLAB_MANAGER'
+
+  const [memberships, history, pruefnachweisOverview, deleteBlockers] = await Promise.all([
     getVisibleCollaborationMemberships({ projectId: cabinet.projectId }),
     getGgaCabinetAuditHistory(id),
     // REQ-018.1: dieselbe, bereits von /pruefung genutzte Übersichtsfunktion
     // — keine zweite Prüfnachweis-Ableitung.
     getGgaCabinetPruefnachweisOverview(id),
+    // DELETE-SAFETY-002: nur laden, wenn der Löschbutton überhaupt sichtbar
+    // werden könnte (COLLAB_MANAGER) — kein unnötiger Query für alle anderen Rollen.
+    canDelete ? getGgaCabinetDeleteBlockersFor(id) : Promise.resolve<string[]>([]),
   ])
 
   const canEdit = (cabinetEditorRoles as readonly string[]).includes(cabinet.role)
-  const canDelete = cabinet.role === 'COLLAB_MANAGER'
   const canUpload = true // jedes aktive Projektmitglied — Berechtigung wird serverseitig in uploadCollaborationDocument erneut geprüft
   // Gleiche Rollen wie resolveCollaborationBlocker() serverseitig prüft — Sichtbarkeit des
   // "Beheben"-Buttons folgt exakt der tatsächlichen Berechtigung, keine eigene Rollenliste.
@@ -207,7 +211,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <a href={`/api/collaboration/cabinets/${cabinet.id}/schrankakte`} className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-600 text-stone-800">Schrankakte (PDF)</a>
-        <GgaCabinetDeleteButton cabinetId={cabinet.id} canDelete={canDelete} />
+        <GgaCabinetDeleteButton cabinetId={cabinet.id} kennung={cabinet.kennung} canDelete={canDelete} blockers={deleteBlockers} />
       </div>
     </div>
 

@@ -136,14 +136,65 @@ export async function updateGgaCabinet(cabinetId: string, input: unknown) {
 }
 
 // ── DELETE (soft) ────────────────────────────────────────────
+// DELETE-SAFETY-002: dieselbe Sicherheitsqualität wie die Projektlöschung
+// (DELETE-SAFETY-001) — Identitätsbestätigung (Kennung) + serverseitiger
+// Abhängigkeits-Check mit konkreten Gründen, statt eines reinen
+// Zwei-Klick-Bestätigungsmusters ohne fachliche Prüfung. Kein Cascade: alle
+// abhängigen Datensätze (Aufgaben/Checklisten/Blocker/Freigaben/Dokumente/
+// Prüfnachweise) bleiben bei einer blockierten Löschung unangetastet.
+async function getGgaCabinetDeleteBlockers(cabinetId: string, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<string[]> {
+  const [taskCount, checklistCount, blockerCount, approvalCount, documentCount, pruefnachweisCount] = await Promise.all([
+    tx.collaborationTask.count({ where: { cabinetId } }),
+    tx.collaborationChecklistItem.count({ where: { cabinetId } }),
+    tx.collaborationBlocker.count({ where: { cabinetId } }),
+    tx.collaborationApproval.count({ where: { cabinetId } }),
+    tx.collaborationDocument.count({ where: { cabinetId, deletedAt: null } }),
+    tx.ggaCabinetPruefnachweis.count({ where: { cabinetId } }),
+  ])
+  const reasons: string[] = []
+  if (taskCount > 0) reasons.push(`${taskCount} ${taskCount === 1 ? 'Aufgabe' : 'Aufgaben'}`)
+  if (checklistCount > 0) reasons.push(`${checklistCount} ${checklistCount === 1 ? 'Checklistenpunkt' : 'Checklistenpunkte'}`)
+  if (blockerCount > 0) reasons.push(`${blockerCount} ${blockerCount === 1 ? 'Blocker' : 'Blocker'}`)
+  if (approvalCount > 0) reasons.push(`${approvalCount} ${approvalCount === 1 ? 'Freigabe' : 'Freigaben'}`)
+  if (documentCount > 0) reasons.push(`${documentCount} ${documentCount === 1 ? 'Dokument' : 'Dokumente'}`)
+  if (pruefnachweisCount > 0) reasons.push(`${pruefnachweisCount} ${pruefnachweisCount === 1 ? 'Prüfnachweis' : 'Prüfnachweise'}`)
+  return reasons
+}
 
-export async function softDeleteGgaCabinet(cabinetId: string, reason: string) {
+// Für die Schrankdetailseite: dieselbe Prüfung, ohne die Löschung
+// auszuführen — damit die UI vorab entscheiden kann, ob der Löschbutton
+// oder eine konkrete Blockierungs-Meldung angezeigt wird (wie bei Project).
+export async function getGgaCabinetDeleteBlockersFor(cabinetId: string): Promise<string[]> {
+  return getGgaCabinetDeleteBlockers(cabinetId)
+}
+
+export async function softDeleteGgaCabinet(cabinetId: string, confirmedKennung: string, reason?: string) {
   const { userId, userEmail } = await requireCollaborationSession()
-  const access = await requireCollaborationCabinetAccess(userId, cabinetId, ['COLLAB_MANAGER'])
+  await requireCollaborationCabinetAccess(userId, cabinetId, ['COLLAB_MANAGER'])
 
-  await prisma.$transaction(async (tx) => {
-    await tx.ggaCabinet.update({ where: { id: cabinetId }, data: { deletedAt: new Date() } })
-    await buildAuditLogCreate(tx, { userId, userEmail, action: 'DELETE', entityType: 'gga_cabinet', entityId: cabinetId, oldValue: { kennung: access.kennung, bezeichnung: access.bezeichnung }, metadata: { reason } })
+  return prisma.$transaction(async (tx) => {
+    // Frisch innerhalb der Transaktion gelesen (nicht der ggf. veraltete
+    // Stand der UI) — Kennungs-Bestätigung und Abhängigkeits-Check gelten
+    // für den aktuellen Zustand.
+    const cabinet = await tx.ggaCabinet.findFirst({ where: { id: cabinetId, deletedAt: null }, select: { id: true, kennung: true, bezeichnung: true } })
+    if (!cabinet) throw new NotFoundError('Schrank nicht gefunden')
+
+    if (confirmedKennung !== cabinet.kennung) {
+      throw new BusinessRuleError('Die eingegebene Kennung stimmt nicht mit der Kennung dieses Schranks überein.')
+    }
+
+    const blockers = await getGgaCabinetDeleteBlockers(cabinetId, tx)
+    if (blockers.length > 0) {
+      throw new BusinessRuleError(`Dieser Schrank kann nicht gelöscht werden, weil bereits fachliche Daten vorhanden sind:\n${blockers.join('\n')}`)
+    }
+
+    // updateMany mit deletedAt:null-Guard statt update(): eine doppelte
+    // Löschanfrage findet beim zweiten Versuch count===0 und beendet sich
+    // sauber, ohne Fehler oder doppelten Audit-Eintrag.
+    const updated = await tx.ggaCabinet.updateMany({ where: { id: cabinetId, deletedAt: null }, data: { deletedAt: new Date() } })
+    if (updated.count === 0) return
+
+    await buildAuditLogCreate(tx, { userId, userEmail, action: 'DELETE', entityType: 'gga_cabinet', entityId: cabinetId, oldValue: { kennung: cabinet.kennung, bezeichnung: cabinet.bezeichnung }, metadata: { reason: reason?.trim() || 'Nicht angegeben' } })
   })
 }
 

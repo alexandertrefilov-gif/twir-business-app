@@ -584,11 +584,12 @@ export async function convertOfferToOrder(
 
 // ── DELETE ────────────────────────────────────────────────────
 
-export function canDeleteOfferInEnvironment(
+// DELETE-SAFETY-002: keine Umgebungsabhängigkeit mehr — siehe canDeleteOrder()
+// in order.service.ts für dieselbe Begründung. requireTestDeleteEnabled()
+// an der Action-Ebene entscheidet allein über die Erreichbarkeit.
+export function canDeleteOffer(
   status: OfferStatus,
-  nodeEnv: string | undefined,
 ): boolean {
-  if (nodeEnv === 'development') return true
   return status !== OfferStatus.ACCEPTED &&
     status !== OfferStatus.CONVERTED_TO_ORDER
 }
@@ -604,7 +605,7 @@ export async function deleteOffer(
   })
   if (!offer) throw new NotFoundError('Angebot nicht gefunden')
 
-  if (!canDeleteOfferInEnvironment(offer.status as OfferStatus, process.env.NODE_ENV)) {
+  if (!canDeleteOffer(offer.status as OfferStatus)) {
     throw new BusinessRuleError(
       'Angenommene oder in Aufträge umgewandelte Angebote können nicht gelöscht werden.',
     )

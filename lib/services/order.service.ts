@@ -421,13 +421,16 @@ export async function markOrderSent(
 }
 
 // ── DELETE ────────────────────────────────────────────────────
-
-export function canDeleteOrderInEnvironment(
+// DELETE-SAFETY-002: keine Umgebungsabhängigkeit mehr in der fachlichen
+// Regel — ob dieser Löschpfad überhaupt erreichbar ist, entscheidet
+// ausschließlich requireTestDeleteEnabled() auf Action-Ebene (Test-
+// datenbereinigung). Diese Funktion prüft nur noch die fachliche Regel und
+// gilt unabhängig von NODE_ENV, damit ein zweiter, zukünftiger Aufrufpfad
+// dieses Gate nicht versehentlich umgehen kann.
+export function canDeleteOrder(
   status: OrderStatus,
   serviceReportCount: number,
-  nodeEnv: string | undefined,
 ): boolean {
-  if (nodeEnv === 'development') return true
   return status !== OrderStatus.INVOICED && serviceReportCount === 0
 }
 
@@ -447,10 +450,9 @@ export async function deleteOrder(
   })
   if (!order) throw new NotFoundError('Auftrag nicht gefunden')
 
-  if (!canDeleteOrderInEnvironment(
+  if (!canDeleteOrder(
     order.status as OrderStatus,
     order._count.serviceReports,
-    process.env.NODE_ENV,
   )) {
     throw new BusinessRuleError(
       'Abgerechnete Aufträge oder Aufträge mit Leistungsnachweisen können nicht gelöscht werden.',

@@ -169,7 +169,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     await expect(cabinetService.softDeleteGgaCabinet(cabinet.id, 'Testversuch')).rejects.toThrow('Keine Berechtigung')
 
     asManager()
-    await cabinetService.softDeleteGgaCabinet(cabinet.id, 'Nicht mehr benötigt')
+    await cabinetService.softDeleteGgaCabinet(cabinet.id, `${marker}-DEL`, 'Nicht mehr benötigt')
     const row = await db.ggaCabinet.findUnique({ where: { id: cabinet.id } })
     expect(row.deletedAt).not.toBeNull()
   })
@@ -178,7 +178,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     asPlanner()
     const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-DEL2`, bezeichnung: 'Zu löschen 2' })
     asManager()
-    await cabinetService.softDeleteGgaCabinet(cabinet.id, 'Test')
+    await cabinetService.softDeleteGgaCabinet(cabinet.id, `${marker}-DEL2`, 'Test')
     await expect(cabinetService.getGgaCabinetDetail(cabinet.id)).rejects.toThrow('nicht gefunden')
   })
 
@@ -186,7 +186,7 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     asPlanner()
     const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-DEL3`, bezeichnung: 'Zu löschen 3' })
     asManager()
-    await cabinetService.softDeleteGgaCabinet(cabinet.id, 'Test')
+    await cabinetService.softDeleteGgaCabinet(cabinet.id, `${marker}-DEL3`, 'Test')
     const list = await cabinetService.getVisibleGgaCabinets({ projectId: projectAId })
     expect(list.some((item) => item.id === cabinet.id)).toBe(false)
   })

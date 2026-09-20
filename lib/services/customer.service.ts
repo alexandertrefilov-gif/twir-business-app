@@ -302,12 +302,13 @@ export async function updateCustomer(
 
 // ── SOFT DELETE ──────────────────────────────────────────────
 
-export function canDeleteCustomerInEnvironment(
+// DELETE-SAFETY-002: keine Umgebungsabhängigkeit mehr — siehe canDeleteOrder()
+// in order.service.ts für dieselbe Begründung. requireTestDeleteEnabled()
+// an der Action-Ebene entscheidet allein über die Erreichbarkeit.
+export function canDeleteCustomer(
   activeInvoiceCount: number,
   activeOrderCount: number,
-  nodeEnv: string | undefined,
 ): boolean {
-  if (nodeEnv === 'development') return true
   return activeInvoiceCount === 0 && activeOrderCount === 0
 }
 
@@ -333,10 +334,9 @@ export async function deleteCustomer(
   if (!existing) throw new NotFoundError('Kunde nicht gefunden')
 
   // Blockieren wenn offene Aufträge oder aktive Rechnungen existieren
-  if (!canDeleteCustomerInEnvironment(
+  if (!canDeleteCustomer(
     existing._count.invoices,
     existing._count.orders,
-    process.env.NODE_ENV,
   )) {
     throw new BusinessRuleError(
       'Kunde kann nicht gelöscht werden: Es existieren noch aktive Aufträge oder Rechnungen.',

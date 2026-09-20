@@ -9,7 +9,7 @@ describe('GGA-Schrank-Arbeitsplatz (GGA-Portal Produktblock 3)', () => {
   )
 
   it('verwendet weiterhin die bestehende Schrank-Detailroute und getGgaCabinetDetail() — keine neue Detailroute', () => {
-    expect(page).toContain("import { getGgaCabinetDetail, getGgaCabinetAuditHistory, getGgaCabinetPruefnachweisOverview, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'")
+    expect(page).toContain("import { getGgaCabinetDetail, getGgaCabinetAuditHistory, getGgaCabinetPruefnachweisOverview, getGgaCabinetDeleteBlockersFor, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'")
     expect(page).toContain('cabinet = await getGgaCabinetDetail(id)')
   })
 
