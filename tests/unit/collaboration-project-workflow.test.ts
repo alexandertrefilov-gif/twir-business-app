@@ -2,14 +2,18 @@ import { describe, expect, it } from 'vitest'
 import {
   calculateProjectHealth,
   calculateProjectProgress,
+  calculateStageProgress,
   COLLABORATION_PROJECT_STATUS_TRANSITIONS,
   deriveNextAction,
+  deriveStageDependencyWaitReason,
   deriveStageStatuses,
   getProjectCompletionBlocker,
   getStageCompletionBlocker,
   isCollaborationProjectStatusTransitionAllowed,
   isCollaborationStageTransitionAllowed,
+  satisfiesRequiredStatus,
   type CollaborationStageSnapshot,
+  type DerivedCollaborationStage,
 } from '@/lib/collaboration/project-workflow'
 
 function stage(overrides: Partial<CollaborationStageSnapshot> = {}): CollaborationStageSnapshot {
@@ -264,5 +268,81 @@ describe('Cabinet-Membership-Gate (REQ-015.4)', () => {
     // sie sieht nur, was der Aufrufer in stage.cabinets übergibt — die
     // eigentliche Projekt-Isolation wird durch die DB-Tests (T9) belegt.
     expect(getStageCompletionBlocker(cabinetStage([{ id: 'cab-A', ready: true }]))).toBeNull()
+  })
+})
+
+// GGA-Portal Produktblock 5: Projekt-Timeline (Phase-Fortschritt getrennt vom
+// Status, Dependency-Anzeige). Beide Funktionen sind reine, zustandslose
+// Ableitungen ohne DB-Zugriff — dieselbe Testkategorie wie oben.
+describe('calculateStageProgress (GGA-Portal Produktblock 5 Abschnitt 2/14): Phasen-Fortschritt getrennt vom Status — keine falsche 100%-Interpretation', () => {
+  it('liefert null (nicht 0%), wenn die Phase keine erforderlichen Aufgaben/Checklistenpunkte hat', () => {
+    expect(calculateStageProgress(stage())).toBeNull()
+  })
+
+  it('zählt nur erforderliche Aufgaben/Checklistenpunkte, ignoriert optionale', () => {
+    const s = stage({
+      tasks: [
+        { id: 't1', title: 'Pflicht offen', status: 'TODO', priority: 'MEDIUM', dueDate: null, sequence: 1, isRequired: true },
+        { id: 't2', title: 'Optional offen', status: 'TODO', priority: 'LOW', dueDate: null, sequence: 2, isRequired: false },
+      ],
+    })
+    // 0 von 1 Pflichtpunkt erledigt — die optionale Aufgabe zählt nicht mit.
+    expect(calculateStageProgress(s)).toBe(0)
+  })
+
+  it('erreicht 100%, wenn alle erforderlichen Aufgaben/Checklistenpunkte erledigt sind — dieser Wert allein bedeutet NICHT "abgeschlossen" (siehe getStageCompletionBlocker, z. B. bei fehlender Freigabe)', () => {
+    const s = stage({
+      status: 'IN_PROGRESS', requiresApproval: true, approvals: [],
+      tasks: [{ id: 't1', title: 'Pflicht erledigt', status: 'DONE', priority: 'MEDIUM', dueDate: null, sequence: 1, isRequired: true }],
+      checklistItems: [{ id: 'c1', title: 'Punkt erledigt', sequence: 1, isRequired: true, completed: true, completedAt: new Date() }],
+    })
+    expect(calculateStageProgress(s)).toBe(100)
+    // Trotz 100% Fortschritt bleibt die Phase fachlich unvollständig, weil
+    // die erforderliche Freigabe fehlt — Fortschritt und Abschluss sind zwei
+    // unterschiedliche Fragen, nie zu vermischen.
+    expect(getStageCompletionBlocker(s)).toMatch(/Freigabe/)
+  })
+
+  it('SKIPPED-Aufgaben zählen wie DONE als erledigt', () => {
+    const s = stage({ tasks: [{ id: 't1', title: 'Übersprungen', status: 'SKIPPED', priority: 'MEDIUM', dueDate: null, sequence: 1, isRequired: true }] })
+    expect(calculateStageProgress(s)).toBe(100)
+  })
+})
+
+describe('deriveStageDependencyWaitReason (GGA-Portal Produktblock 5 Abschnitt 4): Dependency-Anzeige — dieselbe Prüfung wie deriveStageStatuses() intern, nur erklärt', () => {
+  const label = (status: string) => ({ NOT_STARTED: 'Nicht begonnen', READY: 'Bereit', IN_PROGRESS: 'In Bearbeitung', COMPLETED: 'Abgeschlossen', SKIPPED: 'Übersprungen', BLOCKED: 'Blockiert', WAITING_FOR_APPROVAL: 'Wartet auf Freigabe' } as Record<string, string>)[status] ?? status
+
+  it('liefert null, wenn die Phase keine Abhängigkeiten hat', () => {
+    const s: DerivedCollaborationStage = { ...stage(), derivedStatus: 'NOT_STARTED' }
+    expect(deriveStageDependencyWaitReason(s, [s], label)).toBeNull()
+  })
+
+  it('liefert null, wenn die Phase nicht NOT_STARTED ist (z. B. bereits READY/IN_PROGRESS) — auch bei bestehenden Abhängigkeiten', () => {
+    const planning: DerivedCollaborationStage = { ...stage({ id: 'planning', status: 'COMPLETED' }), derivedStatus: 'COMPLETED' }
+    const execution: DerivedCollaborationStage = { ...stage({ id: 'execution', dependencies: [{ dependsOnStageId: 'planning', requiredStatus: 'COMPLETED' }] }), derivedStatus: 'READY' }
+    expect(deriveStageDependencyWaitReason(execution, [planning, execution], label)).toBeNull()
+  })
+
+  it('nennt exakt die noch nicht erfüllte Abhängigkeit ("Wartet auf <Zielstatus>: <Phase>")', () => {
+    const planning: DerivedCollaborationStage = { ...stage({ id: 'planning', title: 'Planung', status: 'IN_PROGRESS' }), derivedStatus: 'IN_PROGRESS' }
+    const execution: DerivedCollaborationStage = { ...stage({ id: 'execution', title: 'Umsetzung', dependencies: [{ dependsOnStageId: 'planning', requiredStatus: 'COMPLETED' }] }), derivedStatus: 'NOT_STARTED' }
+    expect(deriveStageDependencyWaitReason(execution, [planning, execution], label)).toBe('Wartet auf Abgeschlossen: Planung')
+  })
+
+  it('SKIPPED erfüllt eine COMPLETED-Anforderung (satisfiesRequiredStatus), Wartetext entfällt dann', () => {
+    const planning: DerivedCollaborationStage = { ...stage({ id: 'planning', title: 'Planung', status: 'SKIPPED' }), derivedStatus: 'SKIPPED' }
+    const execution: DerivedCollaborationStage = { ...stage({ id: 'execution', title: 'Umsetzung', dependencies: [{ dependsOnStageId: 'planning', requiredStatus: 'COMPLETED' }] }), derivedStatus: 'NOT_STARTED' }
+    expect(satisfiesRequiredStatus('SKIPPED', 'COMPLETED')).toBe(true)
+    expect(deriveStageDependencyWaitReason(execution, [planning, execution], label)).toBeNull()
+  })
+
+  it('bei mehreren Abhängigkeiten wird die erste unerfüllte genannt', () => {
+    const a: DerivedCollaborationStage = { ...stage({ id: 'a', title: 'Phase A', status: 'COMPLETED' }), derivedStatus: 'COMPLETED' }
+    const b: DerivedCollaborationStage = { ...stage({ id: 'b', title: 'Phase B', status: 'IN_PROGRESS' }), derivedStatus: 'IN_PROGRESS' }
+    const c: DerivedCollaborationStage = {
+      ...stage({ id: 'c', title: 'Phase C', dependencies: [{ dependsOnStageId: 'a', requiredStatus: 'COMPLETED' }, { dependsOnStageId: 'b', requiredStatus: 'COMPLETED' }] }),
+      derivedStatus: 'NOT_STARTED',
+    }
+    expect(deriveStageDependencyWaitReason(c, [a, b, c], label)).toBe('Wartet auf Abgeschlossen: Phase B')
   })
 })

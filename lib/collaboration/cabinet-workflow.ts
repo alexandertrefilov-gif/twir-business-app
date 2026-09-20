@@ -552,6 +552,15 @@ export type GgaWorklistEntry = {
   type: GgaWorklistEntryType
   dueDate: Date | null
   verantwortlich: string | null
+  // GGA-Portal Produktblock 4: die userId hinter "verantwortlich" (sofern
+  // bekannt) — ausschließlich für MASSNAHME/MANGEL gesetzt, weil nur
+  // CollaborationTask/-Blocker ein zuverlässiges responsibleMembershipId
+  // haben. Alle anderen Eintragstypen (Prüfung/Freigabe/Nachprüfung/
+  // Beanstandung/generischer Fallback) haben in diesem Datenmodell KEINEN
+  // zuverlässigen Einzel-Verantwortlichen (CollaborationApproval hat gar
+  // kein responsibleMembershipId, GgaCabinetPruefnachweis auch nicht) —
+  // bleiben deshalb bewusst null, statt eine Zuordnung zu erfinden.
+  verantwortlichUserId: string | null
   urgency: GgaWorklistUrgency
   ueberfaellig: boolean
   // Nur innerhalb urgency===4 relevant: Frist liegt innerhalb des kurzen
@@ -560,8 +569,8 @@ export type GgaWorklistEntry = {
   baldFaellig: boolean
 }
 
-export type GgaWorklistCabinetTask = { id: string; title: string; dueDate: Date | null; verantwortlich: string | null }
-export type GgaWorklistCabinetBlocker = { id: string; title: string; verantwortlich: string | null }
+export type GgaWorklistCabinetTask = { id: string; title: string; dueDate: Date | null; verantwortlich: string | null; verantwortlichUserId?: string | null }
+export type GgaWorklistCabinetBlocker = { id: string; title: string; verantwortlich: string | null; verantwortlichUserId?: string | null }
 
 export type GgaWorklistCabinetInput = {
   id: string
@@ -581,7 +590,12 @@ function istGleicherKalendertag(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
 }
 
-function tagesUrgency(dueDate: Date, now: Date): { urgency: GgaWorklistUrgency; ueberfaellig: boolean; baldFaellig: boolean } {
+// GGA-Portal Produktblock 7 Abschnitt 8: exportiert (war zuvor datei-lokal),
+// damit die persönliche Arbeitsoberfläche (/collaboration/my-work) dieselbe
+// Fristigkeits-Einstufung für Projekt-/Phasen-Aufgaben (ohne cabinetId)
+// wiederverwenden kann, statt eine zweite, konkurrierende Priorität-Engine
+// zu bauen — identische Regel wie für Schrank-Maßnahmen.
+export function tagesUrgency(dueDate: Date, now: Date): { urgency: GgaWorklistUrgency; ueberfaellig: boolean; baldFaellig: boolean } {
   if (dueDate.getTime() < now.getTime()) return { urgency: 1, ueberfaellig: true, baldFaellig: false }
   if (istGleicherKalendertag(dueDate, now)) return { urgency: 3, ueberfaellig: false, baldFaellig: false }
   const tageBisFaellig = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
@@ -591,7 +605,7 @@ function tagesUrgency(dueDate: Date, now: Date): { urgency: GgaWorklistUrgency; 
 export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], now = new Date()): GgaWorklistEntry[] {
   const entries: GgaWorklistEntry[] = []
   const sicherheitsrelevant = (title: string, type: GgaWorklistEntryType, cabinet: GgaWorklistCabinetInput) =>
-    entries.push({ cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort, title, type, dueDate: null, verantwortlich: null, urgency: 2 as const, ueberfaellig: false, baldFaellig: false })
+    entries.push({ cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort, title, type, dueDate: null, verantwortlich: null, verantwortlichUserId: null, urgency: 2 as const, ueberfaellig: false, baldFaellig: false })
 
   for (const cabinet of cabinets) {
     const usedTitles = new Set<string>()
@@ -600,7 +614,7 @@ export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], no
       usedTitles.add(blocker.title)
       entries.push({
         cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort,
-        title: blocker.title, type: 'MANGEL', dueDate: null, verantwortlich: blocker.verantwortlich,
+        title: blocker.title, type: 'MANGEL', dueDate: null, verantwortlich: blocker.verantwortlich, verantwortlichUserId: blocker.verantwortlichUserId ?? null,
         urgency: 2, ueberfaellig: false, baldFaellig: false,
       })
     }
@@ -610,7 +624,7 @@ export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], no
       const { urgency, ueberfaellig, baldFaellig } = task.dueDate ? tagesUrgency(task.dueDate, now) : { urgency: 6 as const, ueberfaellig: false, baldFaellig: false }
       entries.push({
         cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort,
-        title: task.title, type: 'MASSNAHME', dueDate: task.dueDate, verantwortlich: task.verantwortlich,
+        title: task.title, type: 'MASSNAHME', dueDate: task.dueDate, verantwortlich: task.verantwortlich, verantwortlichUserId: task.verantwortlichUserId ?? null,
         urgency, ueberfaellig, baldFaellig,
       })
     }
@@ -626,7 +640,7 @@ export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], no
     if (cabinet.status.betriebsstatus === 'UEBERFAELLIG') {
       const title = 'Prüfung überfällig — Termin vereinbaren'
       usedTitles.add(title)
-      entries.push({ cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort, title, type: 'PRUEFUNG_UEBERFAELLIG', dueDate: null, verantwortlich: null, urgency: 1, ueberfaellig: true, baldFaellig: false })
+      entries.push({ cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort, title, type: 'PRUEFUNG_UEBERFAELLIG', dueDate: null, verantwortlich: null, verantwortlichUserId: null, urgency: 1, ueberfaellig: true, baldFaellig: false })
     }
     if (cabinet.status.betriebsstatus === 'NACHPRUEFUNG_ERFORDERLICH') {
       const title = 'Nachprüfung erforderlich'
@@ -654,7 +668,7 @@ export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], no
     if (!hatKonkretenEintrag && cabinet.status.naechsteAktion !== 'Keine offenen Punkte' && !usedTitles.has(cabinet.status.naechsteAktion)) {
       entries.push({
         cabinetId: cabinet.id, kennung: cabinet.kennung, standort: cabinet.standort,
-        title: cabinet.status.naechsteAktion, type: 'NAECHSTE_AKTION', dueDate: null, verantwortlich: null,
+        title: cabinet.status.naechsteAktion, type: 'NAECHSTE_AKTION', dueDate: null, verantwortlich: null, verantwortlichUserId: null,
         urgency: 5, ueberfaellig: false, baldFaellig: false,
       })
     }
@@ -675,14 +689,28 @@ export function deriveGgaProjectWorklist(cabinets: GgaWorklistCabinetInput[], no
 // Keine neue Statuslogik, keine DB-Zugriffe — der Service liefert die pro
 // Schrank bereits abgeleiteten Werte inkl. Projektbezug an.
 
-export type GgaControlTowerCabinetEntry = { id: string; kennung: string; standort: string | null; projectId: string; projectNumber: string | null; projectName: string } & DerivedGgaCabinetStatus
+export type GgaControlTowerCabinetEntry = {
+  id: string; kennung: string; standort: string | null; projectId: string; projectNumber: string | null; projectName: string
+  // GGA-Portal-Weiterentwicklung: welche Prüfarten AKTUELL (neueste Zeile je
+  // Prüfart, siehe deriveCurrentPruefnachweis()) NICHT_BESTANDEN sind — reine
+  // Zusatzinformation für die Dashboard-Anzeige, KEINE neue fachliche
+  // Wahrheit (der zugrunde liegende GgaCabinetPruefnachweis-Datensatz und
+  // dessen Ableitung über deriveCurrentPruefnachweis() bleiben unverändert;
+  // hier wird nur zusätzlich zusammengefasst, WELCHE Prüfarten das betrifft).
+  // Bewusst NICHT Teil von DerivedGgaCabinetStatus/GgaCabinetSnapshot — das
+  // bliebe sonst ein Kernmodell, das jeder der zahlreichen deriveCabinetStatus()-
+  // Aufrufer (Schrankseite, Freigabe-Gates, Schrankakte, …) zusätzlich mit
+  // Prüfnachweis-Daten befüllen müsste, obwohl nur der REQ-014-Control-Tower
+  // das hier benötigt.
+  nichtBestandenePruefarten: GgaPruefart[]
+} & DerivedGgaCabinetStatus
 
 export type GgaControlTowerProjectSummary = GgaCabinetControlTowerSummary & {
   projectId: string
   projectNumber: string | null
   projectName: string
-  // Anzahl Schränke mit ggaCabinetIstDringend() === true — konsistent mit
-  // dringendeSchraenke unten, anders als das (unveränderte) REQ-012-Feld
+  // Anzahl Schränke mit ggaCabinetHatHandlungsbedarf() === true — konsistent
+  // mit dringendeSchraenke unten, anders als das (unveränderte) REQ-012-Feld
   // aufmerksamkeitErforderlich oben, das UEBERFAELLIG allein nicht erfasst.
   dringendeSchraenkeAnzahl: number
 }
@@ -692,8 +720,11 @@ export type GgaControlTowerProjectSummary = GgaCabinetControlTowerSummary & {
 // ohne diese siebte Badge hätte ein Teil der "dringend"-Menge (nacharbeit-
 // Erforderlich über pruefstatus, nicht über betreiberstatus) keinen sichtbaren
 // Grund, obwohl Phase 4 verlangt, dass jeder Eintrag einen Grund zeigt.
+// GGA-Portal-Weiterentwicklung: drei weitere Badges für je Prüfart NICHT
+// BESTANDEN — dieselbe Erweiterung wie oben, nur die Anzeige-Seite.
 export type GgaControlTowerReasonBadge =
   | 'UEBERFAELLIG' | 'MANGEL' | 'INTERNE_BEANSTANDUNG' | 'NACHPRUEFUNG' | 'INTERNE_FREIGABE' | 'BETREIBERFREIGABE' | 'BETREIBERBEANSTANDUNG'
+  | 'LUEFTUNG_NICHT_BESTANDEN' | 'ELEKTRO_NICHT_BESTANDEN' | 'VDE_NICHT_BESTANDEN'
 
 export const GGA_CONTROL_TOWER_REASON_LABELS: Record<GgaControlTowerReasonBadge, string> = {
   UEBERFAELLIG: 'Überfällig',
@@ -703,26 +734,253 @@ export const GGA_CONTROL_TOWER_REASON_LABELS: Record<GgaControlTowerReasonBadge,
   INTERNE_FREIGABE: 'Interne Freigabe',
   BETREIBERFREIGABE: 'Betreiberfreigabe',
   BETREIBERBEANSTANDUNG: 'Betreiberbeanstandung',
+  LUEFTUNG_NICHT_BESTANDEN: 'Lüftung nicht bestanden',
+  ELEKTRO_NICHT_BESTANDEN: 'Elektro nicht bestanden',
+  VDE_NICHT_BESTANDEN: 'VDE nicht bestanden',
+}
+
+// GGA-Portal-Weiterentwicklung: erweitert ggaCabinetIstDringend() um die
+// Prüfnachweis-NICHT_BESTANDEN-Signale, OHNE die bestehende, bereits an
+// anderer Stelle genutzte Funktion selbst zu verändern (ggaCabinetIstDringend
+// bleibt exakt wie vor REQ-014/GGA-05.1 definiert). Ausschließlich für den
+// REQ-014-Control-Tower (GgaControlTowerCabinetEntry) — berührt keine
+// REQ-015.x-Freigabe-/Completion-Gates, die ausschließlich pruefstatus
+// (aus entschiedenen CollaborationApproval-Zeilen) lesen, nie diese Funktion.
+export function ggaCabinetHatHandlungsbedarf(cabinet: GgaControlTowerCabinetEntry): boolean {
+  return ggaCabinetIstDringend(cabinet) || cabinet.nichtBestandenePruefarten.length > 0
 }
 
 // Rangfolge ausschließlich für die Anzeige-Sortierung der "Dringende
 // GGA-Schränke"-Liste — eigene, transparente Darstellungsreihenfolge, ändert
-// keinen Workflow-Zustand und keine Freigabe-/Prüf-Priorität.
-const GGA_CONTROL_TOWER_REASON_RANK: Record<GgaControlTowerReasonBadge, number> = {
-  UEBERFAELLIG: 1, MANGEL: 2, INTERNE_BEANSTANDUNG: 3, BETREIBERBEANSTANDUNG: 3,
+// keinen Workflow-Zustand und keine Freigabe-/Prüf-Priorität. GGA-Portal
+// Produktblock 2: Ränge 1-3 gelten zusätzlich als "kritisch" (siehe
+// deriveGgaCabinetPresentationStatus() unten) — export, damit dort keine
+// zweite, parallele Rangliste entsteht.
+export const GGA_CONTROL_TOWER_REASON_RANK: Record<GgaControlTowerReasonBadge, number> = {
+  UEBERFAELLIG: 1,
+  MANGEL: 2, LUEFTUNG_NICHT_BESTANDEN: 2, ELEKTRO_NICHT_BESTANDEN: 2, VDE_NICHT_BESTANDEN: 2,
+  INTERNE_BEANSTANDUNG: 3, BETREIBERBEANSTANDUNG: 3,
   NACHPRUEFUNG: 4, INTERNE_FREIGABE: 5, BETREIBERFREIGABE: 6,
 }
 
-function ggaControlTowerReasons(item: DerivedGgaCabinetStatus): GgaControlTowerReasonBadge[] {
+// GGA-Portal Produktblock 2: exportiert (war zuvor file-lokal), damit sowohl
+// deriveGgaCabinetPresentationStatus() als auch die direkte Aktionswahl
+// (direkteGgaCabinetAktion()) dieselbe, bereits für die Handlungsbedarf-Badges
+// verwendete Gründe-Ableitung wiederverwenden — keine zweite Berechnung.
+export function ggaControlTowerReasons(item: GgaControlTowerCabinetEntry): GgaControlTowerReasonBadge[] {
   const reasons: GgaControlTowerReasonBadge[] = []
   if (item.betriebsstatus === 'UEBERFAELLIG') reasons.push('UEBERFAELLIG')
   if (item.offeneBlocker > 0) reasons.push('MANGEL')
+  if (item.nichtBestandenePruefarten.includes('LUEFTUNG')) reasons.push('LUEFTUNG_NICHT_BESTANDEN')
+  if (item.nichtBestandenePruefarten.includes('ELEKTRO')) reasons.push('ELEKTRO_NICHT_BESTANDEN')
+  if (item.nichtBestandenePruefarten.includes('VDE')) reasons.push('VDE_NICHT_BESTANDEN')
   if (item.nacharbeitErforderlich && item.pruefstatus === 'BEANSTANDET') reasons.push('INTERNE_BEANSTANDUNG')
   if (item.betreiberbeanstandung) reasons.push('BETREIBERBEANSTANDUNG')
   if (item.betriebsstatus === 'NACHPRUEFUNG_ERFORDERLICH') reasons.push('NACHPRUEFUNG')
   if (item.freigabeOffen) reasons.push('INTERNE_FREIGABE')
   if (item.betreiberfreigabeAusstehend) reasons.push('BETREIBERFREIGABE')
   return reasons
+}
+
+// GGA-Portal Produktblock 2: welche Gründe konkrete Prüf-/Freigabearbeit auf
+// der bestehenden Prüfungs-/Abnahmeseite bedeuten (dort werden laut Seite
+// auch Nachprüfung, interne Freigabe UND Betreiberfreigabe angefordert/
+// entschieden — siehe app/(collaboration)/collaboration/cabinets/[id]/
+// pruefung/page.tsx: canRequestBetreiberfreigabe, betreiberstatus). MANGEL
+// bleibt bewusst ausgeschlossen — Blocker werden auf der Schrankseite selbst
+// gelöst (GgaCabinetBlockerList dort, nicht auf /pruefung).
+export function istGgaPruefpfad(gruende: GgaControlTowerReasonBadge[]): boolean {
+  return gruende.some((g) => g === 'UEBERFAELLIG' || g === 'NACHPRUEFUNG' || g === 'INTERNE_FREIGABE' || g === 'INTERNE_BEANSTANDUNG'
+    || g === 'BETREIBERFREIGABE' || g === 'BETREIBERBEANSTANDUNG'
+    || g === 'LUEFTUNG_NICHT_BESTANDEN' || g === 'ELEKTRO_NICHT_BESTANDEN' || g === 'VDE_NICHT_BESTANDEN')
+}
+
+// Direkte Aktion für einen Handlungsbedarf-Eintrag (nur cabinetId + bereits
+// abgeleitete Gründe bekannt, z. B. GgaControlTowerUrgentCabinet).
+export function direkteGgaHandlungsbedarfAktion(cabinetId: string, gruende: GgaControlTowerReasonBadge[]): { href: string; label: string } {
+  return istGgaPruefpfad(gruende)
+    ? { href: `/collaboration/cabinets/${cabinetId}/pruefung`, label: 'Prüfung öffnen' }
+    : { href: `/collaboration/cabinets/${cabinetId}`, label: 'Schrank öffnen' }
+}
+
+// Direkte Aktion für einen vollständigen Schrank-Eintrag (Schrank-Arbeits-
+// liste/-matrix, kein gruende-Kontext vorausgesetzt) — leitet dieselben
+// Gründe über ggaControlTowerReasons() ab, damit beide Funktionen niemals
+// auseinanderlaufen können.
+//
+// GGA-Portal Produktblock 3 Abschnitt 11 (bekannter Fund aus Produktblock 2):
+// betriebsstatus ERSTPRUEFUNG_ERFORDERLICH kann auftreten, bevor lifecycleStage
+// PRUEFUNG_ABNAHME erreicht ist (Beispiel QA-TEST-018.1-001: lifecycleStage
+// noch PLANUNG, aber pruefstatus bereits GEPLANT — kein offener Blocker/
+// keine offene Pflichtaufgabe/kein offener Checklistenpunkt mehr). In diesem
+// Fall lieferte istGgaPruefpfad(ggaControlTowerReasons(...)) bislang `false`
+// (keiner der Gründe-Badges trifft zu), obwohl naechsteAktion bereits
+// eindeutig "Prüfung planen"/"Prüfung durchführen" sagt.
+//
+// Diese beiden Texte erscheinen in deriveCabinetStatus() AUSSCHLIESSLICH,
+// wenn kein Blocker/keine offene Aufgabe/kein offener Checklistenpunkt mehr
+// vorliegt UND die Bestandsaufnahme abgeschlossen ist (siehe naechsteAktion
+// oben) — der einzige eindeutig abgeleitete nächste Schritt ist dann
+// tatsächlich die Prüfung. Die Prüfseite selbst sperrt diesen Zugriff
+// fachlich NICHT: app/.../cabinets/[id]/pruefung/page.tsx zeigt bei noch
+// offener Planung/Umsetzung nur einen Hinweistext (lifecycleWarning), lässt
+// die Seite aber vollständig bedienbar — kein Server-Guard verlangt
+// lifecycleStage === 'PRUEFUNG_ABNAHME'. Diese Erweiterung umgeht also keine
+// fachliche Workflow-Sperre, sie führt nur früher zu einer ohnehin bereits
+// zulässigen Seite. Für alle anderen Fälle (z. B. lifecycleStage BESTAND/
+// PLANUNG mit noch offener Bestandsaufnahme/Aufgabe) bleibt das bisherige
+// Verhalten unverändert (→ Schrankseite).
+export function direkteGgaCabinetAktion(cabinet: GgaControlTowerCabinetEntry): { href: string; label: string } {
+  const gehtZurPruefung = istGgaPruefpfad(ggaControlTowerReasons(cabinet))
+    || cabinet.naechsteAktion === 'Prüfung planen' || cabinet.naechsteAktion === 'Prüfung durchführen'
+  return gehtZurPruefung
+    ? { href: `/collaboration/cabinets/${cabinet.id}/pruefung`, label: 'Prüfung' }
+    : { href: `/collaboration/cabinets/${cabinet.id}`, label: 'Öffnen' }
+}
+
+// Vokabular aus dem Auftrag (GGA-Portal-Weiterentwicklung Abschnitt 5 /
+// Produktblock 2 Abschnitt 7): bei nicht bestandener Prüfart den konkreten
+// nächsten Schritt nennen, statt der generischen naechsteAktion-Fallback-
+// Meldung (z. B. "Maßnahmen abgeschlossen"). Reine UI-Übersetzung von bereits
+// vorhandenen Daten (nichtBestandenePruefarten) — keine neue Statuslogik.
+// Für ALLE anderen Fälle bleibt naechsteAktion (deriveCabinetStatus(),
+// bereits datengetrieben aus echten Blocker-/Aufgaben-/Checklistentiteln)
+// unverändert die Quelle — hier wird nichts zweites berechnet.
+export const GGA_PRUEFART_NAECHSTER_SCHRITT: Record<GgaPruefart, string> = {
+  LUEFTUNG: 'Lüftungsprüfung durchführen',
+  ELEKTRO: 'Elektroprüfung durchführen',
+  VDE: 'VDE-Prüfung durchführen',
+}
+export function naechsterSchrittFuerCabinet(cabinet: Pick<GgaControlTowerCabinetEntry, 'naechsteAktion' | 'nichtBestandenePruefarten'>): string {
+  if (cabinet.nichtBestandenePruefarten.length > 0) {
+    return cabinet.nichtBestandenePruefarten.map((pruefart) => GGA_PRUEFART_NAECHSTER_SCHRITT[pruefart]).join(' · ')
+  }
+  return cabinet.naechsteAktion
+}
+
+// GGA-Portal Produktblock 3/4: direkte Aktion je Handlungsbedarf-/Worklist-
+// Eintrag, abgeleitet aus dem bereits vorhandenen Eintragstyp (REQ-013,
+// deriveGgaProjectWorklist) — verlinkt ausschließlich auf bereits bestehende
+// Seiten/Ankerpunkte der Schrankseite, keine neue Bearbeitungsseite. Immer
+// vollständige Pfade (nicht nur "#anchor"), damit dieselbe Funktion sowohl
+// von der Schrankseite selbst (Produktblock 3) als auch von schrankübergreifenden
+// Seiten wie "Meine Arbeit" (Produktblock 4) verwendet werden kann.
+export function direktAktionFuerWorklistTyp(type: GgaWorklistEntryType, cabinetId: string, bestandsaufnahmeAbgeschlossen: boolean): { href: string; label: string } {
+  switch (type) {
+    case 'MASSNAHME': return { href: `/collaboration/cabinets/${cabinetId}#massnahmen`, label: 'Maßnahme öffnen' }
+    case 'MANGEL': return { href: `/collaboration/cabinets/${cabinetId}#blocker`, label: 'Blocker öffnen' }
+    case 'NAECHSTE_AKTION': return bestandsaufnahmeAbgeschlossen
+      ? { href: `/collaboration/cabinets/${cabinetId}/pruefung`, label: 'Prüfung öffnen' }
+      : { href: `/collaboration/cabinets/${cabinetId}/bestandsaufnahme`, label: 'Bestandsaufnahme öffnen' }
+    default: return { href: `/collaboration/cabinets/${cabinetId}/pruefung`, label: 'Prüfung öffnen' }
+  }
+}
+
+// ── Projekt-/Phasen-Arbeit ohne Schrankbezug (GGA-Portal Produktblock 7) ──
+// Schließt die bekannte Scope-Lücke aus Produktblock 4: CollaborationTask/
+// -Blocker OHNE cabinetId (Projekt- oder Phasenarbeit, z. B. ein Blocker wie
+// "GVS Massname" direkt an einer Projektphase) wurden bislang komplett aus
+// "Meine Arbeit" gefiltert. Dieselbe REQ-013-Grundregel (Kritisch → Über-
+// fällig → Handlungsbedarf → regulär offen, exakt dieselbe tagesUrgency()-
+// Fristigkeit wie bei Schrank-Maßnahmen) wird hier auf den nicht-cabinet-
+// gebundenen Fall angewendet — keine zweite, konkurrierende Prioritäts-
+// Engine. Exportiert (statt Seiten-lokal), weil Abschnitt 13 echtes
+// Verhalten mit konstruierten Fixtures prüft, nicht nur Quelltext.
+export type GgaProjektPhasenTaskInput = {
+  id: string
+  title: string
+  status: string
+  isRequired: boolean
+  dueDate: Date | null
+  cabinetId: string | null
+  stage: { title: string }
+  project: { id: string; projectNumber: string | null; name: string }
+  responsibleMembership: { userId: string } | null
+}
+export type GgaProjektPhasenBlockerInput = {
+  id: string
+  title: string
+  status: string
+  cabinetId: string | null
+  stage: { title: string } | null
+  project: { id: string; projectNumber: string | null; name: string }
+  responsibleMembership: { userId: string } | null
+}
+export type GgaProjektPhasenEntryType = 'PROJEKT_MASSNAHME' | 'PROJEKT_MANGEL'
+export type GgaProjektPhasenWorklistEntry = {
+  id: string
+  type: GgaProjektPhasenEntryType
+  projectId: string
+  projectNumber: string | null
+  projectName: string
+  stageTitle: string | null
+  title: string
+  dueDate: Date | null
+  urgency: GgaWorklistUrgency
+  ueberfaellig: boolean
+  zustaendigkeit: 'MEINE' | 'TEAM'
+  praesentationsStatus: GgaPresentationStatus
+  aktion: { href: string; label: string }
+}
+
+// Abschnitt 7: navigiert ausschließlich zu den bereits bestehenden Projekt-
+// seiten-Ankern (#aufgaben/#blocker, siehe Produktblock 2/5) — keine neue
+// Detailroute nur für Produktblock 7.
+export function direktAktionFuerProjektArbeit(type: GgaProjektPhasenEntryType, projectId: string): { href: string; label: string } {
+  return type === 'PROJEKT_MASSNAHME'
+    ? { href: `/collaboration/projects/${projectId}#aufgaben`, label: 'Aufgabe öffnen' }
+    : { href: `/collaboration/projects/${projectId}#blocker`, label: 'Blocker öffnen' }
+}
+
+// Abschnitt 8: dünne Präsentations-Normalisierung — anders als bei einem GGA-
+// Schrank gibt es kein aggregiertes "Objekt", dessen Gesamtstatus abgeleitet
+// werden könnte; der einzelne Arbeitspunkt IST hier das Objekt. Ein offener
+// Blocker erhält dieselbe Schwere wie ein Schrank-Mangel (KRITISCH); eine
+// überfällige Aufgabe HANDLUNGSBEDARF, eine reguläre Aufgabe IM_PLAN —
+// dasselbe bestehende GgaPresentationStatus-Vokabular, keine neue Statuslogik.
+export function praesentationsStatusFuerProjektArbeit(type: GgaProjektPhasenEntryType, ueberfaellig: boolean): GgaPresentationStatus {
+  if (type === 'PROJEKT_MANGEL') return 'KRITISCH'
+  return ueberfaellig ? 'HANDLUNGSBEDARF' : 'IM_PLAN'
+}
+
+// Abschnitt 3/4/5: eine echte, persistierte responsibleMembershipId ist die
+// einzige zulässige Quelle für "Meine Aufgabe" (Abschnitt 3) — Projekt-
+// mitgliedschaft, Stage-Zugehörigkeit oder sonstige Proxys bleiben bewusst
+// unberücksichtigt. cabinetId ist hier NIE ein Pflichtfilter mehr (Abschnitt
+// 4): task/blocker.cabinetId === null schließt einen sichtbaren, offenen,
+// zugewiesenen Arbeitspunkt nicht mehr aus. Filtert intern selbst nach
+// cabinetId===null + offen-Status, damit die Funktion für sich genommen
+// direkt mit konstruierten Fixtures testbar ist (T1-T12).
+export function deriveGgaProjektPhasenWorklist(
+  tasks: GgaProjektPhasenTaskInput[],
+  blockers: GgaProjektPhasenBlockerInput[],
+  currentUserId: string,
+  now = new Date(),
+): GgaProjektPhasenWorklistEntry[] {
+  const taskEntries: GgaProjektPhasenWorklistEntry[] = tasks
+    .filter((task) => !task.cabinetId && task.isRequired && !['DONE', 'SKIPPED'].includes(task.status))
+    .map((task) => {
+      const { urgency, ueberfaellig } = task.dueDate ? tagesUrgency(task.dueDate, now) : { urgency: 6 as const, ueberfaellig: false }
+      return {
+        id: `task-${task.id}`, type: 'PROJEKT_MASSNAHME' as const,
+        projectId: task.project.id, projectNumber: task.project.projectNumber, projectName: task.project.name,
+        stageTitle: task.stage.title, title: task.title, dueDate: task.dueDate, urgency, ueberfaellig,
+        zustaendigkeit: task.responsibleMembership?.userId === currentUserId ? 'MEINE' as const : 'TEAM' as const,
+        praesentationsStatus: praesentationsStatusFuerProjektArbeit('PROJEKT_MASSNAHME', ueberfaellig),
+        aktion: direktAktionFuerProjektArbeit('PROJEKT_MASSNAHME', task.project.id),
+      }
+    })
+  const blockerEntries: GgaProjektPhasenWorklistEntry[] = blockers
+    .filter((blocker) => !blocker.cabinetId && blocker.status === 'OPEN')
+    .map((blocker) => ({
+      id: `blocker-${blocker.id}`, type: 'PROJEKT_MANGEL' as const,
+      projectId: blocker.project.id, projectNumber: blocker.project.projectNumber, projectName: blocker.project.name,
+      stageTitle: blocker.stage?.title ?? null, title: blocker.title, dueDate: null, urgency: 2 as GgaWorklistUrgency, ueberfaellig: false,
+      zustaendigkeit: blocker.responsibleMembership?.userId === currentUserId ? 'MEINE' as const : 'TEAM' as const,
+      praesentationsStatus: praesentationsStatusFuerProjektArbeit('PROJEKT_MANGEL', false),
+      aktion: direktAktionFuerProjektArbeit('PROJEKT_MANGEL', blocker.project.id),
+    }))
+  return [...taskEntries, ...blockerEntries]
 }
 
 export type GgaControlTowerUrgentCabinet = {
@@ -737,6 +995,16 @@ export type GgaControlTowerUrgentCabinet = {
   betriebsstatusTageBisFaellig: number | null
   naechsteAktion: string
   gruende: GgaControlTowerReasonBadge[]
+  // Wie aktuellerGgaFortschritt() unten — für "Phase · Fortschritt" in der
+  // Handlungsbedarf-Anzeige, ohne dass die UI selbst zwischen den vier
+  // Phasen-Fortschrittsfeldern wählen muss.
+  fortschritt: number | null
+  // Durchgereicht wie oben bei GgaControlTowerCabinetEntry — damit die UI bei
+  // nicht bestandener Prüfart einen spezifischeren "Nächster Schritt" zeigen
+  // kann (z. B. "VDE-Prüfung durchführen") statt nur des generischen
+  // naechsteAktion-Fallbacks (der bei noch unvollständiger Checkliste z. B.
+  // "Maßnahmen abgeschlossen" zeigen kann, unabhängig vom eigentlichen Grund).
+  nichtBestandenePruefarten: GgaPruefart[]
 }
 
 export type GgaControlTowerOverview = {
@@ -744,6 +1012,14 @@ export type GgaControlTowerOverview = {
   gesamt: GgaCabinetControlTowerSummary
   projekte: GgaControlTowerProjectSummary[]
   dringendeSchraenke: GgaControlTowerUrgentCabinet[]
+  // GGA-Portal-Arbeitsoberfläche: dieselben, bereits abgeleiteten Einträge,
+  // die auch dringendeSchraenke speist — hier vollständig (nicht nur die
+  // dringenden), für die projektübergreifende, priorisierte Arbeitsliste auf
+  // /collaboration/my-work (GGA-Portal Produktblock 6: nicht mehr zusätzlich
+  // im Dashboard dupliziert). Keine neue Berechnung, nur zusätzliche
+  // Rückgabe bereits vorhandener Werte. Sortierung: dringend zuerst (deckt
+  // sich mit dringendeSchraenke), sonst alphabetisch nach Kennung.
+  alleSchraenke: GgaControlTowerCabinetEntry[]
 }
 
 export function deriveGgaControlTowerOverview(
@@ -762,7 +1038,7 @@ export function deriveGgaControlTowerOverview(
   const projekte: GgaControlTowerProjectSummary[] = Array.from(byProject.entries()).map(([projectId, projectCabinets]) => {
     const summary = deriveGgaCabinetControlTowerSummary(projectCabinets)
     const first = projectCabinets[0]
-    const dringendeSchraenkeAnzahl = projectCabinets.filter(ggaCabinetIstDringend).length
+    const dringendeSchraenkeAnzahl = projectCabinets.filter(ggaCabinetHatHandlungsbedarf).length
     return { ...summary, projectId, projectNumber: first.projectNumber, projectName: first.projectName, dringendeSchraenkeAnzahl }
   })
 
@@ -780,12 +1056,13 @@ export function deriveGgaControlTowerOverview(
   })
 
   const dringendeSchraenke: GgaControlTowerUrgentCabinet[] = cabinets
-    .filter(ggaCabinetIstDringend)
+    .filter(ggaCabinetHatHandlungsbedarf)
     .map((cabinet) => ({
       cabinetId: cabinet.id, kennung: cabinet.kennung, projectId: cabinet.projectId, projectNumber: cabinet.projectNumber, projectName: cabinet.projectName,
       standort: cabinet.standort, lifecycleStage: cabinet.lifecycleStage, betriebsstatus: cabinet.betriebsstatus,
       betriebsstatusTageBisFaellig: cabinet.betriebsstatusTageBisFaellig, naechsteAktion: cabinet.naechsteAktion,
-      gruende: ggaControlTowerReasons(cabinet),
+      gruende: ggaControlTowerReasons(cabinet), fortschritt: aktuellerGgaFortschritt(cabinet),
+      nichtBestandenePruefarten: cabinet.nichtBestandenePruefarten,
     }))
     .sort((a, b) => {
       const rankA = Math.min(...a.gruende.map((reason) => GGA_CONTROL_TOWER_REASON_RANK[reason]))
@@ -796,7 +1073,29 @@ export function deriveGgaControlTowerOverview(
 
   const aktiveGgaProjekte = Array.from(byProject.keys()).filter((projectId) => activeProjectIds.has(projectId)).length
 
-  return { aktiveGgaProjekte, gesamt, projekte, dringendeSchraenke }
+  const alleSchraenke = [...cabinets].sort((a, b) => {
+    const aDringend = ggaCabinetHatHandlungsbedarf(a) ? 0 : 1
+    const bDringend = ggaCabinetHatHandlungsbedarf(b) ? 0 : 1
+    if (aDringend !== bDringend) return aDringend - bDringend
+    return a.kennung.localeCompare(b.kennung) || a.id.localeCompare(b.id)
+  })
+
+  return { aktiveGgaProjekte, gesamt, projekte, dringendeSchraenke, alleSchraenke }
+}
+
+// GGA-Portal-Weiterentwicklung: reine Anzeige-Auswahl, WELCHER der vier
+// bereits abgeleiteten Fortschrittswerte (bestandsaufnahmeFortschritt/
+// planungsfortschritt/montagefortschritt/abnahmeChecklistFortschritt) zur
+// aktuellen Phase passt — keine neue Berechnung, deriveCabinetStatus()
+// liefert alle vier bereits.
+export function aktuellerGgaFortschritt(status: Pick<DerivedGgaCabinetStatus, 'lifecycleStage' | 'bestandsaufnahmeFortschritt' | 'planungsfortschritt' | 'montagefortschritt' | 'abnahmeChecklistFortschritt'>): number | null {
+  switch (status.lifecycleStage) {
+    case 'BESTAND': return status.bestandsaufnahmeFortschritt
+    case 'PLANUNG': return status.planungsfortschritt
+    case 'UMSETZUNG': return status.montagefortschritt
+    case 'PRUEFUNG_ABNAHME': return status.abnahmeChecklistFortschritt
+    case 'ABGESCHLOSSEN': return 100
+  }
 }
 
 /** Formatiert das Betriebsstatus-Label, inkl. Tage-Countdown wo zutreffend. */
@@ -849,4 +1148,93 @@ export const GGA_EX_ASSESSMENT_LABELS: Record<'NOT_ASSESSED' | 'REQUIRED' | 'NOT
   NOT_ASSESSED: 'Noch nicht bewertet',
   REQUIRED: 'Erforderlich',
   NOT_REQUIRED: 'Nicht erforderlich',
+}
+
+// ── GGA-Portal Produktblock 1+2: geteilte Status-/Ampel-Sprache ──────────
+// Fortschritt (progressPercent/aktuellerGgaFortschritt) und Situation
+// (Status/Ampel) müssen laut Auftrag getrennt bleiben — ein Projekt oder
+// Schrank kann weit fortgeschritten und trotzdem kritisch sein. Dieser Typ
+// und seine Labels/Badge-Klassen sind bewusst NICHT projektspezifisch
+// benannt (ursprünglich GgaProjectPresentationStatus, in Produktblock 2
+// umbenannt) — Produktblock 2 verlangt explizit dieselbe Sprache auch für
+// einzelne Schränke ("Analog zu Produktblock 1", "Gleiche Sprache für
+// Statusfarben, Badges"). Die Ableitungen selbst (deriveGgaProjectPresenta-
+// tionStatus/deriveGgaCabinetPresentationStatus) bleiben getrennt, weil ihre
+// Eingaben fachlich verschieden sind — nur das Ergebnis-Vokabular ist geteilt.
+export type GgaPresentationStatus = 'KRITISCH' | 'HANDLUNGSBEDARF' | 'ACHTUNG' | 'IM_PLAN' | 'ABGESCHLOSSEN'
+
+export const GGA_STATUS_LABELS: Record<GgaPresentationStatus, string> = {
+  KRITISCH: 'Kritisch',
+  HANDLUNGSBEDARF: 'Handlungsbedarf',
+  ACHTUNG: 'Achtung',
+  IM_PLAN: 'Im Plan',
+  ABGESCHLOSSEN: 'Abgeschlossen',
+}
+
+export const GGA_STATUS_BADGE_CLASS: Record<GgaPresentationStatus, string> = {
+  KRITISCH: 'bg-red-50 text-red-700',
+  HANDLUNGSBEDARF: 'bg-orange-100 text-orange-800',
+  ACHTUNG: 'bg-amber-50 text-amber-700',
+  IM_PLAN: 'bg-emerald-50 text-emerald-700',
+  ABGESCHLOSSEN: 'bg-emerald-100 text-emerald-800',
+}
+
+// Arbeitsrelevante Sortierung (Produktblock 2 Abschnitt 10): Kritisch vor
+// Handlungsbedarf vor Achtung vor "normal in Arbeit" (Im Plan) vor
+// Abgeschlossen — der wichtigste Schrank/das wichtigste Projekt steht oben.
+export const GGA_PRESENTATION_STATUS_RANK: Record<GgaPresentationStatus, number> = {
+  KRITISCH: 1, HANDLUNGSBEDARF: 2, ACHTUNG: 3, IM_PLAN: 4, ABGESCHLOSSEN: 5,
+}
+
+// Rangfolge exakt wie im Auftrag (Produktblock 1 Abschnitt 4): KRITISCH
+// schlägt HANDLUNGSBEDARF schlägt ACHTUNG schlägt IM PLAN. ABGESCHLOSSEN nur
+// bei echtem, fachlichem Projektabschluss (project.status === 'COMPLETED',
+// REQ-016) — ausdrücklich NICHT allein aus 100 % Fortschritt abgeleitet, denn
+// progressPercent kann 100 erreichen, während z. B. die Betreiberfreigabe noch
+// aussteht. Kombiniert nur bereits vorhandene, andernorts abgeleitete Signale
+// (project.healthStatus aus calculateProjectHealth()/projectBlocker,
+// dringendeSchraenkeAnzahl aus ggaCabinetHatHandlungsbedarf()) — keine neue
+// Statuslogik. Absichtlich abhängigkeitsfrei (kein Prisma-Enum-Import) — der
+// Aufrufer übergibt bereits das Boolean/den String-Wert.
+export function deriveGgaProjectPresentationStatus(input: {
+  abgeschlossen: boolean
+  healthStatus: 'RED' | 'YELLOW' | 'GREEN'
+  dringendeSchraenkeAnzahl: number
+}): GgaPresentationStatus {
+  if (input.abgeschlossen) return 'ABGESCHLOSSEN'
+  if (input.healthStatus === 'RED') return 'KRITISCH'
+  if (input.dringendeSchraenkeAnzahl > 0) return 'HANDLUNGSBEDARF'
+  if (input.healthStatus === 'YELLOW') return 'ACHTUNG'
+  return 'IM_PLAN'
+}
+
+// GGA-Portal Produktblock 2 (Abschnitt 6/10): dieselbe Rangfolge, jetzt für
+// einen einzelnen Schrank. Wiederverwendet ausschließlich bereits vorhandene
+// Ableitungen: ggaControlTowerReasons() (dieselben Gründe wie die
+// Handlungsbedarf-Badges) und GGA_CONTROL_TOWER_REASON_RANK (dieselbe
+// Schweregrad-Einstufung wie die Sortierung der dringenden Schränke) — kein
+// zweites, paralleles Cabinet-State-Machine. Ränge 1-3 (ÜBERFÄLLIG, MANGEL/
+// Prüfart NICHT_BESTANDEN, Beanstandung) gelten als "kritisch" — dieselbe
+// Schwere, die dort optisch zuerst gruppiert wird. Ränge 4-6 (Nachprüfung,
+// interne/Betreiberfreigabe) gelten als "Handlungsbedarf". Ohne jeden Grund,
+// aber mit betriebsstatus 'BALD_FAELLIG' (ein Signal, das ggaCabinetHat-
+// Handlungsbedarf() bewusst NICHT einschließt, weil es noch keine Aktion
+// erfordert) gilt als "Achtung". abgeschlossen wird ERST NACH den
+// Kritisch/Handlungsbedarf-Prüfungen ausgewertet: offeneBlocker fließt NICHT
+// in lifecycleStage ein (siehe deriveCabinetStatus oben), ein bereits
+// lifecycleStage-technisch abgeschlossener Schrank kann also trotzdem einen
+// nachträglich erfassten, offenen Blocker haben — der muss weiterhin als
+// "Kritisch" erscheinen statt als "Abgeschlossen" zu gelten. (Eine erneut
+// überfällige Wiederholungsprüfung hingegen lässt derivePruefstatus() bereits
+// selbst von 'BESTANDEN' auf 'UEBERFAELLIG' kippen, wodurch lifecycleStage
+// automatisch von ABGESCHLOSSEN zurück auf PRUEFUNG_ABNAHME wechselt — dort
+// deckt der normale ÜBERFÄLLIG-Fall das bereits ab, ohne dass abgeschlossen
+// dabei je true wäre.)
+export function deriveGgaCabinetPresentationStatus(cabinet: GgaControlTowerCabinetEntry): GgaPresentationStatus {
+  const gruende = ggaControlTowerReasons(cabinet)
+  if (gruende.some((g) => GGA_CONTROL_TOWER_REASON_RANK[g] <= 3)) return 'KRITISCH'
+  if (gruende.length > 0) return 'HANDLUNGSBEDARF'
+  if (cabinet.betriebsstatus === 'BALD_FAELLIG') return 'ACHTUNG'
+  if (cabinet.abgeschlossen) return 'ABGESCHLOSSEN'
+  return 'IM_PLAN'
 }

@@ -8,9 +8,10 @@ import {
   getStageCompletionBlocker, isCollaborationProjectStatusTransitionAllowed, isCollaborationStageTransitionAllowed,
 } from '@/lib/collaboration/project-workflow'
 import {
-  GGA_FIVE_PHASE_PLAN, GGA_STAGE_ABNAHME, deriveCabinetStatus, ggaCabinetBereitFuerInterneFreigabe, isCabinetReadyForStage,
+  GGA_FIVE_PHASE_PLAN, GGA_STAGE_ABNAHME, deriveCabinetStatus, ggaCabinetBereitFuerInterneFreigabe, isCabinetReadyForStage, GGA_PRUEFART_LABELS,
   type DerivedGgaCabinetStatus, type GgaCabinetSnapshot,
 } from '@/lib/collaboration/cabinet-workflow'
+import { COLLABORATION_PROJECT_STATUS_LABELS } from '@/types/enums'
 
 // GGA-05.1: Re-Export statt eigener Definition — kanonische Quelle ist
 // cabinet-workflow.ts (siehe dortigen Kommentar). Bestehende Aufrufer
@@ -89,7 +90,7 @@ export async function getCollaborationPhase2Project(projectId: string) {
   const project = await prisma.collaborationProject.findFirst({
     where: { id: projectId, active: true, deletedAt: null },
     select: {
-      id: true, name: true, projectNumber: true, status: true,
+      id: true, name: true, projectNumber: true, status: true, location: true, building: true, floor: true, area: true,
       memberships: { where: { active: true }, select: { id: true, role: true, user: { select: { firstName: true, lastName: true } } } },
       blockers: { where: { status: 'OPEN' }, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, status: true } },
       stages: { orderBy: { sequence: 'asc' }, select: {
@@ -107,6 +108,14 @@ export async function getCollaborationPhase2Project(projectId: string) {
   const snapshots = project.stages.map((stage) => attachCabinetReadiness({ ...stage, weight: Number(stage.weight), dependencies: stage.dependencies, blockers: stage.blockers, tasks: stage.tasks, checklistItems: stage.checklistItems, approvals: stage.approvals }, cabinetReadiness))
   const stages = deriveStageStatuses(snapshots)
   return { ...project, role: membership.role, stages, healthStatus: project.blockers[0] ? 'RED' as const : calculateProjectHealth(snapshots), progressPercent: calculateProjectProgress(snapshots), nextAction: project.blockers[0]?.title ?? deriveNextAction(stages) }
+}
+
+// GGA-Portal Produktblock 4: die einzige zusätzliche Datenquelle, die "Meine
+// Arbeit" braucht, um eigene von Team-/Projektarbeit zu unterscheiden — reine
+// Weitergabe der bereits vorhandenen Session-userId, keine neue Zuordnung.
+export async function getCurrentCollaborationUserId() {
+  const { userId } = await requireCollaborationSession()
+  return userId
 }
 
 export async function getVisibleCollaborationTasks(filters?: { projectId?: string; status?: string; priority?: string; overdue?: boolean; mine?: boolean }) {
@@ -129,7 +138,7 @@ export async function getVisibleCollaborationTasks(filters?: { projectId?: strin
     select: { project: { select: { id: true, name: true } } },
   })
   const projectIds = projects.map(({ project }) => project.id)
-  return prisma.collaborationTask.findMany({ where: { projectId: filters?.projectId ? { equals: filters.projectId } : { in: projectIds }, ...(filters?.status ? { status: filters.status } : {}), ...(filters?.priority ? { priority: filters.priority } : {}), ...(filters?.mine ? { responsibleMembership: { userId } } : {}), ...(filters?.overdue ? { dueDate: { lt: new Date() }, status: { notIn: ['DONE', 'SKIPPED'] } } : {}) } as never, orderBy: [{ dueDate: 'asc' }, { sequence: 'asc' }], include: { project: { select: { id: true, name: true } }, stage: { select: { title: true } }, responsibleMembership: { select: { user: { select: { firstName: true, lastName: true } } } } } })
+  return prisma.collaborationTask.findMany({ where: { projectId: filters?.projectId ? { equals: filters.projectId } : { in: projectIds }, ...(filters?.status ? { status: filters.status } : {}), ...(filters?.priority ? { priority: filters.priority } : {}), ...(filters?.mine ? { responsibleMembership: { userId } } : {}), ...(filters?.overdue ? { dueDate: { lt: new Date() }, status: { notIn: ['DONE', 'SKIPPED'] } } : {}) } as never, orderBy: [{ dueDate: 'asc' }, { sequence: 'asc' }], include: { project: { select: { id: true, name: true, projectNumber: true } }, stage: { select: { title: true } }, responsibleMembership: { select: { userId: true, user: { select: { firstName: true, lastName: true } } } } } })
 }
 
 export async function getVisibleCollaborationApprovals() {
@@ -474,7 +483,7 @@ export async function getVisibleCollaborationBlockers(filters?: { projectId?: st
   return prisma.collaborationBlocker.findMany({
     where: { projectId: filters?.projectId ? { equals: filters.projectId } : { in: projectIds }, ...(filters?.status ? { status: filters.status } : {}) } as never,
     orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
-    include: { project: { select: { id: true, name: true } }, stage: { select: { title: true } } },
+    include: { project: { select: { id: true, name: true, projectNumber: true } }, stage: { select: { title: true } }, responsibleMembership: { select: { userId: true, user: { select: { firstName: true, lastName: true } } } } },
   })
 }
 
@@ -509,24 +518,68 @@ export async function getVisibleCollaborationMemberships(filters?: { projectId?:
 }
 
 // ── Letzte Aktivitäten (abgeleitet, keine eigene Tabelle) ──────
+// GGA-Portal Produktblock 5 Abschnitt 6/7: erweitert um Ereignistypen, für
+// die bereits zuverlässige, tatsächlich persistierte Zeitstempel existieren
+// (GgaCabinet.createdAt, GgaCabinetPruefnachweis.createdAt, Collaboration-
+// Document.createdAt, CollaborationBlocker.createdAt, CollaborationApproval.
+// requestedAt) bzw. ein bereits bestehender Audit-Log-Eintrag (STATUS_CHANGE
+// auf collaboration_project_stage/collaboration_project — "Phase gestartet"/
+// "Projektstatus geändert" haben KEIN eigenes Zeitstempelfeld im Schema,
+// dafür aber bereits einen echten, unveränderlichen AuditLog-Eintrag).
+// KEINE neue Tabelle, keine erfundenen Ereignisse — nur zusätzliche, bereits
+// vorhandene Quellen für dieselbe abgeleitete Liste.
 export async function getRecentCollaborationActivity(projectId: string, limit = 10) {
   const { userId } = await requireCollaborationSession()
   await requireInternalCollaborationProjectAccess(userId, projectId)
 
-  const [tasks, checklistItems, blockers, approvals, stages] = await Promise.all([
+  const stages = await prisma.collaborationProjectStage.findMany({ where: { projectId }, select: { id: true, title: true, completedAt: true } })
+  const stageIds = stages.map((stage) => stage.id)
+  const stageTitleById = new Map(stages.map((stage) => [stage.id, stage.title]))
+
+  const [tasks, checklistItems, blockers, approvals, cabinets, pruefnachweise, documents, stageStatusChanges, projectStatusChanges] = await Promise.all([
     prisma.collaborationTask.findMany({ where: { projectId, completedAt: { not: null } }, orderBy: { completedAt: 'desc' }, take: limit, select: { id: true, title: true, status: true, completedAt: true, stage: { select: { title: true } } } }),
     prisma.collaborationChecklistItem.findMany({ where: { projectId, completed: true, completedAt: { not: null } }, orderBy: { completedAt: 'desc' }, take: limit, select: { id: true, title: true, completedAt: true, stage: { select: { title: true } } } }),
-    prisma.collaborationBlocker.findMany({ where: { projectId, status: 'RESOLVED', resolvedAt: { not: null } }, orderBy: { resolvedAt: 'desc' }, take: limit, select: { id: true, title: true, resolvedAt: true, stage: { select: { title: true } } } }),
-    prisma.collaborationApproval.findMany({ where: { projectId, decidedAt: { not: null } }, orderBy: { decidedAt: 'desc' }, take: limit, select: { id: true, status: true, decidedAt: true, stage: { select: { title: true } } } }),
-    prisma.collaborationProjectStage.findMany({ where: { projectId, completedAt: { not: null } }, orderBy: { completedAt: 'desc' }, take: limit, select: { id: true, title: true, completedAt: true } }),
+    // Alle Blocker (nicht nur RESOLVED) — liefert sowohl "erstellt" (createdAt,
+    // immer vorhanden) als auch "gelöst" (resolvedAt, falls gesetzt) aus derselben Zeile.
+    prisma.collaborationBlocker.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: limit, select: { id: true, title: true, createdAt: true, resolvedAt: true, stage: { select: { title: true } } } }),
+    // Alle Freigaben (nicht nur entschiedene) — liefert "angefordert" (requestedAt,
+    // immer vorhanden) und "entschieden" (decidedAt, falls gesetzt) aus derselben Zeile.
+    prisma.collaborationApproval.findMany({ where: { projectId }, orderBy: { requestedAt: 'desc' }, take: limit, select: { id: true, status: true, requestedAt: true, decidedAt: true, stage: { select: { title: true } } } }),
+    prisma.ggaCabinet.findMany({ where: { projectId, deletedAt: null }, orderBy: { createdAt: 'desc' }, take: limit, select: { id: true, kennung: true, createdAt: true } }),
+    prisma.ggaCabinetPruefnachweis.findMany({ where: { cabinet: { projectId } }, orderBy: { createdAt: 'desc' }, take: limit, select: { id: true, pruefart: true, ergebnis: true, createdAt: true, cabinet: { select: { kennung: true } } } }),
+    prisma.collaborationDocument.findMany({ where: { projectId, deletedAt: null }, orderBy: { createdAt: 'desc' }, take: limit, select: { id: true, originalName: true, createdAt: true } }),
+    stageIds.length
+      ? prisma.auditLog.findMany({ where: { entityType: 'collaboration_project_stage', entityId: { in: stageIds }, action: 'STATUS_CHANGE' }, orderBy: { createdAt: 'desc' }, take: limit * 2, select: { id: true, entityId: true, newValue: true, createdAt: true } })
+      : Promise.resolve([]),
+    prisma.auditLog.findMany({ where: { entityType: 'collaboration_project', entityId: projectId, action: 'STATUS_CHANGE' }, orderBy: { createdAt: 'desc' }, take: limit, select: { id: true, newValue: true, createdAt: true } }),
   ])
 
   const events = [
     ...tasks.map((task) => ({ id: `task-${task.id}`, at: task.completedAt as Date, label: `Aufgabe „${task.title}“ ${task.status === 'SKIPPED' ? 'übersprungen' : 'erledigt'}`, stage: task.stage.title })),
     ...checklistItems.map((item) => ({ id: `check-${item.id}`, at: item.completedAt as Date, label: `Checklistenpunkt „${item.title}“ erledigt`, stage: item.stage.title })),
-    ...blockers.map((blocker) => ({ id: `blocker-${blocker.id}`, at: blocker.resolvedAt as Date, label: `Blocker „${blocker.title}“ gelöst`, stage: blocker.stage?.title ?? null })),
-    ...approvals.map((approval) => ({ id: `approval-${approval.id}`, at: approval.decidedAt as Date, label: `Freigabe ${approval.status === 'APPROVED' ? 'genehmigt' : 'abgelehnt'}`, stage: approval.stage.title })),
-    ...stages.map((stage) => ({ id: `stage-${stage.id}`, at: stage.completedAt as Date, label: `Phase „${stage.title}“ abgeschlossen`, stage: stage.title })),
+    ...blockers.map((blocker) => ({ id: `blocker-created-${blocker.id}`, at: blocker.createdAt, label: `Blocker „${blocker.title}“ erstellt`, stage: blocker.stage?.title ?? null })),
+    ...blockers.filter((blocker) => blocker.resolvedAt).map((blocker) => ({ id: `blocker-resolved-${blocker.id}`, at: blocker.resolvedAt as Date, label: `Blocker „${blocker.title}“ gelöst`, stage: blocker.stage?.title ?? null })),
+    ...approvals.map((approval) => ({ id: `approval-requested-${approval.id}`, at: approval.requestedAt, label: `Freigabe „${approval.stage.title}“ angefordert`, stage: approval.stage.title })),
+    ...approvals.filter((approval) => approval.decidedAt).map((approval) => ({ id: `approval-decided-${approval.id}`, at: approval.decidedAt as Date, label: `Freigabe ${approval.status === 'APPROVED' ? 'genehmigt' : 'abgelehnt'}`, stage: approval.stage.title })),
+    ...stages.filter((stage) => stage.completedAt).map((stage) => ({ id: `stage-completed-${stage.id}`, at: stage.completedAt as Date, label: `Phase „${stage.title}“ abgeschlossen`, stage: stage.title })),
+    ...cabinets.map((cabinet) => ({ id: `cabinet-${cabinet.id}`, at: cabinet.createdAt, label: `Schrank „${cabinet.kennung}“ angelegt`, stage: null })),
+    ...pruefnachweise.map((record) => ({
+      id: `pruefnachweis-${record.id}`, at: record.createdAt,
+      label: `Prüfnachweis ${GGA_PRUEFART_LABELS[record.pruefart]} ${record.ergebnis === 'BESTANDEN' ? 'bestanden' : record.ergebnis === 'NICHT_BESTANDEN' ? 'nicht bestanden' : 'erfasst'} (Schrank „${record.cabinet.kennung}“)`,
+      stage: null,
+    })),
+    ...documents.map((doc) => ({ id: `document-${doc.id}`, at: doc.createdAt, label: `Dokument „${doc.originalName}“ hinzugefügt`, stage: null })),
+    // "Phase gestartet" hat kein eigenes Zeitstempelfeld im Schema (actualStart
+    // existiert, wird aber von keinem Codepfad je gesetzt) — deshalb aus dem
+    // bereits bestehenden STATUS_CHANGE-Audit-Log-Eintrag abgeleitet, gefiltert
+    // auf den Zielstatus IN_PROGRESS (newValue ist bereits JSON, kein Parsing nötig).
+    ...stageStatusChanges
+      .filter((entry) => (entry.newValue as { status?: string } | null)?.status === 'IN_PROGRESS')
+      .map((entry) => ({ id: `stage-started-${entry.id}`, at: entry.createdAt, label: `Phase „${stageTitleById.get(entry.entityId) ?? '–'}“ gestartet`, stage: stageTitleById.get(entry.entityId) ?? null })),
+    ...projectStatusChanges.map((entry) => {
+      const status = (entry.newValue as { status?: keyof typeof COLLABORATION_PROJECT_STATUS_LABELS } | null)?.status
+      return { id: `project-status-${entry.id}`, at: entry.createdAt, label: `Projektstatus geändert zu „${status ? COLLABORATION_PROJECT_STATUS_LABELS[status] : '–'}“`, stage: null }
+    }),
   ]
   return events.sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, limit)
 }

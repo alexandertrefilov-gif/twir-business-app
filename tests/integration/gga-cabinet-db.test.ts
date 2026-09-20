@@ -338,6 +338,30 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
     await db.collaborationProject.delete({ where: { id: ctProject.id } })
   })
 
+  // GGA-Portal-Weiterentwicklung: ein NICHT_BESTANDEN-Prüfnachweis (real über
+  // die bestehende recordGgaCabinetPruefnachweis()-Funktion erfasst) macht das
+  // Cabinet im Control Tower real sichtbar als Handlungsbedarf — real gegen
+  // die DB geprüft (nicht nur die reine Aggregationsfunktion), da
+  // getGgaControlTowerOverview() dafür einen echten, gebündelten
+  // Prüfnachweis-Query ausführt.
+  it('REQ-014 + GGA-Portal: ein Cabinet mit NICHT_BESTANDEN-Prüfnachweis (VDE) erscheint real im Control Tower als Handlungsbedarf mit dem passenden Grund', async () => {
+    asManager()
+    const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-CT-VDE`, bezeichnung: 'VDE nicht bestanden' })
+    await cabinetService.recordGgaCabinetPruefnachweis(cabinet.id, 'VDE', 'NICHT_BESTANDEN', {})
+
+    const overview = await cabinetService.getGgaControlTowerOverview()
+    const eintrag = overview.dringendeSchraenke.find((c) => c.cabinetId === cabinet.id)
+    expect(eintrag).toBeDefined()
+    expect(eintrag?.gruende).toContain('VDE_NICHT_BESTANDEN')
+
+    const inWorklist = overview.alleSchraenke.find((c) => c.id === cabinet.id)
+    expect(inWorklist?.nichtBestandenePruefarten).toEqual(['VDE'])
+
+    await db.ggaCabinetPruefnachweis.deleteMany({ where: { cabinetId: cabinet.id } })
+    await db.collaborationChecklistItem.deleteMany({ where: { cabinetId: cabinet.id } })
+    await db.ggaCabinet.delete({ where: { id: cabinet.id } })
+  })
+
   // ── GGA-04.1: Security-Fix — OPERATOR darf keine internen Projekt-/GGA-Lesedaten erhalten ──
   describe('GGA-04.1: OPERATOR-Ausschluss von internen Lesezugriffen', () => {
     it('A) eine berechtigte interne Rolle (COLLAB_MANAGER) erhält weiterhin das volle interne Projektdetail', async () => {
@@ -790,6 +814,43 @@ describe.skipIf(!RUN_INTEGRATION)('GGA-Cabinet-Foundation — Datenbankintegrati
       const approval = await phase2Service.requestCollaborationApproval(stagePlanungId)
       expect(approval.status).toBe('REQUESTED')
       await db.collaborationApproval.deleteMany({ where: { id: approval.id } })
+    })
+  })
+
+  // ── GGA-Portal Produktblock 4: "Meine Arbeit" — verantwortlichUserId real ──
+  // getVisibleCollaborationTasks()/getVisibleCollaborationBlockers() wurden
+  // additiv um responsibleMembership.userId erweitert (zuvor nur der
+  // Anzeigename). Real gegen die DB geprüft, weil sich hier das tatsächliche
+  // Service-/Select-Verhalten geändert hat (Abschnitt 19).
+  describe('GGA-Portal Produktblock 4: getVisibleCollaborationTasks/-Blockers liefern responsibleMembership.userId real aus der DB', () => {
+    it('eine cabinet-gebundene, dem Manager zugewiesene Aufgabe/Blocker liefert userId === managerUserId, unzugewiesene bleiben null', async () => {
+      asManager()
+      const cabinet = await cabinetService.createGgaCabinet(projectAId, { kennung: `${marker}-PB4-01`, bezeichnung: 'Meine Arbeit Testschrank' })
+      const zugewiesen = await db.collaborationTask.create({
+        data: { projectId: projectAId, stageId: stagePlanungId, cabinetId: cabinet.id, title: `${marker}-PB4-Task-zugewiesen`, isRequired: true, status: 'TODO', responsibleMembershipId: membershipManagerId },
+      })
+      const unzugewiesen = await db.collaborationTask.create({
+        data: { projectId: projectAId, stageId: stagePlanungId, cabinetId: cabinet.id, title: `${marker}-PB4-Task-frei`, isRequired: true, status: 'TODO' },
+      })
+      const blockerZugewiesen = await db.collaborationBlocker.create({
+        data: { projectId: projectAId, cabinetId: cabinet.id, title: `${marker}-PB4-Blocker-zugewiesen`, status: 'OPEN', responsibleMembershipId: membershipManagerId },
+      })
+
+      const tasks = await phase2Service.getVisibleCollaborationTasks({ projectId: projectAId })
+      const gefundenZugewiesen = tasks.find((t) => t.id === zugewiesen.id)
+      const gefundenUnzugewiesen = tasks.find((t) => t.id === unzugewiesen.id)
+      expect(gefundenZugewiesen?.responsibleMembership?.userId).toBe(managerUserId)
+      expect(gefundenZugewiesen?.project.projectNumber).toBe(`${marker}-A`)
+      expect(gefundenUnzugewiesen?.responsibleMembership).toBeNull()
+
+      const blockers = await phase2Service.getVisibleCollaborationBlockers({ projectId: projectAId, status: 'OPEN' })
+      const gefundenerBlocker = blockers.find((b) => b.id === blockerZugewiesen.id)
+      expect(gefundenerBlocker?.responsibleMembership?.userId).toBe(managerUserId)
+      expect(gefundenerBlocker?.cabinetId).toBe(cabinet.id)
+
+      await db.collaborationBlocker.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.collaborationTask.deleteMany({ where: { cabinetId: cabinet.id } })
+      await db.ggaCabinet.deleteMany({ where: { id: cabinet.id } })
     })
   })
 })

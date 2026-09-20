@@ -64,7 +64,7 @@ const projectSelect = {
   plannedStart: true,
   plannedEnd: true,
   stages: { orderBy: { sequence: 'asc' as const }, select: stageSelect },
-  blockers: { where: { status: 'OPEN' as const }, orderBy: { createdAt: 'asc' as const }, select: { id: true, title: true, status: true } },
+  blockers: { where: { status: 'OPEN' as const }, orderBy: { createdAt: 'asc' as const }, select: { id: true, title: true, status: true, cabinetId: true } },
 } as const
 
 type ProjectRow = Prisma.CollaborationProjectGetPayload<{ select: typeof projectSelect }>
@@ -91,6 +91,12 @@ function toProjectView(project: ProjectRow, role?: string) {
     progressPercent: calculateProjectProgress(stages),
     nextAction: projectBlocker?.title ?? deriveNextAction(derivedStages),
     stages: derivedStages,
+    // GGA-Portal Produktblock 1: wie viele der offenen Blocker KEINEM
+    // GGA-Schrank zugeordnet sind (cabinetId null) — bereits durch obiges
+    // blockers-Select geladen, hier nur zusätzlich gezählt. Damit kann die
+    // Projektmatrix einen "Kritisch"-Status ehrlich einem projektweiten
+    // Blocker zuschreiben, statt ihn mit einem GGA-Schrank-Grund zu vermischen.
+    offeneProjektweiteBlocker: project.blockers.filter((blocker) => !blocker.cabinetId).length,
   }
 }
 

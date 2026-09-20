@@ -1,9 +1,16 @@
 import Link from 'next/link'
 import { handleCollaborationPageError } from '@/lib/auth/collaboration-guards'
-import { getGgaCabinetDetail, getGgaCabinetAuditHistory, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'
+import { getGgaCabinetDetail, getGgaCabinetAuditHistory, getGgaCabinetPruefnachweisOverview, cabinetEditorRoles } from '@/lib/services/gga-cabinet.service'
 import { editorRoles, getVisibleCollaborationMemberships } from '@/lib/services/collaboration-phase2.service'
 import { GgaCabinetBlockerList } from '@/components/collaboration/GgaCabinetBlockerList'
-import { GGA_EX_ASSESSMENT_LABELS, GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS, formatGgaBetriebsstatusLabel, GGA_BETRIEBSSTATUS_BADGE_CLASS } from '@/lib/collaboration/cabinet-workflow'
+import {
+  GGA_EX_ASSESSMENT_LABELS, GGA_LIFECYCLE_STAGE_LABELS, GGA_BETREIBERSTATUS_LABELS, formatGgaBetriebsstatusLabel, GGA_BETRIEBSSTATUS_BADGE_CLASS,
+  GGA_STATUS_LABELS, GGA_STATUS_BADGE_CLASS, GGA_PRUEFART_LABELS, GGA_PRUEFSTATUS_LABELS, GGA_CONTROL_TOWER_REASON_LABELS, GGA_PRUEFART_NAECHSTER_SCHRITT,
+  deriveGgaCabinetPresentationStatus, naechsterSchrittFuerCabinet, direkteGgaCabinetAktion, aktuellerGgaFortschritt, deriveGgaProjectWorklist,
+  direktAktionFuerWorklistTyp,
+  type GgaControlTowerCabinetEntry, type GgaControlTowerReasonBadge, type GgaPruefart, type GgaWorklistCabinetInput,
+  type GgaCabinetPruefstatus, type GgaCabinetBetreiberstatus,
+} from '@/lib/collaboration/cabinet-workflow'
 import { GgaCabinetSollIstComparison } from '@/components/collaboration/GgaCabinetSollIstComparison'
 import { GgaCabinetTechnicalForm } from '@/components/collaboration/GgaCabinetTechnicalForm'
 import { GgaCabinetDocumentUpload } from '@/components/collaboration/GgaCabinetDocumentUpload'
@@ -41,6 +48,44 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+// Produktblock 3 Abschnitt 3: rein visuelle Übersetzung der bereits
+// bestehenden, linearen GgaCabinetLifecycleStage-Reihenfolge (dieselben fünf
+// Schlüssel/Labels wie GGA_LIFECYCLE_STAGE_LABELS) in ✓/●/○/! — keine neue
+// State-Machine, nur ein Index-Vergleich mit der bereits abgeleiteten
+// lifecycleStage.
+const LIFECYCLE_ORDER = Object.keys(GGA_LIFECYCLE_STAGE_LABELS) as (keyof typeof GGA_LIFECYCLE_STAGE_LABELS)[]
+function lifecycleSymbol(step: keyof typeof GGA_LIFECYCLE_STAGE_LABELS, current: keyof typeof GGA_LIFECYCLE_STAGE_LABELS, blockedAtCurrent: boolean): { symbol: string; className: string } {
+  const stepIndex = LIFECYCLE_ORDER.indexOf(step)
+  const currentIndex = LIFECYCLE_ORDER.indexOf(current)
+  if (stepIndex < currentIndex) return { symbol: '✓', className: 'text-emerald-700' }
+  if (stepIndex === currentIndex) {
+    if (current === 'ABGESCHLOSSEN') return { symbol: '✓', className: 'text-emerald-700' }
+    return blockedAtCurrent ? { symbol: '!', className: 'text-red-700' } : { symbol: '●', className: 'text-blue-700' }
+  }
+  return { symbol: '○', className: 'text-stone-400' }
+}
+
+// Produktblock 3 Abschnitt 8: Freigabekette rein aus bereits vorhandenen,
+// abgeleiteten Feldern (pruefstatus/betreiberstatus/freigabeOffen) —
+// keine neue Freigabelogik, nur eine Text-/Symbol-Übersetzung.
+function interneFreigabeStatus(status: { pruefstatus: GgaCabinetPruefstatus; freigabeOffen: boolean }): { symbol: string; text: string } {
+  switch (status.pruefstatus) {
+    case 'BESTANDEN': return { symbol: '✓', text: 'Freigegeben' }
+    case 'BEANSTANDET': return { symbol: '!', text: 'Beanstandet' }
+    case 'GEPLANT': return { symbol: '●', text: 'Angefordert, ausstehend' }
+    case 'UEBERFAELLIG': return { symbol: '!', text: 'Prüfung überfällig' }
+    default: return { symbol: '○', text: status.freigabeOffen ? 'Noch nicht angefordert' : 'Noch nicht möglich' }
+  }
+}
+function betreiberfreigabeStatus(status: { betreiberstatus: GgaCabinetBetreiberstatus; pruefstatus: GgaCabinetPruefstatus }): { symbol: string; text: string } {
+  switch (status.betreiberstatus) {
+    case 'ERTEILT': return { symbol: '✓', text: 'Erteilt' }
+    case 'BEANSTANDET': return { symbol: '!', text: 'Beanstandet' }
+    case 'AUSSTEHEND': return { symbol: '●', text: 'Ausstehend' }
+    default: return { symbol: '○', text: status.pruefstatus === 'BESTANDEN' ? 'Noch nicht angefordert' : 'Noch nicht möglich' }
+  }
+}
+
 export default async function GgaCabinetDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   let cabinet: Awaited<ReturnType<typeof getGgaCabinetDetail>>
@@ -50,9 +95,12 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
     handleCollaborationPageError(error)
   }
 
-  const [memberships, history] = await Promise.all([
+  const [memberships, history, pruefnachweisOverview] = await Promise.all([
     getVisibleCollaborationMemberships({ projectId: cabinet.projectId }),
     getGgaCabinetAuditHistory(id),
+    // REQ-018.1: dieselbe, bereits von /pruefung genutzte Übersichtsfunktion
+    // — keine zweite Prüfnachweis-Ableitung.
+    getGgaCabinetPruefnachweisOverview(id),
   ])
 
   const canEdit = (cabinetEditorRoles as readonly string[]).includes(cabinet.role)
@@ -62,29 +110,191 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
   // "Beheben"-Buttons folgt exakt der tatsächlichen Berechtigung, keine eigene Rollenliste.
   const canResolveBlockers = (editorRoles as readonly string[]).includes(cabinet.role)
 
+  const standort = [cabinet.gebaeude, cabinet.ebene, cabinet.raumbezeichnung].filter(Boolean).join(' · ') || null
+  const nichtBestandenePruefarten: GgaPruefart[] = pruefnachweisOverview
+    .filter((entry) => entry.current?.ergebnis === 'NICHT_BESTANDEN')
+    .map((entry) => entry.pruefart)
+
+  // Produktblock 3 Abschnitt 10 (SSOT): derselbe GgaControlTowerCabinetEntry-
+  // Zuschnitt wie im Dashboard/in der Projektmatrix (REQ-014) — dieselben,
+  // bereits zentralisierten Funktionen liefern für denselben Schrank
+  // garantiert denselben Status/nächsten Schritt/dieselbe Direktaktion.
+  const controlTowerEntry: GgaControlTowerCabinetEntry = {
+    id: cabinet.id, kennung: cabinet.kennung, standort,
+    projectId: cabinet.projectId, projectNumber: cabinet.project.projectNumber, projectName: cabinet.project.name,
+    nichtBestandenePruefarten,
+    ...cabinet.status,
+  }
+  const presentationStatus = deriveGgaCabinetPresentationStatus(controlTowerEntry)
+  const naechsterSchritt = naechsterSchrittFuerCabinet(controlTowerEntry)
+  const direktAktion = direkteGgaCabinetAktion(controlTowerEntry)
+  const fortschritt = aktuellerGgaFortschritt(controlTowerEntry)
+  // "!" am aktuellen Lifecycle-Schritt bei denselben Signalen, die auch
+  // presentationStatus auf KRITISCH setzen (Blocker/Nacharbeit/Prüfart nicht
+  // bestanden) — dieselbe Schwere, konsistent zum Status-Badge oben.
+  const lifecycleBlockedAtCurrent = cabinet.status.offeneBlocker > 0 || cabinet.status.nacharbeitErforderlich || nichtBestandenePruefarten.length > 0
+
+  // Handlungsbedarf (Produktblock 3 Abschnitt 4): REQ-013 (deriveGgaProject-
+  // Worklist) liefert bereits granulare, konkrete offene Punkte (Maßnahme/
+  // Mangel/Beanstandung/Überfällig/Nachprüfung/Freigabe) für EIN Cabinet —
+  // hier als Ein-Element-Liste aufgerufen, keine zweite Ableitung. Prüfart-
+  // Ausfälle (REQ-018.1) kommen separat dazu, weil sie außerhalb von
+  // REQ-013 liegen (siehe GgaControlTowerCabinetEntry-Kommentar oben).
+  const openRequiredTasks = cabinet.tasks.filter((t) => t.isRequired && !['DONE', 'SKIPPED'].includes(t.status))
+  const openBlockers = cabinet.blockers.filter((b) => b.status === 'OPEN')
+  const worklistInput: GgaWorklistCabinetInput = {
+    id: cabinet.id, kennung: cabinet.kennung, standort,
+    status: cabinet.status,
+    openRequiredTasks: openRequiredTasks.map((t) => ({
+      id: t.id, title: t.title, dueDate: t.dueDate,
+      verantwortlich: t.responsibleMembership?.user ? `${t.responsibleMembership.user.firstName} ${t.responsibleMembership.user.lastName}` : null,
+    })),
+    openBlockers: openBlockers.map((b) => ({ id: b.id, title: b.title, verantwortlich: null })),
+  }
+  // Die drei generischen NAECHSTE_AKTION-Fallbacktexte ("Bestandsaufnahme
+  // durchführen"/"Prüfung planen"/"Prüfung durchführen") sind normale
+  // Workflow-Fortsetzung, kein Problem — sie stehen bereits prominent im
+  // "Nächster Schritt"-Kasten oben. Ein konkreter offener Checklistenpunkt
+  // (z. B. "Maßnahmen abgeschlossen") bleibt dagegen als echter Handlungs-
+  // bedarf-Eintrag erhalten (Auftrag Abschnitt 4, Beispiel "3 Checklisten-
+  // punkte offen") — nur dieselben drei generischen Texte werden gefiltert,
+  // keine neue Businessregel, nur eine Anzeige-Entscheidung.
+  const GENERISCHE_NAECHSTE_AKTION = new Set(['Bestandsaufnahme durchführen', 'Prüfung planen', 'Prüfung durchführen'])
+  const worklistHandlungsbedarf = deriveGgaProjectWorklist([worklistInput])
+    .filter((entry) => !(entry.type === 'NAECHSTE_AKTION' && GENERISCHE_NAECHSTE_AKTION.has(entry.title)))
+    .map((entry) => ({
+      problem: entry.title, naechsterSchritt: entry.title, badge: null as GgaControlTowerReasonBadge | null,
+      aktion: direktAktionFuerWorklistTyp(entry.type, cabinet.id, cabinet.status.bestandsaufnahmeAbgeschlossen),
+    }))
+  const PRUEFART_REASON_BADGE: Record<GgaPruefart, GgaControlTowerReasonBadge> = { LUEFTUNG: 'LUEFTUNG_NICHT_BESTANDEN', ELEKTRO: 'ELEKTRO_NICHT_BESTANDEN', VDE: 'VDE_NICHT_BESTANDEN' }
+  const pruefartHandlungsbedarf = nichtBestandenePruefarten.map((pruefart) => ({
+    problem: GGA_CONTROL_TOWER_REASON_LABELS[PRUEFART_REASON_BADGE[pruefart]],
+    naechsterSchritt: GGA_PRUEFART_NAECHSTER_SCHRITT[pruefart],
+    badge: PRUEFART_REASON_BADGE[pruefart] as GgaControlTowerReasonBadge | null,
+    aktion: { href: `/collaboration/cabinets/${cabinet.id}/pruefung`, label: 'Prüfung öffnen' },
+  }))
+  const handlungsbedarf = [...pruefartHandlungsbedarf, ...worklistHandlungsbedarf]
+
+  // Arbeitsbereiche (Produktblock 3 Abschnitt 5-9): kompakte Zusammenfassung
+  // je Bereich, ausschließlich aus bereits geladenen cabinet-/pruefnachweis-
+  // Daten — keine neuen Abfragen.
+  const checklistSummary = (stageCode: string) => {
+    const items = cabinet.checklistItems.filter((i) => i.stage.code === stageCode)
+    return { total: items.length, done: items.filter((i) => i.completed).length }
+  }
+  const abnahmeChecklist = checklistSummary('ABNAHME')
+  const planungChecklist = checklistSummary('PLANUNG')
+  const umsetzungChecklist = checklistSummary('UMSETZUNG')
+  const planungOffeneAufgaben = openRequiredTasks.filter((t) => t.stage.code === 'PLANUNG').length
+  const umsetzungOffeneAufgaben = openRequiredTasks.filter((t) => t.stage.code === 'UMSETZUNG').length
+  const pruefartSymbol: Record<'BESTANDEN' | 'NICHT_BESTANDEN' | 'OFFEN', string> = { BESTANDEN: '✓', NICHT_BESTANDEN: '✕', OFFEN: '○' }
+  const pruefungenBestanden = pruefnachweisOverview.filter((entry) => entry.current?.ergebnis === 'BESTANDEN').length
+  const interneFreigabe = interneFreigabeStatus(cabinet.status)
+  const betreiberFreigabe = betreiberfreigabeStatus(cabinet.status)
+  const letzteAktivitaet = history[0] ?? null
+
   return <div>
-    <p className="text-xs text-muted-foreground"><Link href="/collaboration/cabinets" className="hover:underline">GGA-Schränke</Link> / {cabinet.project.name}</p>
+    <p className="text-xs text-muted-foreground">
+      <Link href={`/collaboration/projects/${cabinet.projectId}`} className="hover:underline">← Projekt {cabinet.project.projectNumber ? `${cabinet.project.projectNumber} · ` : ''}{cabinet.project.name}</Link>
+      {' · '}<Link href="/collaboration/cabinets" className="hover:underline">GGA-Schränke</Link>
+    </p>
     <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-3xl font-600 tracking-tight">{cabinet.kennung} — {cabinet.bezeichnung}</h1>
+        <span className={`rounded-full px-3 py-1 text-xs font-600 ${GGA_STATUS_BADGE_CLASS[presentationStatus]}`}>{GGA_STATUS_LABELS[presentationStatus]}</span>
         <span className={`rounded-full px-3 py-1 text-xs font-600 ${lifecycleBadgeClass[cabinet.status.lifecycleStage]}`}>{GGA_LIFECYCLE_STAGE_LABELS[cabinet.status.lifecycleStage]}</span>
         {cabinet.status.betreiberstatus !== 'NICHT_ANGEFORDERT' && <span className={`rounded-full px-3 py-1 text-xs font-600 ${betreiberstatusBadgeClass[cabinet.status.betreiberstatus]}`}>{GGA_BETREIBERSTATUS_LABELS[cabinet.status.betreiberstatus]}</span>}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Link href={`/collaboration/cabinets/${cabinet.id}/bestandsaufnahme`} className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-600 text-stone-800">{cabinet.status.bestandsaufnahmeAbgeschlossen ? 'Bestandsaufnahme bearbeiten' : 'Bestandsaufnahme starten'}</Link>
-        {cabinet.status.bestandsaufnahmeAbgeschlossen && <Link href={`/collaboration/cabinets/${cabinet.id}/pruefung`} className="rounded-lg bg-stone-800 px-4 py-2 text-sm font-600 text-white">Prüfung / Abnahme</Link>}
         <a href={`/api/collaboration/cabinets/${cabinet.id}/schrankakte`} className="rounded-lg border border-stone-300 px-4 py-2 text-sm font-600 text-stone-800">Schrankakte (PDF)</a>
         <GgaCabinetDeleteButton cabinetId={cabinet.id} canDelete={canDelete} />
       </div>
     </div>
 
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-      <div className="rounded-lg border border-stone-200 bg-white p-3"><p className="text-xs text-muted-foreground">Bestandsaufnahme</p><p className="mt-1 text-lg font-600">{cabinet.status.bestandsaufnahmeAbgeschlossen ? '✓ Abgeschlossen' : 'Offen'}</p></div>
-      <div className="rounded-lg border border-stone-200 bg-white p-3"><p className="text-xs text-muted-foreground">Planung</p><p className="mt-1 text-lg font-600">{cabinet.status.planungsfortschritt === null ? '–' : `${cabinet.status.planungsfortschritt}%`}</p></div>
-      <div className="rounded-lg border border-stone-200 bg-white p-3"><p className="text-xs text-muted-foreground">Montage</p><p className="mt-1 text-lg font-600">{cabinet.status.montagefortschritt === null ? '–' : `${cabinet.status.montagefortschritt}%`}</p></div>
-      <div className="rounded-lg border border-stone-200 bg-white p-3"><p className="text-xs text-muted-foreground">Betriebsstatus</p><p className={`mt-1 inline-block rounded-full px-2 py-0.5 text-sm font-600 ${GGA_BETRIEBSSTATUS_BADGE_CLASS[cabinet.status.betriebsstatus]}`}>{formatGgaBetriebsstatusLabel(cabinet.status.betriebsstatus, cabinet.status.betriebsstatusTageBisFaellig)}</p></div>
-      <div className="rounded-lg border border-stone-200 bg-white p-3"><p className="text-xs text-muted-foreground">Offene Blocker</p><p className="mt-1 text-lg font-600">{cabinet.status.offeneBlocker}</p></div>
-      <div className="rounded-lg border border-stone-200 bg-white p-3"><p className="text-xs text-muted-foreground">Nächste Aktion</p><p className="mt-1 text-sm font-600">{cabinet.status.naechsteAktion}</p></div>
+    {/* Schrankkopf: kompakte Lageübersicht (Produktblock 3 Abschnitt 2) */}
+    <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="rounded-lg border border-stone-200 bg-white px-4 py-3"><p className="text-xs text-muted-foreground">Standort</p><p className="mt-1 text-sm font-600">{standort ?? '–'}</p></div>
+      <div className="rounded-lg border border-stone-200 bg-white px-4 py-3"><p className="text-xs text-muted-foreground">Fortschritt</p><p className="mt-1 text-xl font-600">{fortschritt === null ? '–' : `${fortschritt} %`}</p></div>
+      <div className="rounded-lg border border-stone-200 bg-white px-4 py-3"><p className="text-xs text-muted-foreground">Betriebsstatus</p><p className={`mt-1 inline-block rounded-full px-2 py-0.5 text-sm font-600 ${GGA_BETRIEBSSTATUS_BADGE_CLASS[cabinet.status.betriebsstatus]}`}>{formatGgaBetriebsstatusLabel(cabinet.status.betriebsstatus, cabinet.status.betriebsstatusTageBisFaellig)}</p></div>
+      <div className="rounded-lg border border-stone-200 bg-white px-4 py-3"><p className="text-xs text-muted-foreground">Prüfstatus</p><p className="mt-1 text-sm font-600">{GGA_PRUEFSTATUS_LABELS[cabinet.status.pruefstatus]}</p></div>
+    </div>
+
+    {/* Nächster Schritt (Produktblock 3 Abschnitt 2/10): zentral über naechsterSchrittFuerCabinet()/direkteGgaCabinetAktion() — identisch zu Dashboard/Projektmatrix für denselben Schrank */}
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/60 px-5 py-4">
+      <div><p className="text-xs font-600 uppercase tracking-wide text-blue-800">Nächster Schritt</p><p className="mt-1 text-lg font-600 text-stone-900">{naechsterSchritt}</p></div>
+      <Link href={direktAktion.href} className="shrink-0 rounded-lg bg-blue-700 px-4 py-2 text-sm font-600 text-white hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">{direktAktion.label} →</Link>
+    </div>
+
+    {/* Lifecycle (Produktblock 3 Abschnitt 3): rein visuelle Übersetzung der bestehenden lifecycleStage-Reihenfolge */}
+    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-stone-200 bg-white px-4 py-3 text-sm">
+      {LIFECYCLE_ORDER.map((step, index) => <div key={step} className="flex items-center gap-2">
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden="true" className={`font-600 ${lifecycleSymbol(step, cabinet.status.lifecycleStage, lifecycleBlockedAtCurrent).className}`}>{lifecycleSymbol(step, cabinet.status.lifecycleStage, lifecycleBlockedAtCurrent).symbol}</span>
+          <span className="text-stone-800">{GGA_LIFECYCLE_STAGE_LABELS[step]}</span>
+        </span>
+        {index < LIFECYCLE_ORDER.length - 1 && <span aria-hidden="true" className="text-stone-300">→</span>}
+      </div>)}
+    </div>
+
+    {/* Handlungsbedarf (Produktblock 3 Abschnitt 4) */}
+    <div className="mt-6 rounded-xl border border-red-200 bg-white shadow-sm">
+      <div className="border-b border-red-100 px-5 py-4"><h2 className="font-600 text-red-800">Handlungsbedarf <span className="text-sm font-normal text-muted-foreground">({handlungsbedarf.length})</span></h2></div>
+      <ul className="divide-y divide-stone-100">
+        {handlungsbedarf.map((item, index) => <li key={index} className="grid gap-2 px-5 py-4 text-sm md:grid-cols-[minmax(0,1.6fr)_auto] md:items-center">
+          <div className="min-w-0">
+            {item.badge && <span className="mb-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-600 text-red-800">{GGA_CONTROL_TOWER_REASON_LABELS[item.badge]}</span>}
+            <p className="text-stone-900">{item.problem}</p>
+            <p className="mt-0.5 text-xs text-slate-700"><span className="text-muted-foreground">Nächster Schritt:</span> {item.naechsterSchritt}</p>
+          </div>
+          <Link href={item.aktion.href} className="w-fit shrink-0 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-600 text-stone-800 hover:border-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">{item.aktion.label} →</Link>
+        </li>)}
+      </ul>
+      {handlungsbedarf.length === 0 && <p className="px-5 py-6 text-sm text-muted-foreground">Kein Handlungsbedarf — dieser Schrank ist im grünen Bereich.</p>}
+    </div>
+
+    {/* Arbeitsbereiche (Produktblock 3 Abschnitt 5-9): Cockpit + Navigation, keine Formulare kopiert */}
+    <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <Link href={`/collaboration/cabinets/${cabinet.id}/bestandsaufnahme`} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm hover:border-blue-400">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Bestandsaufnahme</p>
+        <p className="mt-2 text-sm font-600">{cabinet.status.bestandsaufnahmeAbgeschlossen ? '✓ Abgeschlossen' : '○ Offen'}</p>
+        <p className="mt-2 text-xs font-600 text-blue-700">{cabinet.status.bestandsaufnahmeAbgeschlossen ? 'Bestandsaufnahme bearbeiten' : 'Bestandsaufnahme starten'} →</p>
+      </Link>
+      <a href="#massnahmen" className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm hover:border-blue-400">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Planung</p>
+        <p className="mt-2 text-sm font-600">{planungChecklist.done} / {planungChecklist.total} Checkliste{planungOffeneAufgaben > 0 ? ` · ${planungOffeneAufgaben} Aufgabe${planungOffeneAufgaben === 1 ? '' : 'n'} offen` : ''}</p>
+        <p className="mt-2 text-xs font-600 text-blue-700">Planung öffnen →</p>
+      </a>
+      <a href="#massnahmen" className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm hover:border-blue-400">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Umsetzung</p>
+        <p className="mt-2 text-sm font-600">{umsetzungChecklist.done} / {umsetzungChecklist.total} Checkliste{umsetzungOffeneAufgaben > 0 ? ` · ${umsetzungOffeneAufgaben} Aufgabe${umsetzungOffeneAufgaben === 1 ? '' : 'n'} offen` : ''}</p>
+        <p className="mt-2 text-xs font-600 text-blue-700">Umsetzung öffnen →</p>
+      </a>
+      <Link href={`/collaboration/cabinets/${cabinet.id}/pruefung`} className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm hover:border-blue-400">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Prüfung &amp; Abnahme</p>
+        <dl className="mt-2 space-y-0.5 text-sm">
+          {pruefnachweisOverview.map((entry) => <div key={entry.pruefart} className="flex items-center justify-between"><dt>{GGA_PRUEFART_LABELS[entry.pruefart]}</dt><dd className="font-600">{pruefartSymbol[entry.current?.ergebnis ?? 'OFFEN']} {entry.current ? (entry.current.ergebnis === 'BESTANDEN' ? 'Bestanden' : 'Nicht bestanden') : 'Offen'}</dd></div>)}
+        </dl>
+        <p className="mt-2 text-xs text-muted-foreground">{pruefungenBestanden} von 3 Prüfungen abgeschlossen · Abnahme-Checkliste {abnahmeChecklist.done}/{abnahmeChecklist.total}</p>
+        <p className="mt-2 text-xs font-600 text-blue-700">Prüfung öffnen →</p>
+      </Link>
+      <a href="#freigaben" className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm hover:border-blue-400">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Freigaben</p>
+        <dl className="mt-2 space-y-0.5 text-sm">
+          <div className="flex items-center justify-between"><dt>Intern</dt><dd className="font-600">{interneFreigabe.symbol} {interneFreigabe.text}</dd></div>
+          <div className="flex items-center justify-between"><dt>Betreiber</dt><dd className="font-600">{betreiberFreigabe.symbol} {betreiberFreigabe.text}</dd></div>
+        </dl>
+        <p className="mt-2 text-xs font-600 text-blue-700">Freigaben öffnen →</p>
+      </a>
+      <a href="#dokumente" className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm hover:border-blue-400">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Dokumente / Schrankakte</p>
+        <p className="mt-2 text-sm font-600">{cabinet.documents.length} Dokument{cabinet.documents.length === 1 ? '' : 'e'}</p>
+        <p className="mt-2 text-xs font-600 text-blue-700">Dokumente öffnen →</p>
+      </a>
+      <a href="#historie" className="rounded-xl border border-stone-200 bg-white p-4 shadow-sm hover:border-blue-400">
+        <p className="text-xs font-600 uppercase tracking-wide text-muted-foreground">Aktivität / Historie</p>
+        <p className="mt-2 truncate text-sm font-600">{letzteAktivitaet ? `${entityTypeLabels[letzteAktivitaet.entityType] ?? letzteAktivitaet.entityType} · ${letzteAktivitaet.action}` : 'Keine Aktivität'}</p>
+        <p className="mt-2 text-xs font-600 text-blue-700">Historie öffnen →</p>
+      </a>
     </div>
 
     <section className="mt-8 rounded-xl border border-stone-200 bg-stone-50 p-4">
@@ -117,7 +327,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
       </div>}
     </section>
 
-    <section className="mt-8">
+    <section id="massnahmen" className="mt-8 scroll-mt-4">
       <h2 className="text-lg font-600">Maßnahmen</h2>
       {(() => {
         const offen = cabinet.tasks.filter((t) => !['DONE', 'SKIPPED'].includes(t.status))
@@ -177,7 +387,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
       <GgaCabinetChecklistTemplateButtons cabinetId={cabinet.id} canEdit={canEdit} />
     </section>
 
-    <section className="mt-8">
+    <section id="blocker" className="mt-8 scroll-mt-4">
       <h2 className="text-lg font-600">Blocker</h2>
       <GgaCabinetBlockerList
         blockers={cabinet.blockers.map((blocker) => ({
@@ -188,7 +398,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
       />
     </section>
 
-    <section className="mt-8">
+    <section id="freigaben" className="mt-8 scroll-mt-4">
       <h2 className="text-lg font-600">Freigaben</h2>
       <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm">
         <table className="min-w-full text-left text-sm">
@@ -213,7 +423,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
       </div>
     </section>
 
-    <section className="mt-8">
+    <section id="dokumente" className="mt-8 scroll-mt-4">
       <h2 className="text-lg font-600">Dokumente</h2>
       <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm">
         <table className="min-w-full text-left text-sm">
@@ -234,7 +444,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
       <GgaCabinetDocumentUpload projectId={cabinet.projectId} cabinetId={cabinet.id} canUpload={canUpload} />
     </section>
 
-    <section className="mt-8">
+    <section id="historie" className="mt-8 scroll-mt-4">
       <h2 className="text-lg font-600">Historie</h2>
       <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm">
         <table className="min-w-full text-left text-sm">

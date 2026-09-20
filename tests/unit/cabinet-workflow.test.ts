@@ -3,9 +3,13 @@ import {
   deriveCabinetStatus, deriveGgaCabinetControlTowerSummary, deriveGgaControlTowerOverview, deriveGgaProjectWorklist, formatGgaBetriebsstatusLabel,
   GGA_FIVE_PHASE_PLAN, GGA_STAGE_ABNAHME, GGA_STAGE_ABSCHLUSS, GGA_STAGE_KONZEPT, GGA_STAGE_PLANUNG, GGA_STAGE_UMSETZUNG,
   ggaCabinetBereitFuerInterneFreigabe, ggaCabinetBereitFuerBetreiberfreigabe, isCabinetReadyForStage,
-  deriveCurrentPruefnachweis, isGgaPruefartBestanden, type GgaCabinetPruefnachweisSnapshot,
+  deriveCurrentPruefnachweis, isGgaPruefartBestanden, ggaCabinetHatHandlungsbedarf, aktuellerGgaFortschritt, type GgaCabinetPruefnachweisSnapshot,
   type GgaCabinetControlTowerEntry, type GgaCabinetSnapshot, type GgaControlTowerCabinetEntry, type GgaWorklistCabinetBlocker,
-  type GgaWorklistCabinetInput, type GgaWorklistCabinetTask,
+  type GgaWorklistCabinetInput, type GgaWorklistCabinetTask, type GgaPruefart, deriveGgaProjectPresentationStatus,
+  deriveGgaCabinetPresentationStatus, istGgaPruefpfad, direkteGgaHandlungsbedarfAktion, direkteGgaCabinetAktion, naechsterSchrittFuerCabinet,
+  ggaControlTowerReasons, direktAktionFuerWorklistTyp,
+  deriveGgaProjektPhasenWorklist, direktAktionFuerProjektArbeit, praesentationsStatusFuerProjektArbeit,
+  type GgaProjektPhasenTaskInput, type GgaProjektPhasenBlockerInput,
 } from '@/lib/collaboration/cabinet-workflow'
 import { GGA_FIVE_PHASE_PLAN as GGA_FIVE_PHASE_PLAN_FROM_SERVICE } from '@/lib/services/collaboration-phase2.service'
 
@@ -15,9 +19,13 @@ function entry(id: string, kennung: string, snapshot: GgaCabinetSnapshot, now?: 
 
 function controlTowerCabinet(
   id: string, kennung: string, projectId: string, projectNumber: string | null, projectName: string,
-  snapshot: GgaCabinetSnapshot, options: { standort?: string | null; now?: Date } = {},
+  snapshot: GgaCabinetSnapshot, options: { standort?: string | null; now?: Date; nichtBestandenePruefarten?: GgaPruefart[] } = {},
 ): GgaControlTowerCabinetEntry {
-  return { id, kennung, standort: options.standort ?? null, projectId, projectNumber, projectName, ...deriveCabinetStatus(snapshot, options.now) }
+  return {
+    id, kennung, standort: options.standort ?? null, projectId, projectNumber, projectName,
+    nichtBestandenePruefarten: options.nichtBestandenePruefarten ?? [],
+    ...deriveCabinetStatus(snapshot, options.now),
+  }
 }
 
 function worklistCabinet(
@@ -980,6 +988,66 @@ describe('deriveGgaControlTowerOverview (REQ-014): Projektübergreifender GGA Co
     expect(overview.projekte[0].abgeschlossen).toBe(1)
     expect(overview.gesamt.mitBlocker).toBe(1) // gleichzeitig weiterhin als dringend sichtbar
   })
+
+  // GGA-Portal-Weiterentwicklung: alleSchraenke liefert dieselben, bereits
+  // abgeleiteten Einträge wie dringendeSchraenke, aber vollständig (nicht nur
+  // die dringenden) — Grundlage für die priorisierte Arbeitsliste auf
+  // /collaboration/my-work (GGA-Portal Produktblock 6: nicht mehr im
+  // Dashboard dupliziert). Keine neue Berechnung, nur zusätzliche Rückgabe.
+  it('21) alleSchraenke enthält jeden Schrank genau einmal, dringende zuerst, sonst alphabetisch nach Kennung', () => {
+    const ruhig = controlTowerCabinet('c1', 'Z-001', 'p1', null, 'Projekt', fertigesCabinet())
+    const dringend = controlTowerCabinet('c2', 'A-001', 'p1', null, 'Projekt', baseSnapshot({ blockers: [{ id: 'b1', title: 'Mangel', status: 'OPEN' }] }))
+    const ruhigAuchAlphabetischVorne = controlTowerCabinet('c3', 'B-001', 'p1', null, 'Projekt', fertigesCabinet())
+    const overview = deriveGgaControlTowerOverview([ruhig, dringend, ruhigAuchAlphabetischVorne], new Set(['p1']))
+    expect(overview.alleSchraenke).toHaveLength(3)
+    expect(overview.alleSchraenke.map((c) => c.kennung)).toEqual(['A-001', 'B-001', 'Z-001']) // dringend (A-001) zuerst, dann alphabetisch
+  })
+
+  it('22) alleSchraenke bleibt bei 0 Schränken ein leeres Array statt eines Fehlers', () => {
+    const overview = deriveGgaControlTowerOverview([], new Set())
+    expect(overview.alleSchraenke).toEqual([])
+  })
+
+  // GGA-Portal-Weiterentwicklung: ein Cabinet mit NICHT_BESTANDEN Lüftung/
+  // Elektro/VDE, aber sonst völlig unauffällig (kein Blocker, keine
+  // Freigabe/Nachprüfung offen), war vor dieser Erweiterung in
+  // dringendeSchraenke NICHT sichtbar (ggaCabinetIstDringend kennt keine
+  // Prüfnachweise) — jetzt über ggaCabinetHatHandlungsbedarf sichtbar, mit
+  // eigenem Grund-Badge je Prüfart.
+  it('23) ein Cabinet mit ausschließlich NICHT_BESTANDEN-Prüfnachweis (sonst unauffällig) erscheint jetzt in dringendeSchraenke mit dem passenden Grund', () => {
+    const cabinet = controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt', fertigesCabinet(), { nichtBestandenePruefarten: ['VDE'] })
+    const overview = deriveGgaControlTowerOverview([cabinet], new Set(['p1']))
+    expect(overview.dringendeSchraenke).toHaveLength(1)
+    expect(overview.dringendeSchraenke[0].gruende).toContain('VDE_NICHT_BESTANDEN')
+  })
+
+  it('24) mehrere nicht bestandene Prüfarten erzeugen je einen eigenen Grund-Badge', () => {
+    const cabinet = controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt', fertigesCabinet(), { nichtBestandenePruefarten: ['LUEFTUNG', 'ELEKTRO'] })
+    const overview = deriveGgaControlTowerOverview([cabinet], new Set(['p1']))
+    expect(overview.dringendeSchraenke[0].gruende).toEqual(expect.arrayContaining(['LUEFTUNG_NICHT_BESTANDEN', 'ELEKTRO_NICHT_BESTANDEN']))
+    expect(overview.dringendeSchraenke[0].gruende).not.toContain('VDE_NICHT_BESTANDEN')
+  })
+
+  it('25) ein Cabinet ohne NICHT_BESTANDEN-Prüfnachweis und ohne sonstigen Grund bleibt weiterhin unauffällig (keine Rückwärtsänderung)', () => {
+    const cabinet = controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt', fertigesCabinet())
+    const overview = deriveGgaControlTowerOverview([cabinet], new Set(['p1']))
+    expect(overview.dringendeSchraenke).toEqual([])
+  })
+
+  it('26) ggaCabinetHatHandlungsbedarf ist true bei NICHT_BESTANDEN-Prüfnachweis, obwohl ggaCabinetIstDringend allein false wäre — die bestehende Funktion selbst bleibt unverändert', () => {
+    const cabinet = controlTowerCabinet('c1', 'A-001', 'p1', null, 'Projekt', fertigesCabinet(), { nichtBestandenePruefarten: ['ELEKTRO'] })
+    expect(ggaCabinetHatHandlungsbedarf(cabinet)).toBe(true)
+  })
+})
+
+describe('aktuellerGgaFortschritt (GGA-Portal-Weiterentwicklung): reine Anzeige-Auswahl unter den vier bereits abgeleiteten Fortschrittswerten', () => {
+  it('wählt je nach lifecycleStage den passenden bereits abgeleiteten Fortschrittswert', () => {
+    expect(aktuellerGgaFortschritt({ lifecycleStage: 'BESTAND', bestandsaufnahmeFortschritt: 40, planungsfortschritt: null, montagefortschritt: null, abnahmeChecklistFortschritt: null })).toBe(40)
+    expect(aktuellerGgaFortschritt({ lifecycleStage: 'PLANUNG', bestandsaufnahmeFortschritt: 100, planungsfortschritt: 60, montagefortschritt: null, abnahmeChecklistFortschritt: null })).toBe(60)
+    expect(aktuellerGgaFortschritt({ lifecycleStage: 'UMSETZUNG', bestandsaufnahmeFortschritt: 100, planungsfortschritt: 100, montagefortschritt: 30, abnahmeChecklistFortschritt: null })).toBe(30)
+    expect(aktuellerGgaFortschritt({ lifecycleStage: 'PRUEFUNG_ABNAHME', bestandsaufnahmeFortschritt: 100, planungsfortschritt: 100, montagefortschritt: 100, abnahmeChecklistFortschritt: 75 })).toBe(75)
+    expect(aktuellerGgaFortschritt({ lifecycleStage: 'ABGESCHLOSSEN', bestandsaufnahmeFortschritt: 100, planungsfortschritt: 100, montagefortschritt: 100, abnahmeChecklistFortschritt: 100 })).toBe(100)
+  })
 })
 
 // GGA-05.1: Stage-Code-Konsistenz. Vor dieser Korrektur pflegten
@@ -1288,5 +1356,365 @@ describe('Prüfnachweise (REQ-018/REQ-018.1)', () => {
       pn({ id: 'b', pruefart: 'VDE', ergebnis: 'BESTANDEN', pruefdatum: null, createdAt: new Date('2026-02-01') }),
     ]
     expect(deriveCurrentPruefnachweis(records, 'VDE')?.id).toBe('b')
+  })
+})
+
+describe('deriveGgaProjectPresentationStatus (GGA-Portal Produktblock 1): Rangfolge KRITISCH > HANDLUNGSBEDARF > ACHTUNG > IM_PLAN, ABGESCHLOSSEN nur bei echtem Projektabschluss', () => {
+  it('liefert ABGESCHLOSSEN, sobald das Projekt fachlich abgeschlossen ist — unabhängig von healthStatus/dringenden Schränken', () => {
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: true, healthStatus: 'RED', dringendeSchraenkeAnzahl: 3 })).toBe('ABGESCHLOSSEN')
+  })
+
+  it('liefert KRITISCH bei healthStatus RED, auch ohne einen einzigen dringenden GGA-Schrank (rein projektweiter Blocker)', () => {
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: false, healthStatus: 'RED', dringendeSchraenkeAnzahl: 0 })).toBe('KRITISCH')
+  })
+
+  it('KRITISCH schlägt HANDLUNGSBEDARF: RED + dringende Schränke bleibt KRITISCH, nicht HANDLUNGSBEDARF', () => {
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: false, healthStatus: 'RED', dringendeSchraenkeAnzahl: 2 })).toBe('KRITISCH')
+  })
+
+  it('liefert HANDLUNGSBEDARF, wenn healthStatus nicht RED ist, aber mindestens ein GGA-Schrank Handlungsbedarf hat', () => {
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: false, healthStatus: 'GREEN', dringendeSchraenkeAnzahl: 1 })).toBe('HANDLUNGSBEDARF')
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: false, healthStatus: 'YELLOW', dringendeSchraenkeAnzahl: 1 })).toBe('HANDLUNGSBEDARF')
+  })
+
+  it('liefert ACHTUNG bei healthStatus YELLOW ohne dringende Schränke', () => {
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: false, healthStatus: 'YELLOW', dringendeSchraenkeAnzahl: 0 })).toBe('ACHTUNG')
+  })
+
+  it('liefert IM_PLAN, wenn weder healthStatus RED/YELLOW noch ein dringender Schrank vorliegt', () => {
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: false, healthStatus: 'GREEN', dringendeSchraenkeAnzahl: 0 })).toBe('IM_PLAN')
+  })
+
+  it('leitet ABGESCHLOSSEN nicht allein aus 100% Fortschritt ab — die Funktion kennt progressPercent gar nicht, nur das übergebene abgeschlossen-Flag', () => {
+    // Realistischer Fall: Projekt technisch/inhaltlich fertig (100% Fortschritt
+    // wäre denkbar), aber Betreiberfreigabe steht noch aus → healthStatus RED
+    // oder ein dringender Schrank, project.status ist NICHT 'COMPLETED'.
+    expect(deriveGgaProjectPresentationStatus({ abgeschlossen: false, healthStatus: 'RED', dringendeSchraenkeAnzahl: 1 })).not.toBe('ABGESCHLOSSEN')
+  })
+})
+
+describe('deriveGgaCabinetPresentationStatus (GGA-Portal Produktblock 2): dieselbe Rangfolge wie bei Projekten, jetzt je Schrank — reine Kombination bereits vorhandener Ableitungen (ggaControlTowerReasons/betriebsstatus/abgeschlossen)', () => {
+  it('KRITISCH bei offenem Blocker (MANGEL), auch ohne jedes andere Signal', () => {
+    const cabinet = controlTowerCabinet('c1', 'K-01', 'p1', 'P-1', 'Projekt 1', baseSnapshot({
+      blockers: [{ id: 'b1', title: 'Kabelschaden', status: 'OPEN' }],
+    }))
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('KRITISCH')
+  })
+
+  it('KRITISCH bei nicht bestandener Prüfart (Lüftung/Elektro/VDE)', () => {
+    const cabinet = controlTowerCabinet('c2', 'K-02', 'p1', 'P-1', 'Projekt 1', baseSnapshot(), { nichtBestandenePruefarten: ['VDE'] })
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('KRITISCH')
+  })
+
+  it('KRITISCH bei nachträglich erfasstem Blocker, SELBST WENN der Schrank lifecycleStage-technisch bereits abgeschlossen ist (offeneBlocker fließt nicht in lifecycleStage ein)', () => {
+    const cabinet = controlTowerCabinet('c3', 'K-03', 'p1', 'P-1', 'Projekt 1', fertigesCabinet({
+      blockers: [{ id: 'b1', title: 'Nachträglich gemeldeter Mangel', status: 'OPEN' }],
+    }))
+    expect(cabinet.abgeschlossen).toBe(true)
+    expect(cabinet.offeneBlocker).toBe(1)
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('KRITISCH')
+  })
+
+  it('eine erneut überfällige Wiederholungsprüfung kippt bereits derivePruefstatus()/lifecycleStage selbst von ABGESCHLOSSEN zurück auf PRUEFUNG_ABNAHME — hier greift der normale ÜBERFÄLLIG-Fall, abgeschlossen ist dabei nie true', () => {
+    const now = new Date('2027-06-01')
+    const cabinet = controlTowerCabinet('c3b', 'K-03B', 'p1', 'P-1', 'Projekt 1', fertigesCabinet({
+      pruefintervallMonate: 12,
+      letztePruefungAm: new Date('2026-01-01'),
+    }), { now })
+    expect(cabinet.abgeschlossen).toBe(false)
+    expect(cabinet.betriebsstatus).toBe('UEBERFAELLIG')
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('KRITISCH')
+  })
+
+  it('HANDLUNGSBEDARF bei Nachprüfung erforderlich, ohne dass zusätzlich ein Kritisch-Grund vorliegt', () => {
+    const cabinet = controlTowerCabinet('c4', 'K-04', 'p1', 'P-1', 'Projekt 1', baseSnapshot({
+      approvals: [
+        { id: 'a1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-05'), stageCode: 'ABNAHME' },
+        { id: 'a2', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: null, stageCode: 'ABNAHME' },
+      ],
+    }))
+    expect(cabinet.betriebsstatus).toBe('NACHPRUEFUNG_ERFORDERLICH')
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('HANDLUNGSBEDARF')
+  })
+
+  it('HANDLUNGSBEDARF bei offener interner Freigabe (abnahmeChecklist fertig, Prüfung noch nicht entschieden)', () => {
+    const cabinet = controlTowerCabinet('c5', 'K-05', 'p1', 'P-1', 'Projekt 1', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+        { id: 't3', title: 'Abnahme-Checkliste', status: 'DONE', isRequired: true, sequence: 3, stageCode: 'ABNAHME' },
+      ],
+    }))
+    expect(cabinet.freigabeOffen).toBe(true)
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('HANDLUNGSBEDARF')
+  })
+
+  it('ACHTUNG, wenn die Prüfung bald (innerhalb 30 Tagen) fällig wird, aber noch kein Handlungsbedarf-Grund vorliegt', () => {
+    const letztePruefungAm = new Date('2026-01-01')
+    const faelligAm = new Date('2027-01-01')
+    const now = new Date(faelligAm.getTime() - 20 * 24 * 60 * 60 * 1000)
+    const cabinet = controlTowerCabinet('c6', 'K-06', 'p1', 'P-1', 'Projekt 1', fertigesCabinet({ pruefintervallMonate: 12, letztePruefungAm }), { now })
+    expect(cabinet.betriebsstatus).toBe('BALD_FAELLIG')
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('ACHTUNG')
+  })
+
+  it('ABGESCHLOSSEN nur, wenn wirklich lifecycleStage ABGESCHLOSSEN ist UND kein Kritisch-/Handlungsbedarf-/Achtung-Grund vorliegt', () => {
+    const cabinet = controlTowerCabinet('c7', 'K-07', 'p1', 'P-1', 'Projekt 1', fertigesCabinet())
+    expect(cabinet.abgeschlossen).toBe(true)
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('ABGESCHLOSSEN')
+  })
+
+  it('IM_PLAN für einen normal laufenden Schrank ohne jedes Signal (z. B. noch in Planung, keine Prüfung fällig)', () => {
+    const cabinet = controlTowerCabinet('c8', 'K-08', 'p1', 'P-1', 'Projekt 1', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+    }))
+    expect(deriveGgaCabinetPresentationStatus(cabinet)).toBe('IM_PLAN')
+  })
+})
+
+describe('istGgaPruefpfad / direkteGgaHandlungsbedarfAktion / direkteGgaCabinetAktion (GGA-Portal Produktblock 2): welche Gründe auf die Prüfungs-/Abnahmeseite führen, welche auf die Schrankseite', () => {
+  it('UEBERFAELLIG, NACHPRUEFUNG, INTERNE_FREIGABE, INTERNE_BEANSTANDUNG, BETREIBERFREIGABE, BETREIBERBEANSTANDUNG und die drei Prüfart-Badges führen zur Prüfungsseite', () => {
+    for (const grund of ['UEBERFAELLIG', 'NACHPRUEFUNG', 'INTERNE_FREIGABE', 'INTERNE_BEANSTANDUNG', 'BETREIBERFREIGABE', 'BETREIBERBEANSTANDUNG', 'LUEFTUNG_NICHT_BESTANDEN', 'ELEKTRO_NICHT_BESTANDEN', 'VDE_NICHT_BESTANDEN'] as const) {
+      expect(istGgaPruefpfad([grund])).toBe(true)
+    }
+  })
+
+  it('MANGEL führt NICHT zur Prüfungsseite — Blocker werden auf der Schrankseite selbst gelöst', () => {
+    expect(istGgaPruefpfad(['MANGEL'])).toBe(false)
+  })
+
+  it('direkteGgaHandlungsbedarfAktion() verlinkt entsprechend auf /pruefung bzw. die Schrankseite', () => {
+    expect(direkteGgaHandlungsbedarfAktion('cab-1', ['VDE_NICHT_BESTANDEN'])).toEqual({ href: '/collaboration/cabinets/cab-1/pruefung', label: 'Prüfung öffnen' })
+    expect(direkteGgaHandlungsbedarfAktion('cab-1', ['MANGEL'])).toEqual({ href: '/collaboration/cabinets/cab-1', label: 'Schrank öffnen' })
+  })
+
+  it('direkteGgaCabinetAktion() leitet dieselben Gründe wie die Handlungsbedarf-Badges ab (ggaControlTowerReasons) und trifft dieselbe Wahl', () => {
+    const kritisch = controlTowerCabinet('c1', 'K-01', 'p1', 'P-1', 'Projekt 1', baseSnapshot({ blockers: [{ id: 'b1', title: 'X', status: 'OPEN' }] }))
+    expect(direkteGgaCabinetAktion(kritisch)).toEqual({ href: '/collaboration/cabinets/c1', label: 'Öffnen' })
+
+    const freigabeOffen = controlTowerCabinet('c2', 'K-02', 'p1', 'P-1', 'Projekt 1', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      tasks: [
+        { id: 't1', title: 'Planung fertig', status: 'DONE', isRequired: true, sequence: 1, stageCode: 'PLANUNG' },
+        { id: 't2', title: 'Montage fertig', status: 'DONE', isRequired: true, sequence: 2, stageCode: 'UMSETZUNG' },
+        { id: 't3', title: 'Abnahme-Checkliste', status: 'DONE', isRequired: true, sequence: 3, stageCode: 'ABNAHME' },
+      ],
+    }))
+    expect(direkteGgaCabinetAktion(freigabeOffen)).toEqual({ href: '/collaboration/cabinets/c2/pruefung', label: 'Prüfung' })
+  })
+
+  it('Produktblock 3 Abschnitt 11: routet auch dann zur Prüfungsseite, wenn naechsteAktion bereits eindeutig "Prüfung planen"/"Prüfung durchführen" ist, obwohl lifecycleStage noch nicht PRUEFUNG_ABNAHME erreicht hat (Fund aus Produktblock 2, z. B. QA-TEST-018.1-001)', () => {
+    // Bestandsaufnahme abgeschlossen, keine offene Pflichtaufgabe/Checkliste,
+    // kein Blocker, aber bereits eine angeforderte (GEPLANT) interne Prüfung
+    // — lifecycleStage bleibt PLANUNG (planungsfortschritt < 100, da keine
+    // Pflichtaufgaben definiert sind → null, nicht "fertig"). Kein Gründe-
+    // Badge greift, trotzdem ist "Prüfung durchführen" der eindeutige nächste
+    // Schritt.
+    const cabinet = controlTowerCabinet('c9', 'K-09', 'p1', 'P-1', 'Projekt 1', baseSnapshot({
+      bestandsaufnahmeAm: new Date('2026-01-01'),
+      approvals: [{ id: 'a1', status: 'REQUESTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-02-01'), decidedAt: null, stageCode: 'ABNAHME' }],
+    }))
+    expect(cabinet.naechsteAktion).toBe('Prüfung durchführen')
+    expect(cabinet.lifecycleStage).not.toBe('PRUEFUNG_ABNAHME')
+    expect(ggaControlTowerReasons(cabinet)).toEqual([])
+    expect(direkteGgaCabinetAktion(cabinet)).toEqual({ href: '/collaboration/cabinets/c9/pruefung', label: 'Prüfung' })
+  })
+
+  it('Produktblock 3 Abschnitt 11: bleibt bei "Öffnen", solange noch eine offene Bestandsaufnahme/Aufgabe/Checkliste den nächsten Schritt bestimmt (keine vorzeitige Umgehung)', () => {
+    const nochNichtAufgenommen = controlTowerCabinet('c10', 'K-10', 'p1', 'P-1', 'Projekt 1', baseSnapshot())
+    expect(nochNichtAufgenommen.naechsteAktion).toBe('Bestandsaufnahme durchführen')
+    expect(direkteGgaCabinetAktion(nochNichtAufgenommen)).toEqual({ href: '/collaboration/cabinets/c10', label: 'Öffnen' })
+  })
+})
+
+describe('naechsterSchrittFuerCabinet (GGA-Portal Produktblock 2): geteilte Ableitung, wiederverwendet von Dashboard und Projektarbeitsplatz', () => {
+  it('nennt bei nicht bestandener Prüfart den konkreten nächsten Schritt statt der generischen naechsteAktion-Fallback-Meldung', () => {
+    expect(naechsterSchrittFuerCabinet({ naechsteAktion: 'Maßnahmen abgeschlossen', nichtBestandenePruefarten: ['ELEKTRO'] })).toBe('Elektroprüfung durchführen')
+    expect(naechsterSchrittFuerCabinet({ naechsteAktion: 'Maßnahmen abgeschlossen', nichtBestandenePruefarten: ['LUEFTUNG', 'VDE'] })).toBe('Lüftungsprüfung durchführen · VDE-Prüfung durchführen')
+  })
+
+  it('fällt ohne nicht bestandene Prüfart auf die bereits vorhandene naechsteAktion zurück', () => {
+    expect(naechsterSchrittFuerCabinet({ naechsteAktion: 'Interne Freigabe anfordern', nichtBestandenePruefarten: [] })).toBe('Interne Freigabe anfordern')
+  })
+})
+
+describe('direktAktionFuerWorklistTyp (GGA-Portal Produktblock 3/4): geteilte Aktionswahl, jetzt auch von "Meine Arbeit" verwendet — immer vollständige Pfade, nicht nur Anker', () => {
+  it('MASSNAHME und MANGEL führen auf den jeweiligen Anker der Schrankseite (vollständiger Pfad)', () => {
+    expect(direktAktionFuerWorklistTyp('MASSNAHME', 'cab-1', true)).toEqual({ href: '/collaboration/cabinets/cab-1#massnahmen', label: 'Maßnahme öffnen' })
+    expect(direktAktionFuerWorklistTyp('MANGEL', 'cab-1', true)).toEqual({ href: '/collaboration/cabinets/cab-1#blocker', label: 'Blocker öffnen' })
+  })
+
+  it('NAECHSTE_AKTION führt je nach Bestandsaufnahmestatus auf die Bestandsaufnahme- oder die Prüfseite', () => {
+    expect(direktAktionFuerWorklistTyp('NAECHSTE_AKTION', 'cab-1', false)).toEqual({ href: '/collaboration/cabinets/cab-1/bestandsaufnahme', label: 'Bestandsaufnahme öffnen' })
+    expect(direktAktionFuerWorklistTyp('NAECHSTE_AKTION', 'cab-1', true)).toEqual({ href: '/collaboration/cabinets/cab-1/pruefung', label: 'Prüfung öffnen' })
+  })
+
+  it('alle sicherheitsrelevanten Typen (Beanstandung/Überfällig/Nachprüfung/Freigaben) führen auf die Prüfseite', () => {
+    for (const type of ['BEANSTANDUNG', 'PRUEFUNG_UEBERFAELLIG', 'NACHPRUEFUNG', 'INTERNE_FREIGABE', 'BETREIBERFREIGABE'] as const) {
+      expect(direktAktionFuerWorklistTyp(type, 'cab-1', true)).toEqual({ href: '/collaboration/cabinets/cab-1/pruefung', label: 'Prüfung öffnen' })
+    }
+  })
+})
+
+describe('deriveGgaProjectWorklist: verantwortlichUserId (GGA-Portal Produktblock 4)', () => {
+  it('reicht verantwortlichUserId für Maßnahmen und Mängel durch, ohne den bestehenden Anzeigenamen zu verändern', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Elektro prüfen', dueDate: null, verantwortlich: 'Anna Muster', verantwortlichUserId: 'user-anna' }],
+      openBlockers: [{ id: 'b1', title: 'Kabelschaden', verantwortlich: 'Ben Beispiel', verantwortlichUserId: 'user-ben' }],
+    })
+    const entries = deriveGgaProjectWorklist([cabinet])
+    const massnahme = entries.find((e) => e.type === 'MASSNAHME')
+    const mangel = entries.find((e) => e.type === 'MANGEL')
+    expect(massnahme?.verantwortlich).toBe('Anna Muster')
+    expect(massnahme?.verantwortlichUserId).toBe('user-anna')
+    expect(mangel?.verantwortlich).toBe('Ben Beispiel')
+    expect(mangel?.verantwortlichUserId).toBe('user-ben')
+  })
+
+  it('lässt verantwortlichUserId bei allen anderen Eintragstypen bewusst null (kein zuverlässiger Einzel-Verantwortlicher im Datenmodell — CollaborationApproval/GgaCabinetPruefnachweis haben kein responsibleMembershipId)', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot({
+      approvals: [{ id: 'a1', status: 'REJECTED', approvalType: 'INTERNAL', requestedAt: new Date('2026-01-01'), decidedAt: new Date('2026-01-02'), stageCode: 'ABNAHME' }],
+    }))
+    const entries = deriveGgaProjectWorklist([cabinet])
+    expect(entries.length).toBeGreaterThan(0)
+    expect(entries.every((e) => e.verantwortlichUserId === null)).toBe(true)
+  })
+
+  it('ohne verantwortlichUserId im Input bleibt der Eintrag null (rückwärtskompatibel zu bestehenden Aufrufern ohne diese Angabe)', () => {
+    const cabinet = worklistCabinet('c1', 'K-001', baseSnapshot(), {
+      openRequiredTasks: [{ id: 't1', title: 'Alte Aufgabe ohne userId', dueDate: null, verantwortlich: 'Anna Muster' }],
+    })
+    const entries = deriveGgaProjectWorklist([cabinet])
+    expect(entries[0]?.verantwortlichUserId).toBeNull()
+  })
+})
+
+// GGA-Portal Produktblock 7: "Meine Arbeit" — vollständige persönliche
+// Arbeitswarteschlange. Schließt die bekannte Scope-Lücke aus Produktblock 4
+// (Tasks/Blocker ohne cabinetId wurden komplett aus der Liste gefiltert).
+describe('deriveGgaProjektPhasenWorklist (GGA-Portal Produktblock 7 Abschnitt 2-8, 12-13): Projekt-/Phasen-Arbeit ohne Schrankbezug', () => {
+  function projektTask(overrides: Partial<GgaProjektPhasenTaskInput> = {}): GgaProjektPhasenTaskInput {
+    return {
+      id: 't1', title: 'Aufnahme', status: 'IN_PROGRESS', isRequired: true, dueDate: null, cabinetId: null,
+      stage: { title: 'Konzept' }, project: { id: 'p1', projectNumber: 'GGA-0001', name: 'GGA Lagerplanung' },
+      responsibleMembership: null,
+      ...overrides,
+    }
+  }
+  function projektBlocker(overrides: Partial<GgaProjektPhasenBlockerInput> = {}): GgaProjektPhasenBlockerInput {
+    return {
+      id: 'b1', title: 'GVS Massname', status: 'OPEN', cabinetId: null,
+      stage: { title: 'Konzept' }, project: { id: 'p1', projectNumber: 'GGA-0001', name: 'GGA Lagerplanung' },
+      responsibleMembership: null,
+      ...overrides,
+    }
+  }
+
+  it('T3: Projekt-Task mit echter responsibleMembershipId (cabinetId null) erscheint mit zustaendigkeit MEINE', () => {
+    const entries = deriveGgaProjektPhasenWorklist([projektTask({ responsibleMembership: { userId: 'user-1' } })], [], 'user-1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].type).toBe('PROJEKT_MASSNAHME')
+    expect(entries[0].zustaendigkeit).toBe('MEINE')
+  })
+
+  it('T4: Projekt-Blocker mit echter responsibleMembershipId (cabinetId null) erscheint mit zustaendigkeit MEINE', () => {
+    const entries = deriveGgaProjektPhasenWorklist([], [projektBlocker({ responsibleMembership: { userId: 'user-1' } })], 'user-1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].type).toBe('PROJEKT_MANGEL')
+    expect(entries[0].zustaendigkeit).toBe('MEINE')
+    expect(entries[0].praesentationsStatus).toBe('KRITISCH')
+  })
+
+  it('T5: Phasen-Task übernimmt den echten Stage-Titel (keine erfundene Phase)', () => {
+    const entries = deriveGgaProjektPhasenWorklist([projektTask({ stage: { title: 'Planung' }, responsibleMembership: { userId: 'user-1' } })], [], 'user-1')
+    expect(entries[0].stageTitle).toBe('Planung')
+  })
+
+  it('T6: Phasen-Blocker übernimmt den echten Stage-Titel; ein Blocker ganz ohne Stage (rein projektweit) zeigt stageTitle null statt einer erfundenen Phase', () => {
+    const mitStage = deriveGgaProjektPhasenWorklist([], [projektBlocker({ stage: { title: 'Umsetzung' }, responsibleMembership: { userId: 'user-1' } })], 'user-1')
+    expect(mitStage[0].stageTitle).toBe('Umsetzung')
+    const ohneStage = deriveGgaProjektPhasenWorklist([], [projektBlocker({ stage: null })], 'user-1')
+    expect(ohneStage[0].stageTitle).toBeNull()
+  })
+
+  it('T7: fremd zugewiesener Task (responsibleMembership eines anderen Users) erscheint als TEAM, nicht MEINE', () => {
+    const entries = deriveGgaProjektPhasenWorklist([projektTask({ responsibleMembership: { userId: 'other-user' } })], [], 'user-1')
+    expect(entries[0].zustaendigkeit).toBe('TEAM')
+  })
+
+  it('T8: Task ohne responsibleMembershipId erscheint als TEAM — keine erfundene Zuweisung über Projektmitgliedschaft/Stage/sonstige Proxys', () => {
+    const entries = deriveGgaProjektPhasenWorklist([projektTask({ responsibleMembership: null })], [], 'user-1')
+    expect(entries[0].zustaendigkeit).toBe('TEAM')
+  })
+
+  it('T11: erledigte (DONE) oder übersprungene (SKIPPED) Projekt-/Phasen-Aufgaben werden nicht aufgenommen', () => {
+    expect(deriveGgaProjektPhasenWorklist([projektTask({ status: 'DONE' })], [], 'user-1')).toHaveLength(0)
+    expect(deriveGgaProjektPhasenWorklist([projektTask({ status: 'SKIPPED' })], [], 'user-1')).toHaveLength(0)
+  })
+
+  it('T12: gelöste/abgelehnte Blocker (Status ≠ OPEN) werden nicht aufgenommen', () => {
+    expect(deriveGgaProjektPhasenWorklist([], [projektBlocker({ status: 'RESOLVED' })], 'user-1')).toHaveLength(0)
+  })
+
+  it('optionale (nicht erforderliche) Projekt-/Phasen-Aufgabe wird nicht aufgenommen — identische Regel wie bei Schrank-Maßnahmen (isRequired)', () => {
+    expect(deriveGgaProjektPhasenWorklist([projektTask({ isRequired: false })], [], 'user-1')).toHaveLength(0)
+  })
+
+  it('T13/Abschnitt 4: eine Task MIT cabinetId wird von dieser Funktion ignoriert (gehört zur bestehenden Schrank-Worklist) — strukturell disjunkte Partitionierung statt titelbasierter Deduplizierung, auch bei identischem Titel', () => {
+    const cabinetTask = projektTask({ id: 'shared-id', cabinetId: 'cab-1', title: 'Gleicher Titel', responsibleMembership: { userId: 'user-1' } })
+    const projektNurTask = projektTask({ id: 'shared-id-2', cabinetId: null, title: 'Gleicher Titel', responsibleMembership: { userId: 'user-1' } })
+    const entries = deriveGgaProjektPhasenWorklist([cabinetTask, projektNurTask], [], 'user-1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].id).toBe('task-shared-id-2')
+  })
+
+  it('nutzt tagesUrgency() identisch zur Schrank-Maßnahme (Abschnitt 8, keine zweite Prioritäts-Engine): überfällige Projekt-/Phasen-Aufgabe erhält urgency=1, ueberfaellig=true, HANDLUNGSBEDARF', () => {
+    const entries = deriveGgaProjektPhasenWorklist([projektTask({ dueDate: new Date('2020-01-01'), responsibleMembership: { userId: 'user-1' } })], [], 'user-1', new Date('2026-09-20'))
+    expect(entries[0].urgency).toBe(1)
+    expect(entries[0].ueberfaellig).toBe(true)
+    expect(entries[0].praesentationsStatus).toBe('HANDLUNGSBEDARF')
+  })
+
+  it('Aufgabe ohne Fälligkeitsdatum erhält urgency=6 (ohne Frist) und praesentationsStatus IM_PLAN, nicht überfällig', () => {
+    const entries = deriveGgaProjektPhasenWorklist([projektTask({ dueDate: null, responsibleMembership: { userId: 'user-1' } })], [], 'user-1')
+    expect(entries[0].urgency).toBe(6)
+    expect(entries[0].ueberfaellig).toBe(false)
+    expect(entries[0].praesentationsStatus).toBe('IM_PLAN')
+  })
+
+  it('Abschnitt 7: Direktaktion einer Projekt-/Phasen-Aufgabe führt zum bestehenden Projektseiten-Anker #aufgaben (keine neue Route)', () => {
+    expect(direktAktionFuerProjektArbeit('PROJEKT_MASSNAHME', 'p1')).toEqual({ href: '/collaboration/projects/p1#aufgaben', label: 'Aufgabe öffnen' })
+  })
+
+  it('Abschnitt 7: Direktaktion eines Projekt-/Phasen-Blockers führt zum bestehenden Projektseiten-Anker #blocker (keine neue Route)', () => {
+    expect(direktAktionFuerProjektArbeit('PROJEKT_MANGEL', 'p1')).toEqual({ href: '/collaboration/projects/p1#blocker', label: 'Blocker öffnen' })
+  })
+
+  it('Abschnitt 8: praesentationsStatusFuerProjektArbeit ordnet ausschließlich das bestehende GgaPresentationStatus-Vokabular zu, ohne neue Statuslogik', () => {
+    expect(praesentationsStatusFuerProjektArbeit('PROJEKT_MANGEL', false)).toBe('KRITISCH')
+    expect(praesentationsStatusFuerProjektArbeit('PROJEKT_MASSNAHME', true)).toBe('HANDLUNGSBEDARF')
+    expect(praesentationsStatusFuerProjektArbeit('PROJEKT_MASSNAHME', false)).toBe('IM_PLAN')
+  })
+
+  it('Abschnitt 12 (GVS-Massname-Testfall): offener, cabinetId-loser Blocker ohne responsibleMembershipId erscheint ehrlich als TEAM, nicht MEINE — Zuweisung wird nicht künstlich erzeugt, um den Test grün zu bekommen', () => {
+    const entries = deriveGgaProjektPhasenWorklist(
+      [],
+      [projektBlocker({ id: 'gvs-1', title: 'GVS Massname', status: 'OPEN', cabinetId: null, stage: { title: 'Konzept' }, responsibleMembership: null })],
+      'admin-user',
+    )
+    expect(entries).toHaveLength(1)
+    expect(entries[0].zustaendigkeit).toBe('TEAM')
+    expect(entries[0].praesentationsStatus).toBe('KRITISCH')
+  })
+
+  it('mischt Tasks und Blocker mehrerer Projekte korrekt getrennt (projectId/projectNumber/projectName je Eintrag aus dem jeweils eigenen Datensatz, kein Vermischen)', () => {
+    const entries = deriveGgaProjektPhasenWorklist(
+      [projektTask({ id: 't-a', project: { id: 'p1', projectNumber: 'GGA-0001', name: 'Lagerplanung' }, responsibleMembership: { userId: 'user-1' } })],
+      [projektBlocker({ id: 'b-a', project: { id: 'p2', projectNumber: 'GGA-0002', name: 'Zweitprojekt' }, responsibleMembership: { userId: 'user-1' } })],
+      'user-1',
+    )
+    expect(entries.find((e) => e.type === 'PROJEKT_MASSNAHME')?.projectId).toBe('p1')
+    expect(entries.find((e) => e.type === 'PROJEKT_MANGEL')?.projectId).toBe('p2')
   })
 })

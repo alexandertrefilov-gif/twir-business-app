@@ -616,6 +616,28 @@ export async function getGgaControlTowerOverview() {
   if (projectIds.length === 0) return deriveGgaControlTowerOverview([], activeProjectIds)
 
   const cabinets = await prisma.ggaCabinet.findMany({ where: { projectId: { in: projectIds }, deletedAt: null }, select: cabinetListSelect })
+
+  // GGA-Portal-Weiterentwicklung: EIN gebündelter Query für alle Prüfnachweise
+  // aller sichtbaren Cabinets (statt N+1), damit "Lüftung/Elektro/VDE nicht
+  // bestanden" im Control Tower sichtbar wird — dieselbe, bereits bestehende
+  // deriveCurrentPruefnachweis()-Ableitung wie in getGgaCabinetPruefnachweisOverview()
+  // (nur hier über mehrere Cabinets hinweg gruppiert statt für eines).
+  const cabinetIds = cabinets.map((cabinet) => cabinet.id)
+  const pruefnachweisRows = cabinetIds.length
+    ? await prisma.ggaCabinetPruefnachweis.findMany({
+      where: { cabinetId: { in: cabinetIds } },
+      select: { id: true, cabinetId: true, pruefart: true, ergebnis: true, pruefdatum: true, ausfuehrendeStelle: true, bemerkung: true, documentId: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    })
+    : []
+  const pruefnachweiseByCabinet = new Map<string, GgaCabinetPruefnachweisSnapshot[]>()
+  for (const row of pruefnachweisRows) {
+    const list = pruefnachweiseByCabinet.get(row.cabinetId) ?? []
+    list.push(toPruefnachweisSnapshot(row))
+    pruefnachweiseByCabinet.set(row.cabinetId, list)
+  }
+  const GGA_PRUEFARTEN: GgaPruefart[] = ['LUEFTUNG', 'ELEKTRO', 'VDE']
+
   const entries: GgaControlTowerCabinetEntry[] = cabinets.map((cabinet) => ({
     id: cabinet.id,
     kennung: cabinet.kennung,
@@ -623,6 +645,9 @@ export async function getGgaControlTowerOverview() {
     projectId: cabinet.projectId,
     projectNumber: cabinet.project.projectNumber,
     projectName: cabinet.project.name,
+    nichtBestandenePruefarten: GGA_PRUEFARTEN.filter(
+      (pruefart) => deriveCurrentPruefnachweis(pruefnachweiseByCabinet.get(cabinet.id) ?? [], pruefart)?.ergebnis === 'NICHT_BESTANDEN',
+    ),
     ...deriveCabinetStatus(toCabinetSnapshot(cabinet)),
   }))
   return deriveGgaControlTowerOverview(entries, activeProjectIds)

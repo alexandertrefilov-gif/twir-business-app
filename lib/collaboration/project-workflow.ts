@@ -130,7 +130,12 @@ export function getStageCompletionBlocker(stage: CollaborationStageSnapshot): st
   return null
 }
 
-function satisfiesRequiredStatus(actual: CollaborationStageStatus, required: CollaborationStageStatus) {
+// GGA-Portal Produktblock 5 Abschnitt 4: exportiert (war zuvor datei-lokal),
+// damit die Projekt-Timeline exakt dieselbe Prüfung wiederverwenden kann, um
+// anzuzeigen, WELCHE Abhängigkeit einen NOT_STARTED-Stage noch blockiert
+// ("Wartet auf Abschluss: Planung") — keine zweite Dependency-Logik, nur
+// dieselbe Funktion auch außerhalb von deriveStageStatuses() sichtbar.
+export function satisfiesRequiredStatus(actual: CollaborationStageStatus, required: CollaborationStageStatus) {
   if (required === 'COMPLETED' || required === 'SKIPPED') return completeStatuses.has(actual)
   return actual === required
 }
@@ -169,6 +174,46 @@ export function deriveStageStatuses(stages: CollaborationStageSnapshot[]): Deriv
   return [...stages]
     .sort((a, b) => a.sequence - b.sequence)
     .map((stage) => ({ ...stage, derivedStatus: resolveStatus(stage) }))
+}
+
+// GGA-Portal Produktblock 5 Abschnitt 2/14: Fortschritt EINER Phase, exakt
+// nach demselben Muster wie progressForStages() in cabinet-workflow.ts
+// (erforderliche Aufgaben/Checklistenpunkte, fertig/gesamt) — hier auf
+// CollaborationTask/-ChecklistItem einer Projektphase statt auf GgaCabinet-
+// Daten angewendet. Bewusst eine eigene, von derivedStatus GETRENNTE Zahl:
+// 100% bedeutet nicht automatisch "abgeschlossen", solange z. B. eine
+// Freigabe fehlt oder ein Blocker offen ist (siehe getStageCompletionBlocker).
+export function calculateStageProgress(stage: { tasks?: { isRequired: boolean; status: string }[]; checklistItems?: { isRequired: boolean; completed: boolean }[] }): number | null {
+  const tasks = (stage.tasks ?? []).filter((t) => t.isRequired)
+  const items = (stage.checklistItems ?? []).filter((c) => c.isRequired)
+  const total = tasks.length + items.length
+  if (total === 0) return null
+  const done = tasks.filter((t) => ['DONE', 'SKIPPED'].includes(t.status)).length + items.filter((c) => c.completed).length
+  return Math.round((done / total) * 100)
+}
+
+// GGA-Portal Produktblock 5 Abschnitt 4: erklärt ein bereits berechnetes
+// NOT_STARTED — welche konkrete Abhängigkeit ist (noch) nicht erfüllt.
+// Nutzt exakt dieselbe Prüfung wie deriveStageStatuses() intern
+// (satisfiesRequiredStatus()) — keine zweite Dependency-Logik, nur eine
+// zusätzliche Erklärung für ein bereits bestehendes Ergebnis. Der Aufrufer
+// liefert das bereits vorhandene Label für den Zielstatus (z. B. aus
+// COLLABORATION_STAGE_STATUS_LABELS) — diese Datei kennt keine UI-Labels.
+export function deriveStageDependencyWaitReason(
+  stage: DerivedCollaborationStage,
+  allStages: DerivedCollaborationStage[],
+  requiredStatusLabel: (status: CollaborationStageStatus) => string,
+): string | null {
+  if (stage.derivedStatus !== 'NOT_STARTED' || stage.dependencies.length === 0) return null
+  const byId = new Map(allStages.map((s) => [s.id, s]))
+  for (const dependency of stage.dependencies) {
+    const dependencyStage = byId.get(dependency.dependsOnStageId)
+    if (!dependencyStage) continue
+    if (!satisfiesRequiredStatus(dependencyStage.derivedStatus, dependency.requiredStatus)) {
+      return `Wartet auf ${requiredStatusLabel(dependency.requiredStatus)}: ${dependencyStage.title}`
+    }
+  }
+  return null
 }
 
 export function calculateProjectProgress(stages: CollaborationStageSnapshot[]): number | null {
