@@ -11,6 +11,13 @@ interface ConfirmDialogProps {
   confirmLabel?: string
   danger?:     boolean
   onConfirm:   () => Promise<void>
+  // DELETE-SAFETY-001 Phase 2 — CRITICAL-Tier: zusätzlich zur normalen
+  // Bestätigung eine Checkbox UND eine exakte Texteingabe verlangen, bevor
+  // der Bestätigen-Button überhaupt aktiv wird. Rein clientseitig — die
+  // jeweilige Server-Aktion MUSS dieselbe Eingabe serverseitig erneut
+  // prüfen (siehe deleteProject()), das ist hier keine alleinige Barriere.
+  acknowledgeLabel?: string
+  typedConfirmation?: { label: string; expected: string; placeholder?: string }
 }
 
 export function ConfirmDialog({
@@ -20,15 +27,29 @@ export function ConfirmDialog({
   confirmLabel = 'Bestätigen',
   danger = false,
   onConfirm,
+  acknowledgeLabel,
+  typedConfirmation,
 }: ConfirmDialogProps) {
   const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
+  const [acknowledged, setAcknowledged] = useState(false)
+  const [typedValue, setTypedValue] = useState('')
   const submittingRef = useRef(false)
   const titleId = useId()
   const descriptionId = useId()
+  const acknowledgeId = useId()
+  const typedConfirmationId = useId()
+
+  const canConfirm = (!acknowledgeLabel || acknowledged) && (!typedConfirmation || typedValue === typedConfirmation.expected)
+
+  function openDialog() {
+    setAcknowledged(false)
+    setTypedValue('')
+    setOpen(true)
+  }
 
   function handleConfirm() {
-    if (submittingRef.current) return
+    if (submittingRef.current || !canConfirm) return
     submittingRef.current = true
     // Die Bestätigung ist abgeschlossen; der Dialog darf die Dokumentseite
     // während einer längeren Server Action (z. B. Archivierung) nicht sperren.
@@ -47,7 +68,7 @@ export function ConfirmDialog({
       <span
         aria-busy={isPending}
         className={isPending ? 'pointer-events-none opacity-70' : undefined}
-        onClick={() => !isPending && !submittingRef.current && setOpen(true)}
+        onClick={() => !isPending && !submittingRef.current && openDialog()}
       >
         {trigger}
       </span>
@@ -69,7 +90,38 @@ export function ConfirmDialog({
           {/* Dialog */}
           <div className="relative bg-white rounded-xl border border-stone-200 shadow-2xl w-full max-w-sm mx-4 p-6">
             <h2 id={titleId} className="text-base font-600 text-foreground mb-2">{title}</h2>
-            <p id={descriptionId} className="text-sm text-muted-foreground mb-6">{description}</p>
+            <p id={descriptionId} className="text-sm text-muted-foreground mb-4">{description}</p>
+
+            {acknowledgeLabel && (
+              <label className="mb-3 flex items-start gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={acknowledged}
+                  disabled={isPending}
+                  onChange={(e) => setAcknowledged(e.target.checked)}
+                />
+                {acknowledgeLabel}
+              </label>
+            )}
+
+            {typedConfirmation && (
+              <div className="mb-4">
+                <label htmlFor={typedConfirmationId} className="mb-1 block text-xs font-500 text-muted-foreground">
+                  {typedConfirmation.label}
+                </label>
+                <input
+                  id={typedConfirmationId}
+                  type="text"
+                  autoComplete="off"
+                  value={typedValue}
+                  disabled={isPending}
+                  onChange={(e) => setTypedValue(e.target.value)}
+                  placeholder={typedConfirmation.placeholder}
+                  className="h-9 w-full rounded-md border border-stone-200 px-3 text-sm mono focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            )}
 
             <div className="flex gap-2 justify-end">
               <button
@@ -82,7 +134,7 @@ export function ConfirmDialog({
               </button>
               <button
                 type="button"
-                disabled={isPending}
+                disabled={isPending || !canConfirm}
                 onClick={handleConfirm}
                 className={`
                   h-9 px-4 rounded-md text-sm font-500 text-white transition-colors disabled:opacity-50

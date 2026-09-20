@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth/options'
 import { Action, requirePermission, Resource } from '@/lib/auth/permissions'
-import { activateCollaboration, assignInvoiceToProject, assignOfferToProject, assignOrderToProject, createProject, linkExistingCollaborationProject, updateProject } from '@/lib/services/project.service'
+import { activateCollaboration, assignInvoiceToProject, assignOfferToProject, assignOrderToProject, createProject, deleteProject, linkExistingCollaborationProject, updateProject } from '@/lib/services/project.service'
 import { ensureActorMembership } from '@/lib/services/collaboration-handover.service'
 
 async function actor() { const session = await getServerSession(authOptions); if (!session?.user) throw new Error('Nicht angemeldet'); return { userId: session.user.id, userEmail: session.user.email } }
@@ -66,4 +66,24 @@ export async function assignExistingProjectAction(kind: 'offer' | 'order' | 'inv
     revalidatePath(`/projects/${projectId}`)
     return {}
   } catch (e) { return { error: e instanceof Error ? e.message : 'Zuordnung fehlgeschlagen' } }
+}
+
+export interface DeleteProjectActionState { success: boolean; error?: string }
+
+// DELETE-SAFETY-001 — bewusst NICHT hinter requireTestDeleteEnabled():
+// im Gegensatz zu den Test-Delete-Pfaden (Customer/Offer/Order/
+// ServiceReport/Invoice) ist die Projektlöschung eine echte, dauerhaft
+// nutzbare Funktion und nutzt die bereits im PERMISSION_MATRIX definierte
+// 'project:delete'-Berechtigung (OFFICE_ROLES).
+export async function deleteProjectAction(projectId: string, confirmedProjectNumber: string): Promise<DeleteProjectActionState> {
+  try {
+    await requirePermission(Resource.PROJECT, Action.DELETE)
+    const who = await actor()
+    await deleteProject(projectId, confirmedProjectNumber, who)
+    revalidatePath('/projects')
+    revalidatePath(`/projects/${projectId}`)
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Projekt konnte nicht gelöscht werden' }
+  }
 }

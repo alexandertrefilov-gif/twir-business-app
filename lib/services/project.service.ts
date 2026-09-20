@@ -160,3 +160,58 @@ export async function linkExistingCollaborationProject(projectId: string, collab
     throw error
   }
 }
+
+// ── DELETE-SAFETY-001: kontrollierte Projektlöschung ───────────
+// Soft Delete über das bereits vorhandene, bislang ungenutzte deletedAt-Feld
+// (siehe listProjects/getProject, die bereits deletedAt:null filtern) statt
+// echtem prisma.project.delete() — kein Cascade über die im Schema
+// definierten SetNull-Relationen (Offer/Order/Invoice/Document) hinaus.
+// Blockiert vollständig, sobald geschäftliche Vorgänge ODER eine
+// Zusammenarbeit verknüpft sind — kein stilles Orphaning, kein Cascade in
+// CollaborationProject/GGA. Nimmt bewusst das bereits geladene
+// projectInclude-Ergebnis entgegen, damit die Projektseite (die das Projekt
+// ohnehin lädt) keine zusätzliche Query für die Anzeige der Blocker braucht.
+export type ProjectWithRelations = Awaited<ReturnType<typeof projectOrThrow>>
+export function getProjectDeleteBlockers(project: ProjectWithRelations): string[] {
+  const reasons: string[] = []
+  const orderCount = project.orders.length
+  if (orderCount > 0) reasons.push(`${orderCount} ${orderCount === 1 ? 'Auftrag' : 'Aufträge'}`)
+  const serviceCount = project.orders.reduce((sum, o) => sum + o.serviceReports.length, 0)
+  if (serviceCount > 0) reasons.push(`${serviceCount} ${serviceCount === 1 ? 'Leistung' : 'Leistungen'}`)
+  const offerCount = project.offers.length
+  if (offerCount > 0) reasons.push(`${offerCount} ${offerCount === 1 ? 'Angebot' : 'Angebote'}`)
+  const invoiceCount = project.invoices.length
+  if (invoiceCount > 0) reasons.push(`${invoiceCount} ${invoiceCount === 1 ? 'Rechnung' : 'Rechnungen'}`)
+  const documentCount = project.documents.length
+  if (documentCount > 0) reasons.push(`${documentCount} ${documentCount === 1 ? 'Dokument' : 'Dokumente'}`)
+  if (project.collaborationProject) reasons.push('Zusammenarbeit aktiv')
+  return reasons
+}
+
+export async function deleteProject(projectId: string, confirmedProjectNumber: string, actor: Actor) {
+  return prisma.$transaction(async tx => {
+    // Serverseitig frisch geladen (nicht der ggf. veraltete Stand der UI) —
+    // die Bestätigung und der Abhängigkeits-Check gelten für den aktuellen
+    // Zustand, nicht für einen möglicherweise überholten Client-Snapshot.
+    const project = await projectOrThrow(projectId, tx)
+    if (confirmedProjectNumber !== project.projectNumber) {
+      throw new BusinessRuleError('Die eingegebene Projektnummer stimmt nicht mit der Projektnummer dieses Projekts überein.')
+    }
+    const blockers = getProjectDeleteBlockers(project)
+    if (blockers.length > 0) {
+      throw new BusinessRuleError(`Dieses Projekt kann nicht gelöscht werden, weil bereits geschäftliche Vorgänge damit verknüpft sind:\n${blockers.join('\n')}`)
+    }
+    // updateMany mit deletedAt:null-Guard statt update(): eine doppelte
+    // Löschanfrage (T11, z.B. Doppelklick/Retry) findet beim zweiten Versuch
+    // count===0 und beendet sich sauber, ohne Fehler oder doppelten Audit-Eintrag.
+    const result = await tx.project.updateMany({ where: { id: projectId, deletedAt: null }, data: { deletedAt: new Date() } })
+    if (result.count === 0) return
+    await buildAuditLogCreate(tx, {
+      ...actor,
+      action: 'DELETE',
+      entityType: 'project',
+      entityId: projectId,
+      oldValue: { projectNumber: project.projectNumber, name: project.name },
+    })
+  })
+}

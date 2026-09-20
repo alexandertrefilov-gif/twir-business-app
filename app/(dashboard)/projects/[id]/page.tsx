@@ -1,15 +1,18 @@
 import Link from 'next/link'
 import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
-import { getProject, listLinkableCollaborationProjects } from '@/lib/services/project.service'
+import { getProject, getProjectDeleteBlockers, listLinkableCollaborationProjects } from '@/lib/services/project.service'
 import { PROJECT_STATUS_LABELS, PROJECT_PARTICIPANT_ROLE_LABELS, COLLABORATION_PROJECT_STATUS_LABELS } from '@/types/enums'
 import { activateProjectCollaborationAction } from '../actions'
 import { LinkCollaborationProjectDialog } from '@/components/projects/LinkCollaborationProjectDialog'
+import { ProjectDeleteAction } from '@/components/projects/ProjectDeleteAction'
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   await requirePagePermission(Resource.PROJECT, Action.READ)
   const project = await getProject((await params).id)
   const services = project.orders.flatMap(o => o.serviceReports)
   const canManageCollaboration = await hasPermission(Resource.PROJECT, Action.UPDATE)
   const linkableCollaborationProjects = canManageCollaboration && !project.collaborationProject ? await listLinkableCollaborationProjects() : []
+  const canDelete = await hasPermission(Resource.PROJECT, Action.DELETE)
+  const deleteBlockers = canDelete ? getProjectDeleteBlockers(project) : []
   return <main className="space-y-6"><header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-stone-200 bg-white p-5"><div><p className="text-sm text-muted-foreground">{project.projectNumber} · {PROJECT_STATUS_LABELS[project.status]}</p><h1 className="mt-1 text-2xl font-700">{project.name}</h1><p className="mt-2 text-sm">{project.customer.number} · {project.customer.name}</p><p className="mt-1 text-sm text-muted-foreground">{[project.location,project.building,project.floor,project.area].filter(Boolean).join(' · ') || 'Kein Standort hinterlegt'}</p></div>{canManageCollaboration && <Link href={`/projects/${project.id}/edit`} className="min-h-9 rounded-md border border-stone-200 bg-white px-3 py-2 text-sm font-500 text-foreground hover:bg-stone-50">Bearbeiten</Link>}</header><section className="grid gap-4 md:grid-cols-5">{[['Angebote',project.offers.length],['Aufträge',project.orders.length],['Leistungsnachweise',services.length],['Rechnungen',project.invoices.length],['Dokumente',project.documents.length]].map(([label,value])=><div key={String(label)} className="rounded-xl border bg-white p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-700">{value}</p></div>)}</section><section className="rounded-xl border bg-white p-5"><h2 className="font-600">Kaufmännisch</h2><div className="mt-3 grid gap-2 text-sm"><p>Angebote: {project.offers.length ? project.offers.map(o=><Link className="mr-2 text-blue-700" key={o.id} href={`/offers/${o.id}`}>{o.offerNumber}</Link>) : '—'}</p><p>Aufträge: {project.orders.length ? project.orders.map(o=><Link className="mr-2 text-blue-700" key={o.id} href={`/orders/${o.id}`}>{o.orderNumber}</Link>) : '—'}</p><p>Leistungsnachweise: {services.length ? services.map(s=><Link className="mr-2 text-blue-700" key={s.id} href={`/services/${s.id}`}>{s.reportNumber}</Link>) : '—'}</p><p>Rechnungen: {project.invoices.length ? project.invoices.map(i=><Link className="mr-2 text-blue-700" key={i.id} href={`/invoices/${i.id}`}>{i.invoiceNumber ?? 'Entwurf'}</Link>) : '—'}</p></div></section><section className="rounded-xl border bg-white p-5"><h2 className="font-600">Beteiligte</h2><ul className="mt-3 text-sm">{project.participants.map(p=><li key={p.id}>{p.user.firstName} {p.user.lastName} · {PROJECT_PARTICIPANT_ROLE_LABELS[p.role]}</li>)}{!project.participants.length&&<li className="text-muted-foreground">Keine Teilnehmer zugeordnet.</li>}</ul></section><section className="rounded-xl border bg-white p-5"><h2 className="font-600">Zusammenarbeit</h2>{project.collaborationProject
     ? <div className="mt-2 text-sm"><p>{project.collaborationProject.projectNumber} · {project.collaborationProject.name}</p><p className="mt-1 text-muted-foreground">Status: {COLLABORATION_PROJECT_STATUS_LABELS[project.collaborationProject.status]} · Health: {project.collaborationProject.healthStatus}</p><Link className="mt-3 inline-block text-blue-700 hover:underline" href={`/collaboration/projects/${project.collaborationProject.id}`}>Zusammenarbeit öffnen</Link></div>
     : <div className="mt-2">
@@ -18,5 +21,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
           <form action={activateProjectCollaborationAction.bind(null, project.id)}><button className="min-h-9 rounded-md bg-blue-600 px-3 py-2 text-sm font-600 text-white">Für Zusammenarbeit freigeben</button></form>
           <LinkCollaborationProjectDialog projectId={project.id} projectNumber={project.projectNumber} projectName={project.name} options={linkableCollaborationProjects} />
         </div>}
-      </div>}</section></main>
+      </div>}</section>
+  {canDelete && <ProjectDeleteAction projectId={project.id} projectNumber={project.projectNumber} projectName={project.name} blockers={deleteBlockers} />}
+  </main>
 }
