@@ -45,8 +45,8 @@ describe('ProjectRowDeleteAction — Wiederverwendung von DELETE-SAFETY-001 (kei
 
   it('nutzt den zentralen ConfirmDialog mit Checkbox und Kennungs-Bestätigung wie die Projektdetailseite', () => {
     expect(component).toContain("import { ConfirmDialog } from '@/components/shared/ConfirmDialog'")
-    expect(component).toContain('acknowledgeLabel=')
-    expect(component).toContain('typedConfirmation=')
+    expect(component).toContain('acknowledgeLabel:')
+    expect(component).toContain('typedConfirmation:')
     expect(component).toContain('expected: projectNumber')
   })
 

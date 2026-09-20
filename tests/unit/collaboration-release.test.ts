@@ -61,7 +61,7 @@ describe('actions.ts — releaseCollaborationAction (Permission-Wiederverwendung
   })
 })
 
-describe('ProjectRowDeleteAction — Zusammenarbeits-Gate (DELETE-SAFETY-004)', () => {
+describe('ProjectRowDeleteAction — Zusammenarbeits-Gate (DELETE-SAFETY-004/005)', () => {
   const component = read('components/projects/ProjectRowDeleteAction.tsx')
 
   it('nutzt weiterhin ausschließlich den zentralen ConfirmDialog, keine zweite Modal-Engine', () => {
@@ -70,9 +70,9 @@ describe('ProjectRowDeleteAction — Zusammenarbeits-Gate (DELETE-SAFETY-004)', 
     expect(component).not.toMatch(/createPortal/)
   })
 
-  it('bietet bei aktiver Zusammenarbeit "Zusammenarbeit öffnen" und "Zusammenarbeit aufheben …" an', () => {
-    expect(component).toContain("label: 'Zusammenarbeit öffnen'")
-    expect(component).toContain("label: 'Zusammenarbeit aufheben …'")
+  it('bietet bei aktiver Zusammenarbeit "Zusammenarbeit öffnen" und "Verbindung lösen" an', () => {
+    expect(component).toContain("{ label: 'Zusammenarbeit öffnen', onClick: openCollaboration }")
+    expect(component).toContain("{ label: 'Verbindung lösen', onClick: startRelease }")
   })
 
   it('zeigt beim internen Projekt löschen KEINEN Force-Delete, sondern verweist auf den Rückbau-Schritt', () => {
@@ -80,12 +80,47 @@ describe('ProjectRowDeleteAction — Zusammenarbeits-Gate (DELETE-SAFETY-004)', 
     expect(component).not.toContain('Force')
   })
 
-  it('setzt nach erfolgreicher Aufhebung wieder Schritt "delete" (kein Verbleib im Rückbau-Dialog)', () => {
+  it('setzt nach erfolgreicher Aufhebung wieder mode "delete" (kein Verbleib im Rückbau-Dialog)', () => {
     const fn = component.slice(component.indexOf('async function release()'), component.indexOf('function openCollaboration'))
-    expect(fn).toContain("setStep('delete')")
+    expect(fn).toContain("setMode('delete')")
   })
 
   it('ruft releaseCollaborationAction mit der Projektnummer als Identitätsbestätigung auf', () => {
     expect(component).toContain('releaseCollaborationAction(projectId, projectNumber)')
+  })
+
+  // DELETE-SAFETY-005 — Regressionsschutz gegen den konkreten Bug: ein
+  // zweites, per lokalem State bedingt gerendertes ConfirmDialog (eigener
+  // unsichtbarer Trigger) verlor beim Abbrechen den einzigen sichtbaren
+  // Löschen-Trigger dauerhaft. Jetzt: genau EIN <ConfirmDialog>-Element im
+  // gesamten Rückgabewert, dessen trigger-Prop nicht von `mode` abhängt.
+  it('rendert genau EIN <ConfirmDialog>-Element (kein bedingter zweiter Dialog mit eigenem Trigger)', () => {
+    const openTags = component.match(/<ConfirmDialog\b/g) ?? []
+    expect(openTags.length).toBe(1)
+  })
+
+  it('der Trigger-Button ist unconditional Teil des Rückgabewerts, kein "hidden"-Platzhalter-Trigger', () => {
+    expect(component).not.toMatch(/trigger=\{<span hidden/)
+    expect(component).toContain('trigger={triggerButton}')
+    // triggerButton wird unbedingt (außerhalb jeder if/mode-Verzweigung) definiert.
+    const beforeBranches = component.slice(0, component.indexOf('const isCollaborationGate'))
+    expect(beforeBranches).toContain('const triggerButton =')
+  })
+
+  it('startRelease wechselt nur den Dialog-Inhalt (mode), schließt/öffnet keinen Dialog erneut', () => {
+    const fn = component.slice(component.indexOf('async function startRelease'), component.indexOf('async function release()'))
+    expect(fn).not.toContain('setOpen')
+  })
+})
+
+describe('ConfirmDialog — Schließen-Button-Beschriftung (DELETE-SAFETY-005)', () => {
+  const dialog = read('components/shared/ConfirmDialog.tsx')
+
+  it('zeigt "Abbrechen" im reinen Auswahl-Gate (blocked ohne blockedReasons), "Schließen" nur bei echten Blockierungsgründen', () => {
+    expect(dialog).toContain("!checking && !!blockedReasons?.length ? 'Schließen' : 'Abbrechen'")
+  })
+
+  it('defaultOpen wurde entfernt (kein Dialog muss mehr "sofort offen" gemountet werden)', () => {
+    expect(dialog).not.toContain('defaultOpen')
   })
 })

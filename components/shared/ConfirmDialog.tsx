@@ -39,11 +39,6 @@ interface ConfirmDialogProps {
   // "Zusammenarbeit öffnen", "Zusammenarbeit aufheben …"), links von
   // "Schließen" platziert. Nur im blockierten Zustand relevant.
   extraActions?: { label: string; onClick: () => void }[]
-  // DELETE-SAFETY-004 — öffnet den Dialog sofort beim Mounten statt erst
-  // beim Klick auf `trigger`. Für einen zweiten, direkt anschließenden
-  // Dialog-Schritt (z.B. nach einer Aktion aus extraActions), der ohne
-  // eigenen sichtbaren Trigger-Klick erscheinen muss.
-  defaultOpen?: boolean
 }
 
 export function ConfirmDialog({
@@ -59,10 +54,9 @@ export function ConfirmDialog({
   blocked = false,
   checking = false,
   extraActions,
-  defaultOpen = false,
 }: ConfirmDialogProps) {
   const isBlocked = checking || blocked || (!!blockedReasons && blockedReasons.length > 0)
-  const [open, setOpen] = useState(defaultOpen)
+  const [open, setOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [acknowledged, setAcknowledged] = useState(false)
   const [typedValue, setTypedValue] = useState('')
@@ -186,7 +180,7 @@ export function ConfirmDialog({
                 onClick={() => setOpen(false)}
                 className="h-9 px-4 rounded-md border border-stone-200 bg-white text-sm font-500 text-foreground hover:bg-stone-50 transition-colors disabled:opacity-50"
               >
-                {!checking && isBlocked ? 'Schließen' : 'Abbrechen'}
+                {!checking && !!blockedReasons?.length ? 'Schließen' : 'Abbrechen'}
               </button>
               {!isBlocked && (
                 <button
