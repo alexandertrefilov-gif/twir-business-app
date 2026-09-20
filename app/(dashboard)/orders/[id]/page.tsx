@@ -204,6 +204,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <MetaItem label="Angelegt am"
                 value={format(new Date(order.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
             </div>
+
+            {/* Business → Collaboration Handover V1: nur sichtbar, wenn die
+                bereits bestehende Relation Order → Project → CollaborationProject
+                zuverlässig vorhanden ist — kein Link ins Leere. */}
+            {process.project?.collaborationProjectId && (
+              <div className="card-base p-4">
+                <a
+                  href={`/collaboration/projects/${process.project.collaborationProjectId}`}
+                  className="text-sm font-500 text-blue-700 hover:underline"
+                >
+                  Zusammenarbeit öffnen →
+                </a>
+              </div>
+            )}
           </BusinessDocumentSidebar>
 
         </BusinessDocumentLayout>

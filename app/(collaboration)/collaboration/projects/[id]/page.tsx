@@ -202,6 +202,15 @@ export default async function CollaborationProjectPage({ params, searchParams }:
         <p className="text-xs font-600 uppercase tracking-[0.18em] text-blue-700">Projektarbeitsplatz</p>
         <h1 className="mt-2 text-3xl font-600 tracking-tight">{project.projectNumber ? `${project.projectNumber} · ` : ''}{project.name}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{[project.location, project.building, project.floor].filter(Boolean).join(' · ') || 'Keine Ortsangaben hinterlegt'}</p>
+        {/* Business → Collaboration Handover V1 (Abschnitt 10): kaufmännische
+            Referenzen nur, wenn über Project → Order/Offer/Kundenbestellung
+            tatsächlich vorhanden — keine erfundenen Werte. */}
+        {project.commercialReference && <p className="mt-1 text-xs text-muted-foreground">
+          {project.commercialReference.customerName}
+          {project.commercialReference.orderNumber ? ` · Auftrag ${project.commercialReference.orderNumber}` : ''}
+          {project.commercialReference.offerNumber ? ` · Angebot ${project.commercialReference.offerNumber}` : ''}
+          {project.commercialReference.customerPurchaseOrderNumber ? ` · Kundenbestellung ${project.commercialReference.customerPurchaseOrderNumber}` : ''}
+        </p>}
       </div>
       <div className="flex items-center gap-2"><span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-600">{COLLABORATION_PROJECT_STATUS_LABELS[project.status as keyof typeof COLLABORATION_PROJECT_STATUS_LABELS]}</span><span className={`rounded-full px-3 py-1.5 text-xs font-600 ${healthBadgeClass[project.healthStatus] ?? healthBadgeClass.GREEN}`}>{COLLABORATION_HEALTH_STATUS_LABELS[project.healthStatus]}</span></div>
     </div>

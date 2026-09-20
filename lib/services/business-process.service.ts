@@ -16,7 +16,10 @@ export interface BusinessProcessDocument {
 }
 
 export interface BusinessProcessData {
-  project?: { id: string; number: string; name: string } | null
+  // collaborationProjectId: Business → Collaboration Handover V1 — nur
+  // gesetzt, wenn die bereits bestehende Relation Project.collaborationProject
+  // tatsächlich existiert (kein neues Feld, keine neue Architektur).
+  project?: { id: string; number: string; name: string; collaborationProjectId?: string | null } | null
   offer: BusinessProcessDocument | null
   order: BusinessProcessDocument | null
   serviceReports: BusinessProcessDocument[]
@@ -37,7 +40,7 @@ const orderProcessSelect = {
   confirmedAt: true,
   confirmationType: true,
   confirmationNote: true,
-  project: { select: { id: true, projectNumber: true, name: true } },
+  project: { select: { id: true, projectNumber: true, name: true, collaborationProject: { select: { id: true } } } },
   offer: { select: { id: true, offerNumber: true, status: true } },
   serviceReports: {
     orderBy: { reportDate: 'asc' as const },
@@ -80,7 +83,7 @@ async function processForOrder(orderId: string, userId: string, role: RoleName) 
   })
   if (!order) throw new NotFoundError('Geschäftsvorgang nicht gefunden')
   return {
-    project: order.project ? { id: order.project.id, number: order.project.projectNumber, name: order.project.name } : null,
+    project: order.project ? { id: order.project.id, number: order.project.projectNumber, name: order.project.name, collaborationProjectId: order.project.collaborationProject?.id ?? null } : null,
     offer: order.offer ? { id: order.offer.id, number: order.offer.offerNumber, status: order.offer.status } : null,
     order: { id: order.id, number: order.orderNumber, status: order.status, sentAt: order.sentAt, confirmedAt: order.confirmedAt, confirmationType: order.confirmationType, confirmationNote: order.confirmationNote, confirmationDocuments: order.documents },
     serviceReports: order.serviceReports.map((report) => ({ id: report.id, number: report.reportNumber, status: report.status, finalizedAt: report.finalizedAt, sentAt: report.sentAt, confirmedAt: report.confirmedAt, confirmationDocuments: report.documents })),
@@ -93,7 +96,7 @@ export async function getBusinessProcessForOffer(offerId: string, userId: string
   const offer = await prisma.offer.findFirst({
     where: { id: offerId, deletedAt: null },
     select: {
-      id: true, offerNumber: true, status: true, project: { select: { id: true, projectNumber: true, name: true } }, order: { select: { id: true } },
+      id: true, offerNumber: true, status: true, project: { select: { id: true, projectNumber: true, name: true, collaborationProject: { select: { id: true } } } }, order: { select: { id: true } },
       customerPurchaseOrder: {
         select: {
           id: true, orderNumber: true, orderDate: true,
@@ -113,7 +116,7 @@ export async function getBusinessProcessForOffer(offerId: string, userId: string
     }
   }
   return {
-    project: offer.project ? { id: offer.project.id, number: offer.project.projectNumber, name: offer.project.name } : null,
+    project: offer.project ? { id: offer.project.id, number: offer.project.projectNumber, name: offer.project.name, collaborationProjectId: offer.project.collaborationProject?.id ?? null } : null,
     offer: { id: offer.id, number: offer.offerNumber, status: offer.status },
     order: null,
     serviceReports: [],

@@ -91,6 +91,18 @@ export async function getCollaborationPhase2Project(projectId: string) {
     where: { id: projectId, active: true, deletedAt: null },
     select: {
       id: true, name: true, projectNumber: true, status: true, location: true, building: true, floor: true, area: true,
+      // Business → Collaboration Handover V1 (Abschnitt 10): kaufmännische
+      // Referenzen ausschließlich über die bereits bestehende Relation
+      // CollaborationProject → Project → Order/Offer/CustomerPurchaseOrder —
+      // keine neue Architektur, kein Datenkopieren über eine Relation hinaus.
+      internalProject: { select: {
+        customer: { select: { name: true } },
+        orders: { orderBy: { createdAt: 'asc' }, take: 1, select: {
+          orderNumber: true,
+          offer: { select: { offerNumber: true } },
+          customerPurchaseOrder: { select: { orderNumber: true } },
+        } },
+      } },
       memberships: { where: { active: true }, select: { id: true, role: true, user: { select: { firstName: true, lastName: true } } } },
       blockers: { where: { status: 'OPEN' }, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, status: true } },
       stages: { orderBy: { sequence: 'asc' }, select: {
@@ -107,7 +119,16 @@ export async function getCollaborationPhase2Project(projectId: string) {
   const cabinetReadiness = await getGgaCabinetReadiness(projectId)
   const snapshots = project.stages.map((stage) => attachCabinetReadiness({ ...stage, weight: Number(stage.weight), dependencies: stage.dependencies, blockers: stage.blockers, tasks: stage.tasks, checklistItems: stage.checklistItems, approvals: stage.approvals }, cabinetReadiness))
   const stages = deriveStageStatuses(snapshots)
-  return { ...project, role: membership.role, stages, healthStatus: project.blockers[0] ? 'RED' as const : calculateProjectHealth(snapshots), progressPercent: calculateProjectProgress(snapshots), nextAction: project.blockers[0]?.title ?? deriveNextAction(stages) }
+  // Abschnitt 10: nur gesetzt, wenn tatsächlich ein internes Project (und
+  // darüber ein Order) verknüpft ist — sonst null, keine erfundenen Werte.
+  const order = project.internalProject?.orders[0] ?? null
+  const commercialReference = project.internalProject ? {
+    customerName: project.internalProject.customer.name,
+    orderNumber: order?.orderNumber ?? null,
+    offerNumber: order?.offer?.offerNumber ?? null,
+    customerPurchaseOrderNumber: order?.customerPurchaseOrder?.orderNumber ?? null,
+  } : null
+  return { ...project, role: membership.role, stages, healthStatus: project.blockers[0] ? 'RED' as const : calculateProjectHealth(snapshots), progressPercent: calculateProjectProgress(snapshots), nextAction: project.blockers[0]?.title ?? deriveNextAction(stages), commercialReference }
 }
 
 // GGA-Portal Produktblock 4: die einzige zusätzliche Datenquelle, die "Meine

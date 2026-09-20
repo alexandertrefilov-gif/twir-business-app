@@ -15,6 +15,7 @@ import {
   convertOfferToOrder,
   changeOfferNumber,
 } from '@/lib/services/offer.service'
+import { ensureCollaborationForOrder } from '@/lib/services/collaboration-handover.service'
 import type { OfferStatus } from '@/types/enums'
 import type { RoleName } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
@@ -210,6 +211,12 @@ export async function convertToOrderAction(offerId: string): Promise<ActionState
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Umwandlung fehlgeschlagen' }
   }
+
+  // Business → Collaboration Handover V1: der Auftrag ist bereits erfolgreich
+  // aus dem Angebot entstanden — ein Fehlschlag hier darf die bereits
+  // erfolgreiche Umwandlung nicht rückwirkend als gescheitert melden (siehe
+  // collaboration-handover.service.ts). Fehlschläge werden dort auditiert.
+  await ensureCollaborationForOrder(orderId, { userId, userEmail })
 
   revalidatePath('/offers')
   revalidatePath(`/offers/${offerId}`)
