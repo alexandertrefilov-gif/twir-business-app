@@ -24,11 +24,26 @@ interface ConfirmDialogProps {
   // diesem Zustand existiert KEIN aktiver, endgültiger Bestätigen-Button —
   // nur „Abbrechen" zum Schließen.
   blockedReasons?: string[]
+  // DELETE-SAFETY-004 — erzwingt den Blockierungs-Modus (kein aktiver
+  // Bestätigen-Button, extraActions statt Bestätigen), OHNE die
+  // Abhängigkeitsliste anzuzeigen — für Fälle, in denen die Erklärung
+  // bereits vollständig in `description` steht (z.B. "Zusammenarbeit noch
+  // aktiv"-Zwischenschritt vor DELETE-SAFETY-004).
+  blocked?: boolean
   // DELETE-SAFETY-003 — true während blockedReasons noch on-demand geladen
   // wird (z.B. Klick auf "Löschen" in einer Listenzeile): unterdrückt den
   // Bestätigen-Button genau wie blockedReasons, zeigt aber einen
   // Lade-Hinweis statt einer (noch unbekannten) Abhängigkeitsliste.
   checking?: boolean
+  // DELETE-SAFETY-004 — zusätzliche Aktionen im Blockierungs-Modus (z.B.
+  // "Zusammenarbeit öffnen", "Zusammenarbeit aufheben …"), links von
+  // "Schließen" platziert. Nur im blockierten Zustand relevant.
+  extraActions?: { label: string; onClick: () => void }[]
+  // DELETE-SAFETY-004 — öffnet den Dialog sofort beim Mounten statt erst
+  // beim Klick auf `trigger`. Für einen zweiten, direkt anschließenden
+  // Dialog-Schritt (z.B. nach einer Aktion aus extraActions), der ohne
+  // eigenen sichtbaren Trigger-Klick erscheinen muss.
+  defaultOpen?: boolean
 }
 
 export function ConfirmDialog({
@@ -41,10 +56,13 @@ export function ConfirmDialog({
   acknowledgeLabel,
   typedConfirmation,
   blockedReasons,
+  blocked = false,
   checking = false,
+  extraActions,
+  defaultOpen = false,
 }: ConfirmDialogProps) {
-  const isBlocked = checking || (!!blockedReasons && blockedReasons.length > 0)
-  const [open, setOpen] = useState(false)
+  const isBlocked = checking || blocked || (!!blockedReasons && blockedReasons.length > 0)
+  const [open, setOpen] = useState(defaultOpen)
   const [isPending, startTransition] = useTransition()
   const [acknowledged, setAcknowledged] = useState(false)
   const [typedValue, setTypedValue] = useState('')
@@ -110,11 +128,11 @@ export function ConfirmDialog({
               <p className="mb-4 text-sm text-muted-foreground">Abhängigkeiten werden geprüft…</p>
             )}
 
-            {!checking && isBlocked && (
+            {!checking && isBlocked && !!blockedReasons?.length && (
               <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3">
                 <p className="text-sm font-500 text-amber-900">Vorhandene Abhängigkeiten:</p>
                 <ul className="mt-1 space-y-0.5 text-sm text-amber-800">
-                  {blockedReasons!.map((reason) => <li key={reason}>· {reason}</li>)}
+                  {blockedReasons.map((reason) => <li key={reason}>· {reason}</li>)}
                 </ul>
               </div>
             )}
@@ -150,7 +168,18 @@ export function ConfirmDialog({
               </div>
             )}
 
-            <div className="flex gap-2 justify-end">
+            <div className="flex flex-wrap gap-2 justify-end">
+              {!checking && isBlocked && extraActions?.map((action) => (
+                <button
+                  key={action.label}
+                  type="button"
+                  disabled={isPending}
+                  onClick={action.onClick}
+                  className="h-9 px-4 rounded-md border border-stone-200 bg-white text-sm font-500 text-foreground hover:bg-stone-50 transition-colors disabled:opacity-50"
+                >
+                  {action.label}
+                </button>
+              ))}
               <button
                 type="button"
                 disabled={isPending}

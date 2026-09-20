@@ -215,3 +215,84 @@ export async function deleteProject(projectId: string, confirmedProjectNumber: s
     })
   })
 }
+
+// ── DELETE-SAFETY-004: kontrollierter Rückbau Internal Project ↔ Collaboration ──
+// "Zusammenarbeit aufheben" ist bewusst das genaue Gegenstück zu
+// linkExistingCollaborationProject(): setzt ausschließlich
+// CollaborationProject.internalProjectId zurück auf null. Kein Soft/Hard
+// Delete des CollaborationProject, kein Cascade — Memberships/Stages/Tasks/
+// Checklisten/Blocker/Freigaben/Dokumente/GGA-Schränke/Prüfnachweise bleiben
+// vollständig erhalten. Ein derart "gelöstes" CollaborationProject erscheint
+// danach wieder in listLinkableCollaborationProjects() (dieselbe
+// internalProjectId:null-Bedingung) — die Zusammenarbeit selbst geht nicht
+// verloren, sie ist nur nicht mehr an dieses interne Projekt gebunden.
+//
+// Blocker-Kriterien: Stages und Memberships werden bewusst NICHT geprüft —
+// beide entstehen automatisch bei jeder Aktivierung (activateCollaboration/
+// ensureActorMembership) und würden sonst jede jemals aktivierte
+// Zusammenarbeit permanent unlösbar machen, auch eine faktisch leere. Audit-
+// Historie wird nicht geprüft, da sie durch das Aufheben nicht verändert
+// oder unerreichbar wird (AuditLog ist ohnehin unveränderlich).
+async function getCollaborationReleaseBlockers(collaborationProjectId: string, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<string[]> {
+  const [cabinetCount, taskCount, checklistCount, openBlockerCount, approvalCount, documentCount, pruefnachweisCount] = await Promise.all([
+    tx.ggaCabinet.count({ where: { projectId: collaborationProjectId, deletedAt: null } }),
+    tx.collaborationTask.count({ where: { projectId: collaborationProjectId } }),
+    tx.collaborationChecklistItem.count({ where: { projectId: collaborationProjectId } }),
+    tx.collaborationBlocker.count({ where: { projectId: collaborationProjectId, status: 'OPEN' } }),
+    tx.collaborationApproval.count({ where: { projectId: collaborationProjectId } }),
+    tx.collaborationDocument.count({ where: { projectId: collaborationProjectId, deletedAt: null } }),
+    tx.ggaCabinetPruefnachweis.count({ where: { cabinet: { projectId: collaborationProjectId } } }),
+  ])
+  const reasons: string[] = []
+  if (cabinetCount > 0) reasons.push(`${cabinetCount} ${cabinetCount === 1 ? 'GGA-Schrank' : 'GGA-Schränke'}`)
+  if (taskCount > 0) reasons.push(`${taskCount} ${taskCount === 1 ? 'Aufgabe' : 'Aufgaben'}`)
+  if (checklistCount > 0) reasons.push(`${checklistCount} ${checklistCount === 1 ? 'Checklistenpunkt' : 'Checklistenpunkte'}`)
+  if (openBlockerCount > 0) reasons.push(`${openBlockerCount} ${openBlockerCount === 1 ? 'offener Blocker' : 'offene Blocker'}`)
+  if (approvalCount > 0) reasons.push(`${approvalCount} ${approvalCount === 1 ? 'Freigabe' : 'Freigaben'}`)
+  if (documentCount > 0) reasons.push(`${documentCount} ${documentCount === 1 ? 'Dokument' : 'Dokumente'}`)
+  if (pruefnachweisCount > 0) reasons.push(`${pruefnachweisCount} ${pruefnachweisCount === 1 ? 'Prüfnachweis' : 'Prüfnachweise'}`)
+  return reasons
+}
+
+// Für die UI: dieselbe Prüfung, ohne zu mutieren — damit vorab entschieden
+// werden kann, ob FALL A (blockiert) oder FALL B (bestätigbar) angezeigt wird.
+export async function getCollaborationReleaseBlockersFor(collaborationProjectId: string): Promise<string[]> {
+  return getCollaborationReleaseBlockers(collaborationProjectId)
+}
+
+export async function releaseCollaboration(projectId: string, confirmedProjectNumber: string, actor: Actor) {
+  return prisma.$transaction(async tx => {
+    const project = await projectOrThrow(projectId, tx)
+    if (confirmedProjectNumber !== project.projectNumber) {
+      throw new BusinessRuleError('Die eingegebene Projektnummer stimmt nicht mit der Projektnummer dieses Projekts überein.')
+    }
+    // Idempotent: bereits aufgehoben (z.B. durch eine parallele Anfrage,
+    // die inzwischen committet hat) — sauberer No-op statt Fehler.
+    if (!project.collaborationProject) return
+
+    const collaborationId = project.collaborationProject.id
+    const blockers = await getCollaborationReleaseBlockers(collaborationId, tx)
+    if (blockers.length > 0) {
+      throw new BusinessRuleError(`Die Zusammenarbeit kann derzeit nicht aufgehoben werden, weil bereits fachliche Daten vorhanden sind:\n${blockers.join('\n')}`)
+    }
+
+    // updateMany mit internalProjectId-Guard statt update(): eine doppelte/
+    // parallele Aufhebungsanfrage findet beim zweiten Versuch count===0 und
+    // beendet sich sauber, ohne Fehler oder doppelten Audit-Eintrag.
+    const result = await tx.collaborationProject.updateMany({
+      where: { id: collaborationId, internalProjectId: projectId },
+      data: { internalProjectId: null },
+    })
+    if (result.count === 0) return
+
+    await buildAuditLogCreate(tx, {
+      ...actor,
+      action: 'UPDATE',
+      entityType: 'collaboration_project',
+      entityId: collaborationId,
+      oldValue: { internalProjectId: projectId },
+      newValue: { internalProjectId: null },
+      metadata: { reason: 'Zusammenarbeit vom internen Projekt aufgehoben' },
+    })
+  })
+}

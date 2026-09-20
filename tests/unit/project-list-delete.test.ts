@@ -36,7 +36,9 @@ describe('ProjectRowDeleteAction — Wiederverwendung von DELETE-SAFETY-001 (kei
   const component = read('components/projects/ProjectRowDeleteAction.tsx')
 
   it('importiert ausschließlich die bestehenden Server Actions, keine eigene Delete-Implementierung', () => {
-    expect(component).toContain("import { deleteProjectAction, getProjectDeleteInfoAction } from '@/app/(dashboard)/projects/actions'")
+    expect(component).toContain('deleteProjectAction')
+    expect(component).toContain('getProjectDeleteInfoAction')
+    expect(component).toContain("from '@/app/(dashboard)/projects/actions'")
     expect(component).not.toContain('prisma.project.delete')
     expect(component).not.toContain('prisma.project.update')
   })
