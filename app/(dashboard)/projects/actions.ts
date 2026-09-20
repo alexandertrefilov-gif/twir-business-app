@@ -5,6 +5,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth/options'
 import { Action, requirePermission, Resource } from '@/lib/auth/permissions'
 import { activateCollaboration, assignInvoiceToProject, assignOfferToProject, assignOrderToProject, createProject, linkExistingCollaborationProject, updateProject } from '@/lib/services/project.service'
+import { ensureActorMembership } from '@/lib/services/collaboration-handover.service'
 
 async function actor() { const session = await getServerSession(authOptions); if (!session?.user) throw new Error('Nicht angemeldet'); return { userId: session.user.id, userEmail: session.user.email } }
 const data = (f: FormData) => ({ projectNumber: f.get('projectNumber'), name: f.get('name'), description: f.get('description') || null, customerId: f.get('customerId'), leadUserId: f.get('leadUserId') || null, status: f.get('status'), location: f.get('location') || null, building: f.get('building') || null, floor: f.get('floor') || null, area: f.get('area') || null, plannedStart: f.get('plannedStart') || null, plannedEnd: f.get('plannedEnd') || null, actualStart: f.get('actualStart') || null, actualEnd: f.get('actualEnd') || null })
@@ -28,7 +29,21 @@ export async function createProjectAction(_: { error?: string }, formData: FormD
   redirect(`/projects/${id}`)
 }
 export async function updateProjectAction(id: string, _: { error?: string }, formData: FormData) { try { await requirePermission(Resource.PROJECT, Action.UPDATE); await updateProject(id, data(formData), await actor()); revalidatePath('/projects'); revalidatePath(`/projects/${id}`); return {} } catch (e) { return { error: e instanceof Error ? e.message : 'Projekt konnte nicht aktualisiert werden' } } }
-export async function activateProjectCollaborationAction(projectId: string) { await requirePermission(Resource.PROJECT, Action.UPDATE); await activateCollaboration(projectId, await actor()); revalidatePath(`/projects/${projectId}`); revalidatePath('/projects') }
+// "Für Zusammenarbeit freigeben" (BUSINESS → PROJECT → COLLABORATION
+// RELEASE, Abschnitt 6): ausschließlich die bereits bestehende, bereits
+// idempotente activateCollaboration() — keine zweite Collaboration-
+// Erzeugungslogik. Ergänzt danach dieselbe, einzige Membership-Funktion,
+// die auch der automatische Order-Handover verwendet, damit das Project
+// für den Actor sofort unter „Zusammenarbeit" sichtbar ist, statt trotz
+// erfolgreicher Freigabe unsichtbar zu bleiben.
+export async function activateProjectCollaborationAction(projectId: string) {
+  await requirePermission(Resource.PROJECT, Action.UPDATE)
+  const who = await actor()
+  const collaboration = await activateCollaboration(projectId, who)
+  await ensureActorMembership(collaboration.id, who)
+  revalidatePath(`/projects/${projectId}`)
+  revalidatePath('/projects')
+}
 
 export async function linkExistingCollaborationProjectAction(projectId: string, collaborationProjectId: string): Promise<{ error?: string }> {
   try {

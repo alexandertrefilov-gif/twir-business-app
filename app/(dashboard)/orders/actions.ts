@@ -19,7 +19,7 @@ import type { OrderContentCard } from '@/lib/offers/rich-text'
 import type { OrderStatus, RoleName } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 import { archiveBusinessDocument } from '@/lib/documents/document-archive.service'
-import { ensureCollaborationForOrder } from '@/lib/services/collaboration-handover.service'
+import { ensureProjectForOrder } from '@/lib/services/collaboration-handover.service'
 
 export interface ActionState {
   success?:     boolean
@@ -76,11 +76,13 @@ export async function createOrderAction(
     return { success: false, error: e instanceof Error ? e.message : 'Fehler' }
   }
 
-  // Business → Collaboration Handover V1: der Auftrag ist bereits erfolgreich
+  // Business → Project Handover: der Auftrag ist bereits erfolgreich
   // angelegt — ein Fehlschlag hier darf die bereits erfolgreiche Auftrags-
   // anlage nicht rückwirkend als gescheitert melden (siehe collaboration-
-  // handover.service.ts). Fehlschläge werden dort auditiert, nicht hier.
-  await ensureCollaborationForOrder(orderId, { userId, userEmail })
+  // handover.service.ts). Erzeugt/verwendet ausschließlich ein internes
+  // Project — aktiviert KEINE Zusammenarbeit (dafür ist die bewusste
+  // Aktion "Für Zusammenarbeit freigeben" auf der Projektseite zuständig).
+  await ensureProjectForOrder(orderId, { userId, userEmail })
 
   revalidatePath('/orders')
   redirect(`/orders/${orderId}`)

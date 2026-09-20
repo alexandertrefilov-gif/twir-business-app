@@ -15,7 +15,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
     : <div className="mt-2">
         <p className="text-sm text-muted-foreground">Noch keine Zusammenarbeit verbunden.</p>
         {canManageCollaboration && <div className="mt-3 flex flex-wrap gap-2">
-          <form action={activateProjectCollaborationAction.bind(null, project.id)}><button className="min-h-9 rounded-md bg-blue-600 px-3 py-2 text-sm font-600 text-white">Neue Zusammenarbeit aktivieren</button></form>
+          <form action={activateProjectCollaborationAction.bind(null, project.id)}><button className="min-h-9 rounded-md bg-blue-600 px-3 py-2 text-sm font-600 text-white">Für Zusammenarbeit freigeben</button></form>
           <LinkCollaborationProjectDialog projectId={project.id} projectNumber={project.projectNumber} projectName={project.name} options={linkableCollaborationProjects} />
         </div>}
       </div>}</section></main>

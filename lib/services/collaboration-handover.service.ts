@@ -1,40 +1,52 @@
-// GGA-Portal Business → Collaboration Handover V1
-// Schließt die im Read-only-Audit festgestellte Lücke: bislang entstand ein
-// CollaborationProject ausschließlich über den manuellen Button "Neue
-// Zusammenarbeit aktivieren" (activateCollaboration()). Diese Datei ruft
-// exakt dieselbe, bereits bestehende, bereits idempotente Funktion auf einem
-// automatisch (falls nötig) angelegten/wiederverwendeten `Project` auf —
-// keine neue Erzeugungslogik, keine neue Prisma-Relation, kein neues Enum.
+// GGA-Portal Business → Project → Collaboration Release
+// Dieser Handover-Service ist bewusst zweigeteilt, seit die automatische
+// Collaboration-Aktivierung entfernt wurde (siehe "BUSINESS → PROJECT →
+// COLLABORATION RELEASE"):
 //
-// Kanonischer Trigger (verbindlich entschieden): die erfolgreiche Entstehung
-// eines `Order` — nicht bereits `Offer.status === 'ACCEPTED'` allein. Beide
-// Order-Entstehungspfade (createOrder() direkt, convertOfferToOrder() aus
-// einem angenommenen Angebot) münden in denselben Übergabepunkt hier.
+//   1. ensureProjectForOrder() — läuft WEITERHIN automatisch nach jeder
+//      erfolgreichen Order-Entstehung (createOrder()/convertOfferToOrder()).
+//      Stellt ausschließlich Order → Project sicher (anlegen, falls nötig,
+//      sonst wiederverwenden) — KEIN CollaborationProject entsteht hier
+//      mehr. Der Normalzustand nach einem Auftrag ist ab jetzt: Project
+//      existiert, CollaborationProject existiert NICHT.
+//   2. ensureActorMembership() — bleibt als eigenständiger, exportierter,
+//      idempotenter Baustein bestehen, wird aber nicht mehr automatisch
+//      aufgerufen. Die bewusste Aktion "Für Zusammenarbeit freigeben"
+//      (activateProjectCollaborationAction, app/(dashboard)/projects/
+//      actions.ts) ruft weiterhin die bereits bestehende, bereits
+//      idempotente activateCollaboration(projectId, actor) direkt auf und
+//      nutzt DIESELBE Membership-Funktion hier, statt eine zweite
+//      Membership-Logik zu bauen.
 //
-// Transaktionsgrenze (siehe Abschlussbericht, Feld "TRANSACTION BOUNDARY"):
-// createOrder()/convertOfferToOrder()/createProject()/assignOrderToProject()/
-// activateCollaboration() eröffnen JEWEILS ihre eigene prisma.$transaction()
-// und nehmen keinen externen Transaction-Client entgegen. Eine einzige
-// durchgehende DB-Transaktion über Order-Erstellung UND Handover hinweg ist
-// daher ohne Signaturänderung dieser fünf bestehenden, an vielen weiteren
-// Stellen verwendeten Funktionen nicht erreichbar — das wäre ein größerer,
-// hier explizit nicht angeforderter Service-Umbau. Stattdessen folgt dieser
-// Handover demselben, bereits im Code etablierten Muster wie die
-// Dokumentenarchivierung (archiveBusinessDocument(), siehe
-// AuditAction.ARCHIVE_FAILED/ARCHIVE_RETRIED): ein nicht-blockierender
+// Kanonischer Trigger für die Project-Erzeugung (unverändert verbindlich
+// entschieden): die erfolgreiche Entstehung eines `Order` — nicht bereits
+// `Offer.status === 'ACCEPTED'` allein. Beide Order-Entstehungspfade
+// (createOrder() direkt, convertOfferToOrder() aus einem angenommenen
+// Angebot) münden weiterhin in denselben Übergabepunkt hier.
+//
+// Transaktionsgrenze (unverändert gegenüber b787233): createOrder()/
+// convertOfferToOrder()/createProject()/assignOrderToProject() eröffnen
+// JEWEILS ihre eigene prisma.$transaction() und nehmen keinen externen
+// Transaction-Client entgegen. Eine einzige durchgehende DB-Transaktion
+// über Order-Erstellung UND Project-Zuordnung hinweg ist daher ohne
+// Signaturänderung dieser bestehenden, an vielen weiteren Stellen
+// verwendeten Funktionen nicht erreichbar — das wäre ein größerer, hier
+// nicht angeforderter Service-Umbau. Stattdessen folgt dieser Handover
+// demselben, bereits im Code etablierten Muster wie die Dokumenten-
+// archivierung (archiveBusinessDocument()): ein nicht-blockierender
 // Folgeschritt nach der bereits erfolgreich committeten Order-Erstellung,
 // der bei Fehlschlag NICHT die gesamte Aktion scheitern lässt, sondern
 // (a) niemals eine Exception unbemerkt verschluckt — jeder Fehlschlag wird
 // über einen Audit-Log-Eintrag sichtbar dokumentiert, und (b) durch die
 // vollständige Idempotenz jedes einzelnen Schritts (Project.projectNumber
 // @unique, CollaborationProject.internalProjectId @unique,
-// CollaborationMembership @@unique([userId, projectId])) jederzeit gefahrlos
-// erneut aufgerufen werden kann, bis er vollständig durchläuft.
+// CollaborationMembership @@unique([userId, projectId])) jederzeit
+// gefahrlos erneut aufgerufen werden kann, bis er vollständig durchläuft.
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db/prisma'
 import { ConflictError, NotFoundError } from '@/lib/auth/permissions'
 import { writeAuditLog } from '@/lib/services/audit.service'
-import { createProject, assignOrderToProject, activateCollaboration } from '@/lib/services/project.service'
+import { createProject, assignOrderToProject } from '@/lib/services/project.service'
 import { CollaborationRole } from '@prisma/client'
 
 // Robustheits-Review T12: kurze, begrenzte Wartezeit, in der ein paralleler
@@ -46,19 +58,16 @@ const WINNER_VERIFY_DELAY_MS = 25
 
 type Actor = { userId: string; userEmail: string }
 
-export interface CollaborationHandoverResult {
+export interface ProjectHandoverResult {
   status: 'linked' | 'failed'
   projectId?: string
-  collaborationProjectId?: string
   error?: string
 }
 
-// Abschnitt 3: Project-Grunddaten ausschließlich aus bereits vorhandenen,
-// zuverlässigen Order-/Customer-Feldern — Order kennt keinen eigenen
-// Standort/Gebäude/Etage/Bereich, diese bleiben deshalb bewusst leer statt
-// erfunden (activateCollaboration() kopiert sie ohnehin nur weiter, falls
-// später am Project gepflegt).
-async function ensureProjectForOrder(
+// Project-Grunddaten ausschließlich aus bereits vorhandenen, zuverlässigen
+// Order-/Customer-Feldern — Order kennt keinen eigenen Standort/Gebäude/
+// Etage/Bereich, diese bleiben deshalb bewusst leer statt erfunden.
+async function createOrReuseProjectForOrder(
   order: { id: string; projectId: string | null; customerId: string; title: string | null; orderNumber: string },
   actor: Actor,
 ): Promise<string> {
@@ -72,13 +81,13 @@ async function ensureProjectForOrder(
     return projectId
   } catch (error) {
     if (!(error instanceof ConflictError)) throw error
-    // T12 (Robustheits-Review): createProject() nutzt order.orderNumber als
-    // deterministische projectNumber — ein ConflictError hier bedeutet
-    // entweder (a) ein paralleler Handover-Versuch für DENSELBEN Order hat
-    // soeben gewonnen, oder (b) ein fachlich FREMDES, unabhängig angelegtes
-    // Project trägt zufällig dieselbe Nummer. Fall (b) darf NIEMALS
-    // automatisch übernommen werden — deshalb wird die Relation zum Order
-    // explizit verifiziert, nicht nur der Name abgeglichen.
+    // createProject() nutzt order.orderNumber als deterministische
+    // projectNumber — ein ConflictError hier bedeutet entweder (a) ein
+    // paralleler Handover-Versuch für DENSELBEN Order hat soeben gewonnen,
+    // oder (b) ein fachlich FREMDES, unabhängig angelegtes Project trägt
+    // zufällig dieselbe Nummer. Fall (b) darf NIEMALS automatisch
+    // übernommen werden — deshalb wird die Relation zum Order explizit
+    // verifiziert, nicht nur der Name abgeglichen.
     const candidate = await prisma.project.findFirst({
       where: { projectNumber: order.orderNumber, deletedAt: null },
       select: { id: true, customerId: true },
@@ -105,12 +114,49 @@ async function ensureProjectForOrder(
   }
 }
 
-// Abschnitt 5: Membership-Erzeugung ist idempotent (Existenzprüfung vor dem
-// Schreiben, zusätzlich durch den bestehenden @@unique([userId, projectId])-
-// Constraint gegen echte Nebenläufigkeit abgesichert) und verwendet
-// ausschließlich die bereits bestehende Rolle COLLAB_MANAGER ("TWIR
-// Projektleitung / Management") — keine neue Rolle.
-async function ensureActorMembership(collaborationProjectId: string, actor: Actor): Promise<void> {
+/**
+ * Automatischer Business → Project Handover.
+ * Aufzurufen NACH erfolgreicher, bereits committeter Order-Erstellung
+ * (createOrder() oder convertOfferToOrder()) — niemals davor, niemals
+ * allein aufgrund von Offer.status === 'ACCEPTED'. Erzeugt/verwendet
+ * ausschließlich ein internes Project — aktiviert KEINE Zusammenarbeit
+ * (siehe ensureActorMembership()/activateProjectCollaborationAction für
+ * die bewusste, separate Freigabe).
+ *
+ * Wirft nie — Fehlschläge werden auditiert und als {status:'failed'}
+ * zurückgegeben, damit ein Aufrufer die bereits erfolgreiche Order-Anlage
+ * nie rückwirkend als gescheitert melden muss (siehe Datei-Kommentar oben).
+ */
+export async function ensureProjectForOrder(orderId: string, actor: Actor): Promise<ProjectHandoverResult> {
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId, deletedAt: null },
+      select: { id: true, projectId: true, customerId: true, title: true, orderNumber: true },
+    })
+    if (!order) throw new NotFoundError('Auftrag nicht gefunden')
+
+    const projectId = await createOrReuseProjectForOrder(order, actor)
+    return { status: 'linked', projectId }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Project konnte nicht automatisch angelegt/verknüpft werden.'
+    // Darf nie unbemerkt bleiben — Audit-Eintrag unabhängig davon, an
+    // welcher Stelle der Handover fehlschlug.
+    await writeAuditLog({
+      userId: actor.userId, userEmail: actor.userEmail, action: 'STATUS_CHANGE',
+      entityType: 'business_project_handover', entityId: orderId, metadata: { error: message },
+    })
+    return { status: 'failed', error: message }
+  }
+}
+
+// Membership-Erzeugung ist idempotent (Existenzprüfung vor dem Schreiben,
+// zusätzlich durch den bestehenden @@unique([userId, projectId])-Constraint
+// gegen echte Nebenläufigkeit abgesichert) und verwendet ausschließlich die
+// bereits bestehende Rolle COLLAB_MANAGER ("TWIR Projektleitung /
+// Management") — keine neue Rolle. Exportiert, damit sowohl diese Datei als
+// auch activateProjectCollaborationAction (bewusste manuelle Freigabe)
+// dieselbe, einzige Membership-Logik verwenden — keine zweite Erzeugung.
+export async function ensureActorMembership(collaborationProjectId: string, actor: Actor): Promise<void> {
   const existing = await prisma.collaborationMembership.findUnique({
     where: { userId_projectId: { userId: actor.userId, projectId: collaborationProjectId } },
   })
@@ -125,48 +171,9 @@ async function ensureActorMembership(collaborationProjectId: string, actor: Acto
       newValue: { userId: actor.userId, role: CollaborationRole.COLLAB_MANAGER },
     })
   } catch (error) {
-    // T12: ein paralleler Handover-Versuch hat dieselbe Mitgliedschaft
-    // zwischenzeitlich bereits angelegt — kein Fehler, keine Dopplung.
+    // Zwei nahezu gleichzeitige Freigabe-/Handover-Versuche haben dieselbe
+    // Mitgliedschaft zwischenzeitlich bereits angelegt — kein Fehler,
+    // keine Dopplung.
     if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) throw error
-  }
-}
-
-/**
- * Kanonischer Business → Collaboration Handover (Abschnitt 1-5).
- * Aufzurufen NACH erfolgreicher, bereits committeter Order-Erstellung
- * (createOrder() oder convertOfferToOrder()) — niemals davor, niemals
- * allein aufgrund von Offer.status === 'ACCEPTED'.
- *
- * Wirft nie — Fehlschläge werden auditiert und als {status:'failed'}
- * zurückgegeben, damit ein Aufrufer die bereits erfolgreiche Order-Anlage
- * nie rückwirkend als gescheitert melden muss (siehe Datei-Kommentar oben).
- */
-export async function ensureCollaborationForOrder(orderId: string, actor: Actor): Promise<CollaborationHandoverResult> {
-  try {
-    const order = await prisma.order.findUnique({
-      where: { id: orderId, deletedAt: null },
-      select: { id: true, projectId: true, customerId: true, title: true, orderNumber: true },
-    })
-    if (!order) throw new NotFoundError('Auftrag nicht gefunden')
-
-    const projectId = await ensureProjectForOrder(order, actor)
-    // Abschnitt 4: bestehende, bereits idempotente Funktion — gibt das
-    // vorhandene CollaborationProject zurück, falls bereits eines verknüpft
-    // ist (Order.CANCELLED bleibt unverändert, Abschnitt 7: kein Guard hier,
-    // activateCollaboration() prüft nur den Project-Status, nicht den
-    // Order-Status, siehe Abschlussbericht "ORDER CANCELLATION").
-    const collaboration = await activateCollaboration(projectId, actor)
-    await ensureActorMembership(collaboration.id, actor)
-
-    return { status: 'linked', projectId, collaborationProjectId: collaboration.id }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Zusammenarbeit konnte nicht automatisch aktiviert werden.'
-    // Abschnitt 9: darf nie unbemerkt bleiben — Audit-Eintrag unabhängig
-    // davon, an welcher Stelle der Handover fehlschlug.
-    await writeAuditLog({
-      userId: actor.userId, userEmail: actor.userEmail, action: 'STATUS_CHANGE',
-      entityType: 'collaboration_handover', entityId: orderId, metadata: { error: message },
-    })
-    return { status: 'failed', error: message }
   }
 }

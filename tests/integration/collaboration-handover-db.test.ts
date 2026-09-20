@@ -1,25 +1,28 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { OfferStatus, OrderStatus } from '@/types/enums'
+import { OfferStatus, OrderStatus, RoleName } from '@/types/enums'
 
 const RUN_INTEGRATION = !!process.env.TEST_DATABASE_URL
 
-// Business → Collaboration Handover V1: prüft den kanonischen Trigger
-// (Order-Entstehung, NICHT Offer.status === 'ACCEPTED' allein), die
-// Idempotenz-Szenarien T1-T12 aus dem Auftrag sowie die Isolation zu GGA V1
-// (Referenzstand d41e55a) auf der echten Test-DB — bewusst nicht gemockt,
-// da hier reale Unique-Constraints (Project.projectNumber,
-// CollaborationProject.internalProjectId, CollaborationMembership
-// @@unique([userId, projectId])) und echte Transaktionsgrenzen greifen.
+// Business → Project → Collaboration Release: prüft den kanonischen Trigger
+// für die Project-Erzeugung (Order-Entstehung, NICHT Offer.status ===
+// 'ACCEPTED' allein), dass Collaboration NICHT mehr automatisch aktiviert
+// wird, die bewusste Freigabe-Aktion (activateCollaboration() +
+// ensureActorMembership(), wie activateProjectCollaborationAction), die
+// Idempotenz-/Race-Szenarien T1-T14 sowie die Isolation zu GGA V1
+// (Referenzstand d41e55a) — bewusst nicht gemockt, da hier reale Unique-
+// Constraints (Project.projectNumber, CollaborationProject.
+// internalProjectId, CollaborationMembership @@unique([userId, projectId]))
+// und echte Transaktionsgrenzen greifen.
 vi.unmock('@/lib/db/prisma')
 vi.unmock('@/lib/services/audit.service')
 
-describe.skipIf(!RUN_INTEGRATION)('Business → Collaboration Handover V1 — Datenbankintegration', () => {
+describe.skipIf(!RUN_INTEGRATION)('Business → Project → Collaboration Release — Datenbankintegration', () => {
   let db: any
   let handover: typeof import('@/lib/services/collaboration-handover.service')
   let orderService: typeof import('@/lib/services/order.service')
   let offerService: typeof import('@/lib/services/offer.service')
-  let purchaseOrderService: typeof import('@/lib/services/customer-purchase-order.service')
   let projectService: typeof import('@/lib/services/project.service')
+  let businessProcessService: typeof import('@/lib/services/business-process.service')
   let actor: { userId: string; userEmail: string }
   const marker = `HANDOVER-QA-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
@@ -42,8 +45,8 @@ describe.skipIf(!RUN_INTEGRATION)('Business → Collaboration Handover V1 — Da
     handover = await import('@/lib/services/collaboration-handover.service')
     orderService = await import('@/lib/services/order.service')
     offerService = await import('@/lib/services/offer.service')
-    purchaseOrderService = await import('@/lib/services/customer-purchase-order.service')
     projectService = await import('@/lib/services/project.service')
+    businessProcessService = await import('@/lib/services/business-process.service')
   })
 
   afterAll(async () => {
@@ -76,47 +79,71 @@ describe.skipIf(!RUN_INTEGRATION)('Business → Collaboration Handover V1 — Da
     return orderId
   }
 
-  it('T5/T1: direkter createOrder() ohne Project erzeugt beim Handover genau ein Project, ein CollaborationProject und eine Membership für den Actor', async () => {
+  // Spiegelt exakt activateProjectCollaborationAction() (app/(dashboard)/
+  // projects/actions.ts): ausschließlich die bestehende activateCollaboration()
+  // plus dieselbe, einzige ensureActorMembership()-Funktion — keine zweite
+  // Collaboration-Erzeugungslogik im Test.
+  async function releaseForCollaboration(projectId: string) {
+    const collaboration = await projectService.activateCollaboration(projectId, actor)
+    await handover.ensureActorMembership(collaboration.id, actor)
+    return collaboration
+  }
+
+  it('T1: direkter createOrder() ohne Project — ensureProjectForOrder() erzeugt genau ein Project, aber KEIN CollaborationProject', async () => {
     const orderId = await createDirectOrder('Direkt')
-    const result = await handover.ensureCollaborationForOrder(orderId, actor)
+    const result = await handover.ensureProjectForOrder(orderId, actor)
     expect(result.status).toBe('linked')
     expect(result.projectId).toBeTruthy()
-    expect(result.collaborationProjectId).toBeTruthy()
     createdProjectIds.push(result.projectId!)
-    createdCollaborationIds.push(result.collaborationProjectId!)
 
     const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { projectId: true } })
     expect(order.projectId).toBe(result.projectId)
 
     const project = await db.project.findUniqueOrThrow({ where: { id: result.projectId }, select: { collaborationProject: { select: { id: true } }, customerId: true } })
-    expect(project.collaborationProject?.id).toBe(result.collaborationProjectId)
+    expect(project.collaborationProject).toBeNull()
     expect(project.customerId).toBe(customerId)
-
-    const memberships = await db.collaborationMembership.findMany({ where: { projectId: result.collaborationProjectId, userId: actor.userId } })
-    expect(memberships).toHaveLength(1)
-    expect(memberships[0].role).toBe('COLLAB_MANAGER')
-    expect(memberships[0].active).toBe(true)
   })
 
-  it('T2/T8: derselbe Handover erneut aufgerufen bleibt bei genau 1 Project/1 CollaborationProject/1 Membership (keine Dopplung)', async () => {
-    const orderId = createdOrderIds[0]
-    const first = await handover.ensureCollaborationForOrder(orderId, actor)
+  it('T2: Offer → Order (convertOfferToOrder()) — Project automatisch erzeugt, weiterhin KEIN CollaborationProject', async () => {
+    const offerId = await offerService.createOffer(
+      { customerId, offerDate: new Date(), items: [{ position: 1, description: `${marker} Position B`, quantity: 1, unit: 'Stk.', unitPrice: 250, taxRate: 19 }] },
+      actor.userId, actor.userEmail,
+    )
+    createdOfferIds.push(offerId)
+    await offerService.changeOfferStatus(offerId, OfferStatus.SENT, actor.userId, actor.userEmail)
+    await offerService.changeOfferStatus(offerId, OfferStatus.ACCEPTED, actor.userId, actor.userEmail)
+    const orderId = await offerService.convertOfferToOrder(offerId, actor.userId, actor.userEmail)
+    createdOrderIds.push(orderId)
 
-    const second = await handover.ensureCollaborationForOrder(orderId, actor)
-    expect(second.status).toBe('linked')
-    expect(second.projectId).toBe(first.projectId)
-    expect(second.collaborationProjectId).toBe(first.collaborationProjectId)
+    // Wie in convertToOrderAction(): der Project-Handover läuft nach
+    // erfolgreicher Order-Entstehung separat (siehe TRANSACTION BOUNDARY).
+    const result = await handover.ensureProjectForOrder(orderId, actor)
+    expect(result.status).toBe('linked')
+    createdProjectIds.push(result.projectId!)
 
-    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { orderNumber: true } })
-    const matchingProjects = await db.project.findMany({ where: { projectNumber: order.orderNumber } })
-    expect(matchingProjects).toHaveLength(1)
-    expect(matchingProjects[0].id).toBe(first.projectId)
+    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { projectId: true, offerId: true } })
+    expect(order.offerId).toBe(offerId)
+    expect(order.projectId).toBe(result.projectId)
 
-    const memberships = await db.collaborationMembership.findMany({ where: { projectId: first.collaborationProjectId, userId: actor.userId } })
-    expect(memberships).toHaveLength(1)
+    const project = await db.project.findUniqueOrThrow({ where: { id: result.projectId }, select: { collaborationProject: { select: { id: true } } } })
+    expect(project.collaborationProject).toBeNull()
   })
 
-  it('T6: Order mit bereits vorhandenem projectId verwendet das bestehende Project statt ein neues anzulegen', async () => {
+  it('T3: Offer.status === ACCEPTED allein erzeugt kein Project und kein CollaborationProject', async () => {
+    const offerId = await offerService.createOffer(
+      { customerId, offerDate: new Date(), items: [{ position: 1, description: `${marker} Position`, quantity: 1, unit: 'Stk.', unitPrice: 100, taxRate: 19 }] },
+      actor.userId, actor.userEmail,
+    )
+    createdOfferIds.push(offerId)
+    await offerService.changeOfferStatus(offerId, OfferStatus.SENT, actor.userId, actor.userEmail)
+    await offerService.changeOfferStatus(offerId, OfferStatus.ACCEPTED, actor.userId, actor.userEmail)
+
+    const offer = await db.offer.findUniqueOrThrow({ where: { id: offerId }, select: { status: true, projectId: true } })
+    expect(offer.status).toBe('ACCEPTED')
+    expect(offer.projectId).toBeNull()
+  })
+
+  it('T4: Order mit bereits vorhandenem projectId verwendet das bestehende Project statt ein neues anzulegen', async () => {
     const preExistingProjectId = await projectService.createProject(
       { projectNumber: `${marker}-PRELINKED`, name: `${marker} Vorverknüpft`, customerId, status: 'ACTIVE' },
       actor,
@@ -130,16 +157,126 @@ describe.skipIf(!RUN_INTEGRATION)('Business → Collaboration Handover V1 — Da
     createdOrderIds.push(orderId)
     await projectService.assignOrderToProject(preExistingProjectId, orderId, actor)
 
-    const result = await handover.ensureCollaborationForOrder(orderId, actor)
+    const result = await handover.ensureProjectForOrder(orderId, actor)
     expect(result.status).toBe('linked')
     expect(result.projectId).toBe(preExistingProjectId)
-    createdCollaborationIds.push(result.collaborationProjectId!)
 
     const allProjectsWithThisNumber = await db.project.findMany({ where: { projectNumber: `${marker}-PRELINKED` } })
     expect(allProjectsWithThisNumber).toHaveLength(1)
   })
 
-  it('T7/T11: Project mit bereits manuell verknüpftem, individuell benanntem CollaborationProject wird wiederverwendet und NICHT überschrieben', async () => {
+  it('T5: wiederholtes ensureProjectForOrder() für denselben Order bleibt bei genau 1 Project', async () => {
+    const orderId = createdOrderIds[0]
+    const first = await handover.ensureProjectForOrder(orderId, actor)
+    const second = await handover.ensureProjectForOrder(orderId, actor)
+    expect(second.projectId).toBe(first.projectId)
+
+    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { orderNumber: true } })
+    const matchingProjects = await db.project.findMany({ where: { projectNumber: order.orderNumber } })
+    expect(matchingProjects).toHaveLength(1)
+  })
+
+  it('T6: zwei nahezu gleichzeitige ensureProjectForOrder() für denselben, noch unverknüpften Order erhalten dasselbe Project — genau 1 Project, keine Collaboration', async () => {
+    const orderId = await createDirectOrder('Race')
+    const [first, second] = await Promise.allSettled([
+      handover.ensureProjectForOrder(orderId, actor),
+      handover.ensureProjectForOrder(orderId, actor),
+    ])
+    expect(first.status).toBe('fulfilled')
+    expect(second.status).toBe('fulfilled')
+    const firstValue = (first as PromiseFulfilledResult<any>).value
+    const secondValue = (second as PromiseFulfilledResult<any>).value
+    expect(firstValue.status).toBe('linked')
+    expect(secondValue.status).toBe('linked')
+    expect(secondValue.projectId).toBe(firstValue.projectId)
+    createdProjectIds.push(firstValue.projectId)
+
+    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { orderNumber: true, projectId: true } })
+    expect(order.projectId).toBe(firstValue.projectId)
+    const matchingProjects = await db.project.findMany({ where: { projectNumber: order.orderNumber } })
+    expect(matchingProjects).toHaveLength(1)
+
+    const project = await db.project.findUniqueOrThrow({ where: { id: firstValue.projectId }, select: { collaborationProject: { select: { id: true } } } })
+    expect(project.collaborationProject).toBeNull()
+  })
+
+  it('T7: eine projectNumber-Kollision mit einem FREMDEN, unabhängigen Project wird niemals automatisch übernommen — sauberer Konflikt statt falscher Order-Verknüpfung', async () => {
+    const orderId = await createDirectOrder('Fremdkollision')
+    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { orderNumber: true } })
+
+    const otherCustomer = await db.customer.create({ data: { number: `${marker}-KD-FREMD`, name: `${marker} Fremdkunde` } })
+    const foreignProject = await db.project.create({
+      data: { projectNumber: order.orderNumber, name: 'Fremdes, unabhängiges Project', customerId: otherCustomer.id, status: 'ACTIVE' },
+    })
+
+    const result = await handover.ensureProjectForOrder(orderId, actor)
+    expect(result.status).toBe('failed')
+    expect(result.error).toBeTruthy()
+
+    const untouchedOrder = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { projectId: true } })
+    expect(untouchedOrder.projectId).toBeNull()
+
+    await db.project.deleteMany({ where: { id: foreignProject.id } })
+    await db.customer.deleteMany({ where: { id: otherCustomer.id } })
+  })
+
+  it('T8: bewusste Freigabe ("Für Zusammenarbeit freigeben") erzeugt genau 1 CollaborationProject und die Actor-Membership', async () => {
+    const orderId = await createDirectOrder('Freigabe')
+    const projectResult = await handover.ensureProjectForOrder(orderId, actor)
+    createdProjectIds.push(projectResult.projectId!)
+
+    const beforeRelease = await db.project.findUniqueOrThrow({ where: { id: projectResult.projectId }, select: { collaborationProject: { select: { id: true } } } })
+    expect(beforeRelease.collaborationProject).toBeNull()
+
+    const collaboration = await releaseForCollaboration(projectResult.projectId!)
+    createdCollaborationIds.push(collaboration.id)
+
+    const project = await db.project.findUniqueOrThrow({ where: { id: projectResult.projectId }, select: { collaborationProject: { select: { id: true } } } })
+    expect(project.collaborationProject?.id).toBe(collaboration.id)
+
+    const memberships = await db.collaborationMembership.findMany({ where: { projectId: collaboration.id, userId: actor.userId } })
+    expect(memberships).toHaveLength(1)
+    expect(memberships[0].role).toBe('COLLAB_MANAGER')
+    expect(memberships[0].active).toBe(true)
+  })
+
+  it('T9: Freigabe zweimal ausgeführt bleibt bei genau 1 CollaborationProject und 1 Membership', async () => {
+    const orderId = await createDirectOrder('Freigabe-Zweimal')
+    const projectResult = await handover.ensureProjectForOrder(orderId, actor)
+    createdProjectIds.push(projectResult.projectId!)
+
+    const first = await releaseForCollaboration(projectResult.projectId!)
+    createdCollaborationIds.push(first.id)
+    const second = await releaseForCollaboration(projectResult.projectId!)
+    expect(second.id).toBe(first.id)
+
+    const collaborationProjects = await db.collaborationProject.findMany({ where: { internalProjectId: projectResult.projectId } })
+    expect(collaborationProjects).toHaveLength(1)
+    const memberships = await db.collaborationMembership.findMany({ where: { projectId: first.id, userId: actor.userId } })
+    expect(memberships).toHaveLength(1)
+  })
+
+  it('T10: der AKTUELLE Project.name wird bei erstmaliger Freigabe verwendet — nicht der Name zum Zeitpunkt der Order-Anlage', async () => {
+    const orderId = await createDirectOrder('Umbenannt')
+    const projectResult = await handover.ensureProjectForOrder(orderId, actor)
+    createdProjectIds.push(projectResult.projectId!)
+
+    const renamedName = 'Mercedes-Benz Mettingen – Demontage ZK-Linie AgiPro-3'
+    await projectService.updateProject(
+      projectResult.projectId!,
+      { projectNumber: `${marker}-RENAMED`, name: renamedName, customerId, status: 'ACTIVE' },
+      actor,
+    )
+
+    const collaboration = await releaseForCollaboration(projectResult.projectId!)
+    createdCollaborationIds.push(collaboration.id)
+
+    expect(collaboration.name).toBe(renamedName)
+    const persisted = await db.collaborationProject.findUniqueOrThrow({ where: { id: collaboration.id }, select: { name: true } })
+    expect(persisted.name).toBe(renamedName)
+  })
+
+  it('T11: ein bestehendes, manuell gepflegtes CollaborationProject wird bei erneuter Freigabe NICHT umbenannt/überschrieben', async () => {
     const preExistingProjectId = await projectService.createProject(
       { projectNumber: `${marker}-MANUAL`, name: `${marker} Manuell`, customerId, status: 'ACTIVE' },
       actor,
@@ -150,161 +287,67 @@ describe.skipIf(!RUN_INTEGRATION)('Business → Collaboration Handover V1 — Da
     })
     createdCollaborationIds.push(manualCollab.id)
 
-    const orderId = await orderService.createOrder(
-      { customerId, title: `${marker} Auftrag Manuell`, orderDate: new Date(), items: [] },
-      actor.userId, actor.userEmail,
-    )
-    createdOrderIds.push(orderId)
-    await projectService.assignOrderToProject(preExistingProjectId, orderId, actor)
-
-    const result = await handover.ensureCollaborationForOrder(orderId, actor)
-    expect(result.status).toBe('linked')
-    expect(result.collaborationProjectId).toBe(manualCollab.id)
+    const result = await releaseForCollaboration(preExistingProjectId)
+    expect(result.id).toBe(manualCollab.id)
 
     const unchanged = await db.collaborationProject.findUniqueOrThrow({ where: { id: manualCollab.id }, select: { name: true, description: true } })
     expect(unchanged.name).toBe('Manuell benanntes Collab-Projekt')
     expect(unchanged.description).toBe('Von Hand gepflegt')
   })
 
-  it('T3: Offer.status === ACCEPTED allein erzeugt noch KEIN CollaborationProject', async () => {
-    const offerId = await offerService.createOffer(
-      { customerId, offerDate: new Date(), items: [{ position: 1, description: `${marker} Position`, quantity: 1, unit: 'Stk.', unitPrice: 100, taxRate: 19 }] },
-      actor.userId, actor.userEmail,
-    )
-    createdOfferIds.push(offerId)
-    await offerService.changeOfferStatus(offerId, OfferStatus.SENT, actor.userId, actor.userEmail)
-    await offerService.changeOfferStatus(offerId, OfferStatus.ACCEPTED, actor.userId, actor.userEmail)
-
-    const offer = await db.offer.findUniqueOrThrow({ where: { id: offerId }, select: { status: true, projectId: true } })
-    expect(offer.status).toBe('ACCEPTED')
-    expect(offer.projectId).toBeNull()
-    // Kein Order, kein Project, kein CollaborationProject — Annahme allein löst nichts aus.
-    const relatedProjects = await db.project.findMany({ where: { projectNumber: { startsWith: `${marker}-ACCEPT-ONLY` } } })
-    expect(relatedProjects).toHaveLength(0)
-  })
-
-  it('T4: convertOfferToOrder() aus einem angenommenen Angebot löst den Handover automatisch aus', async () => {
-    const offerId = await offerService.createOffer(
-      { customerId, offerDate: new Date(), items: [{ position: 1, description: `${marker} Position B`, quantity: 1, unit: 'Stk.', unitPrice: 250, taxRate: 19 }] },
-      actor.userId, actor.userEmail,
-    )
-    createdOfferIds.push(offerId)
-    await offerService.changeOfferStatus(offerId, OfferStatus.SENT, actor.userId, actor.userEmail)
-    await offerService.changeOfferStatus(offerId, OfferStatus.ACCEPTED, actor.userId, actor.userEmail)
-    const orderId = await offerService.convertOfferToOrder(offerId, actor.userId, actor.userEmail)
-    createdOrderIds.push(orderId)
-
-    // Wie in convertToOrderAction(): Handover wird nach erfolgreicher
-    // Order-Entstehung separat aufgerufen (siehe TRANSACTION BOUNDARY).
-    const result = await handover.ensureCollaborationForOrder(orderId, actor)
-    expect(result.status).toBe('linked')
-    createdProjectIds.push(result.projectId!)
-    createdCollaborationIds.push(result.collaborationProjectId!)
-
-    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { projectId: true, offerId: true } })
-    expect(order.offerId).toBe(offerId)
-    expect(order.projectId).toBe(result.projectId)
-  })
-
-  it('T9: erneutes Hochladen einer Kundenbestellung erzeugt kein zusätzliches Project/CollaborationProject', async () => {
-    const offerId = await offerService.createOffer(
-      { customerId, offerDate: new Date(), items: [{ position: 1, description: `${marker} Position C`, quantity: 1, unit: 'Stk.', unitPrice: 50, taxRate: 19 }] },
-      actor.userId, actor.userEmail,
-    )
-    createdOfferIds.push(offerId)
-    await offerService.changeOfferStatus(offerId, OfferStatus.SENT, actor.userId, actor.userEmail)
-
-    await purchaseOrderService.saveCustomerPurchaseOrder({ offerId, orderNumber: `${marker}-PO-1`, orderDate: new Date(), acceptOffer: true, actor })
-    await purchaseOrderService.saveCustomerPurchaseOrder({ offerId, orderNumber: `${marker}-PO-1-UPDATED`, orderDate: new Date(), acceptOffer: true, actor })
-
-    const purchaseOrders = await db.customerPurchaseOrder.findMany({ where: { offerId } })
-    expect(purchaseOrders).toHaveLength(1)
-    expect(purchaseOrders[0].orderNumber).toBe(`${marker}-PO-1-UPDATED`)
-    // Das Hochladen einer Kundenbestellung allein löst — wie die reine
-    // Angebotsannahme (T3) — keinen Handover aus; erst ein tatsächlich
-    // entstandener Order tut das (kanonischer Trigger, Abschnitt 1).
-    const relatedProjects = await db.project.findMany({ where: { projectNumber: `${marker}-PO-1-UPDATED` } })
-    expect(relatedProjects).toHaveLength(0)
-  })
-
-  it('T10: Order.CANCELLED ändert das bereits verknüpfte CollaborationProject nicht automatisch', async () => {
+  it('T12: Order.CANCELLED löscht das Project nicht automatisch und deaktiviert eine bereits bestehende Zusammenarbeit nicht automatisch', async () => {
     const orderId = await createDirectOrder('Storno')
-    const result = await handover.ensureCollaborationForOrder(orderId, actor)
-    createdProjectIds.push(result.projectId!)
-    createdCollaborationIds.push(result.collaborationProjectId!)
+    const projectResult = await handover.ensureProjectForOrder(orderId, actor)
+    createdProjectIds.push(projectResult.projectId!)
+    const collaboration = await releaseForCollaboration(projectResult.projectId!)
+    createdCollaborationIds.push(collaboration.id)
 
-    const before = await db.collaborationProject.findUniqueOrThrow({ where: { id: result.collaborationProjectId }, select: { status: true, active: true, deletedAt: true } })
+    const beforeProject = await db.project.findUniqueOrThrow({ where: { id: projectResult.projectId }, select: { deletedAt: true, status: true } })
+    const beforeCollaboration = await db.collaborationProject.findUniqueOrThrow({ where: { id: collaboration.id }, select: { status: true, active: true, deletedAt: true } })
 
     await orderService.changeOrderStatus(orderId, OrderStatus.CANCELLED, actor.userId, actor.userEmail)
     const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { status: true } })
     expect(order.status).toBe('CANCELLED')
 
-    const after = await db.collaborationProject.findUniqueOrThrow({ where: { id: result.collaborationProjectId }, select: { status: true, active: true, deletedAt: true } })
-    expect(after).toEqual(before)
+    const afterProject = await db.project.findUniqueOrThrow({ where: { id: projectResult.projectId }, select: { deletedAt: true, status: true } })
+    const afterCollaboration = await db.collaborationProject.findUniqueOrThrow({ where: { id: collaboration.id }, select: { status: true, active: true, deletedAt: true } })
+    expect(afterProject).toEqual(beforeProject)
+    expect(afterCollaboration).toEqual(beforeCollaboration)
   })
 
-  it('T12 (Robustheits-Review): zwei nahezu gleichzeitige Handover-Versuche für denselben, noch unverknüpften Order sind beide fulfilled und liefern dasselbe fachliche Ergebnis — DB-seitig exakt 1 Project/1 CollaborationProject/1 Membership', async () => {
-    const orderId = await createDirectOrder('Race')
-    const [first, second] = await Promise.allSettled([
-      handover.ensureCollaborationForOrder(orderId, actor),
-      handover.ensureCollaborationForOrder(orderId, actor),
-    ])
-    expect(first.status).toBe('fulfilled')
-    expect(second.status).toBe('fulfilled')
-    const firstValue = (first as PromiseFulfilledResult<any>).value
-    const secondValue = (second as PromiseFulfilledResult<any>).value
-    expect(firstValue.status).toBe('linked')
-    expect(secondValue.status).toBe('linked')
-    expect(secondValue.projectId).toBe(firstValue.projectId)
-    expect(secondValue.collaborationProjectId).toBe(firstValue.collaborationProjectId)
-    createdProjectIds.push(firstValue.projectId)
-    createdCollaborationIds.push(firstValue.collaborationProjectId)
+  it('T13: Order-Seite (getBusinessProcessForOrder) zeigt vor Freigabe den Projektzugang, aber keinen falschen Collaboration-Zugang', async () => {
+    const orderId = await createDirectOrder('UI-Vor-Freigabe')
+    const projectResult = await handover.ensureProjectForOrder(orderId, actor)
+    createdProjectIds.push(projectResult.projectId!)
 
-    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { orderNumber: true, projectId: true } })
-    expect(order.projectId).toBe(firstValue.projectId)
-    const matchingProjects = await db.project.findMany({ where: { projectNumber: order.orderNumber } })
-    expect(matchingProjects).toHaveLength(1)
-
-    const collaborationProjects = await db.collaborationProject.findMany({ where: { internalProjectId: matchingProjects[0].id } })
-    expect(collaborationProjects).toHaveLength(1)
-
-    const memberships = await db.collaborationMembership.findMany({ where: { projectId: firstValue.collaborationProjectId, userId: actor.userId } })
-    expect(memberships).toHaveLength(1)
+    const process = await businessProcessService.getBusinessProcessForOrder(orderId, actor.userId, RoleName.ADMIN)
+    expect(process.project?.id).toBe(projectResult.projectId)
+    expect(process.project?.collaborationProjectId ?? null).toBeNull()
   })
 
-  it('Robustheits-Review: eine projectNumber-Kollision mit einem FREMDEN, unabhängigen Project wird niemals automatisch übernommen — sauberer Konflikt statt falscher Order-Verknüpfung', async () => {
-    const orderId = await createDirectOrder('Fremdkollision')
-    const order = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { orderNumber: true } })
+  it('T14: Order-Seite (getBusinessProcessForOrder) zeigt nach Freigabe den Collaboration-Zugang', async () => {
+    const orderId = await createDirectOrder('UI-Nach-Freigabe')
+    const projectResult = await handover.ensureProjectForOrder(orderId, actor)
+    createdProjectIds.push(projectResult.projectId!)
+    const collaboration = await releaseForCollaboration(projectResult.projectId!)
+    createdCollaborationIds.push(collaboration.id)
 
-    const otherCustomer = await db.customer.create({ data: { number: `${marker}-KD-FREMD`, name: `${marker} Fremdkunde` } })
-    const foreignProject = await db.project.create({
-      data: { projectNumber: order.orderNumber, name: 'Fremdes, unabhängiges Project', customerId: otherCustomer.id, status: 'ACTIVE' },
-    })
-
-    const result = await handover.ensureCollaborationForOrder(orderId, actor)
-    expect(result.status).toBe('failed')
-    expect(result.error).toBeTruthy()
-
-    const untouchedOrder = await db.order.findUniqueOrThrow({ where: { id: orderId }, select: { projectId: true } })
-    expect(untouchedOrder.projectId).toBeNull()
-    const untouchedForeignProject = await db.project.findUniqueOrThrow({ where: { id: foreignProject.id }, select: { collaborationProject: { select: { id: true } } } })
-    expect(untouchedForeignProject.collaborationProject).toBeNull()
-
-    await db.project.deleteMany({ where: { id: foreignProject.id } })
-    await db.customer.deleteMany({ where: { id: otherCustomer.id } })
+    const process = await businessProcessService.getBusinessProcessForOrder(orderId, actor.userId, RoleName.ADMIN)
+    expect(process.project?.collaborationProjectId).toBe(collaboration.id)
   })
 
-  it('schützt GGA V1 (Referenzstand d41e55a): das automatisch erzeugte CollaborationProject enthält keinerlei GgaCabinet und keinen abweichenden Status', async () => {
+  it('schützt GGA V1 (Referenzstand d41e55a): ein via Freigabe aktiviertes CollaborationProject enthält keinerlei GgaCabinet und startet im unveränderten DRAFT-Status', async () => {
     const orderId = await createDirectOrder('GGA-Isolation')
-    const result = await handover.ensureCollaborationForOrder(orderId, actor)
-    createdProjectIds.push(result.projectId!)
-    createdCollaborationIds.push(result.collaborationProjectId!)
+    const projectResult = await handover.ensureProjectForOrder(orderId, actor)
+    createdProjectIds.push(projectResult.projectId!)
+    const collaboration = await releaseForCollaboration(projectResult.projectId!)
+    createdCollaborationIds.push(collaboration.id)
 
-    const collaboration = await db.collaborationProject.findUniqueOrThrow({
-      where: { id: result.collaborationProjectId },
+    const persisted = await db.collaborationProject.findUniqueOrThrow({
+      where: { id: collaboration.id },
       select: { status: true, ggaCabinets: { select: { id: true } } },
     })
-    expect(collaboration.status).toBe('DRAFT')
-    expect(collaboration.ggaCabinets).toHaveLength(0)
+    expect(persisted.status).toBe('DRAFT')
+    expect(persisted.ggaCabinets).toHaveLength(0)
   })
 })

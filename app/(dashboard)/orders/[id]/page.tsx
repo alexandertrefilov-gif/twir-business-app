@@ -205,10 +205,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 value={format(new Date(order.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
             </div>
 
-            {/* Business → Collaboration Handover V1: nur sichtbar, wenn die
-                bereits bestehende Relation Order → Project → CollaborationProject
-                zuverlässig vorhanden ist — kein Link ins Leere. */}
-            {process.project?.collaborationProjectId && (
+            {/* Business → Project → Collaboration Release (Abschnitt 9): vor
+                der bewussten Freigabe führt die Auftragsseite zum Project
+                (kaufmännische Projektübersicht) — "Zusammenarbeit öffnen"
+                erscheint erst, wenn tatsächlich ein CollaborationProject
+                existiert, kein Link ins Leere. */}
+            {process.project?.collaborationProjectId ? (
               <div className="card-base p-4">
                 <a
                   href={`/collaboration/projects/${process.project.collaborationProjectId}`}
@@ -217,7 +219,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   Zusammenarbeit öffnen →
                 </a>
               </div>
-            )}
+            ) : process.project?.id ? (
+              <div className="card-base p-4">
+                <Link href={`/projects/${process.project.id}`} className="text-sm font-500 text-blue-700 hover:underline">
+                  Projekt öffnen →
+                </Link>
+              </div>
+            ) : null}
           </BusinessDocumentSidebar>
 
         </BusinessDocumentLayout>
