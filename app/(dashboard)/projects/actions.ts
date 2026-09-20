@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth/options'
 import { Action, requirePermission, Resource } from '@/lib/auth/permissions'
-import { activateCollaboration, assignInvoiceToProject, assignOfferToProject, assignOrderToProject, createProject, deleteProject, linkExistingCollaborationProject, updateProject } from '@/lib/services/project.service'
+import { activateCollaboration, assignInvoiceToProject, assignOfferToProject, assignOrderToProject, createProject, deleteProject, getProject, getProjectDeleteBlockers, linkExistingCollaborationProject, updateProject } from '@/lib/services/project.service'
 import { ensureActorMembership } from '@/lib/services/collaboration-handover.service'
 
 async function actor() { const session = await getServerSession(authOptions); if (!session?.user) throw new Error('Nicht angemeldet'); return { userId: session.user.id, userEmail: session.user.email } }
@@ -85,5 +85,23 @@ export async function deleteProjectAction(projectId: string, confirmedProjectNum
     return { success: true }
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : 'Projekt konnte nicht gelöscht werden' }
+  }
+}
+
+export type GetProjectDeleteInfoState = { success: true; blockers: string[] } | { success: false; error: string }
+
+// DELETE-SAFETY-003 — reiner Lese-Wrapper um die bereits bestehenden
+// getProject()/getProjectDeleteBlockers() (DELETE-SAFETY-001), für den
+// zusätzlichen Löschzugang in der Projektübersicht (/projects). Keine neue
+// Dependency-Prüfung: identische Funktionen wie auf /projects/[id],
+// lediglich on-demand statt beim Seitenaufbau geladen (vermeidet N+1-Abfragen
+// für jede Zeile der Liste).
+export async function getProjectDeleteInfoAction(projectId: string): Promise<GetProjectDeleteInfoState> {
+  try {
+    await requirePermission(Resource.PROJECT, Action.DELETE)
+    const project = await getProject(projectId)
+    return { success: true, blockers: getProjectDeleteBlockers(project) }
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Abhängigkeiten konnten nicht geprüft werden' }
   }
 }

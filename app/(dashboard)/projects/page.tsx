@@ -1,7 +1,8 @@
 import Link from 'next/link'
-import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
+import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { listProjects } from '@/lib/services/project.service'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/types/enums'
+import { ProjectRowDeleteAction } from '@/components/projects/ProjectRowDeleteAction'
 
 const fmt = (value: Date | null) => value ? new Intl.DateTimeFormat('de-DE').format(value) : '–'
 
@@ -10,7 +11,10 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
   const query = await searchParams
   const search = query.search ?? ''
   const status = (query.status ?? '') as ProjectStatus | ''
-  const projects = await listProjects({ search: search || undefined, status: status || undefined })
+  const [projects, canDelete] = await Promise.all([
+    listProjects({ search: search || undefined, status: status || undefined }),
+    hasPermission(Resource.PROJECT, Action.DELETE),
+  ])
   return <main className="space-y-6">
     <div className="flex items-center justify-between">
       <div><h1 className="text-2xl font-700">Projekte</h1><p className="text-sm text-muted-foreground">Interne Projektsteuerung und kaufmännischer Kontext</p></div>
@@ -31,7 +35,7 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
     <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
       <table className="w-full text-sm">
         <thead><tr className="border-b text-left text-muted-foreground">
-          <th className="p-3">Nr.</th><th className="p-3">Projekt</th><th className="p-3">Kunde</th><th className="p-3">Leitung</th><th className="p-3">Status</th><th className="p-3">Beginn</th><th className="p-3">Ende</th><th className="p-3">Zusammenarbeit</th>
+          <th className="p-3">Nr.</th><th className="p-3">Projekt</th><th className="p-3">Kunde</th><th className="p-3">Leitung</th><th className="p-3">Status</th><th className="p-3">Beginn</th><th className="p-3">Ende</th><th className="p-3">Zusammenarbeit</th><th className="p-3 text-right">Aktionen</th>
         </tr></thead>
         <tbody>
           {projects.map(p => <tr key={p.id} className="border-b last:border-0">
@@ -43,8 +47,11 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
             <td className="p-3">{fmt(p.plannedStart)}</td>
             <td className="p-3">{fmt(p.plannedEnd)}</td>
             <td className="p-3">{p.collaborationProject ? 'Aktiv' : 'Nicht aktiviert'}</td>
+            <td className="p-3 text-right">
+              {canDelete && <ProjectRowDeleteAction projectId={p.id} projectNumber={p.projectNumber} projectName={p.name} customerName={p.customer.name} />}
+            </td>
           </tr>)}
-          {projects.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Keine Projekte für diesen Filter.</td></tr>}
+          {projects.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">Keine Projekte für diesen Filter.</td></tr>}
         </tbody>
       </table>
     </div>
