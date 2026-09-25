@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db/prisma'
 import { requireCollaborationManager, requireCollaborationProjectAccess, requireCollaborationSession, requireCollaborationStageAccess, requireInternalCollaborationProjectAccess } from '@/lib/auth/collaboration-guards'
 import { BusinessRuleError, ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/auth/permissions'
@@ -12,6 +13,7 @@ import {
   type DerivedGgaCabinetStatus, type GgaCabinetSnapshot,
 } from '@/lib/collaboration/cabinet-workflow'
 import { COLLABORATION_PROJECT_STATUS_LABELS } from '@/types/enums'
+import { getCollaborationReleaseBlockersFor } from '@/lib/services/project.service'
 
 // GGA-05.1: Re-Export statt eigener Definition — kanonische Quelle ist
 // cabinet-workflow.ts (siehe dortigen Kommentar). Bestehende Aufrufer
@@ -90,7 +92,7 @@ export async function getCollaborationPhase2Project(projectId: string) {
   const project = await prisma.collaborationProject.findFirst({
     where: { id: projectId, active: true, deletedAt: null },
     select: {
-      id: true, name: true, projectNumber: true, status: true, location: true, building: true, floor: true, area: true,
+      id: true, name: true, projectNumber: true, status: true, location: true, building: true, floor: true, area: true, plannedStart: true, plannedEnd: true,
       // Business → Collaboration Handover V1 (Abschnitt 10): kaufmännische
       // Referenzen ausschließlich über die bereits bestehende Relation
       // CollaborationProject → Project → Order/Offer/CustomerPurchaseOrder —
@@ -471,6 +473,58 @@ export async function transitionCollaborationProjectStatus(projectId: string, ta
     return value
   })
   return updated
+}
+
+// Kontrolliertes Entfernen aus dem Collaboration-Bereich: kein Hard-Delete
+// und keine Cascade-Löschung. Alle Collaboration-Daten bleiben erhalten; das
+// Projekt wird nur aus aktiven Sichten entfernt. Nur COLLAB_MANAGER darf dies.
+// Dependency-Härtung: dieselbe Prüfung wie beim kontrollierten Rückbau
+// Internal Project ↔ Collaboration (releaseCollaboration, DELETE-SAFETY-004)
+// — GGA-Schränke/Aufgaben/Checklistenpunkte/offene Blocker/Freigaben/
+// Dokumente/Prüfnachweise. Wiederverwendet statt eine zweite Dependency-
+// Prüfung zu bauen. Zusätzlich: internalProjectId ist @unique — eine
+// Deaktivierung OHNE vorherige Freigabe würde diese Verknüpfung dauerhaft
+// "einfrieren" (das interne Projekt zeigt danach fälschlich "Nicht
+// aktiviert", eine neue Zusammenarbeit könnte wegen des Unique-Constraints
+// nie mehr verknüpft werden) — deshalb eigenständiger Blocker, bis die
+// bestehende Verbindung über den etablierten Rückbau-Weg gelöst wurde.
+async function getCollaborationProjectDeleteBlockers(projectId: string, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<string[]> {
+  const linked = await tx.collaborationProject.findFirst({ where: { id: projectId }, select: { internalProjectId: true, internalProject: { select: { projectNumber: true } } } })
+  const reasons: string[] = []
+  if (linked?.internalProjectId) {
+    reasons.push(`Noch mit internem Projekt ${linked.internalProject?.projectNumber ?? linked.internalProjectId} verknüpft`)
+  }
+  reasons.push(...await getCollaborationReleaseBlockersFor(projectId, tx))
+  return reasons
+}
+
+// Für die UI: dieselbe Prüfung, ohne zu mutieren.
+export async function getCollaborationProjectDeleteBlockersFor(projectId: string): Promise<string[]> {
+  const { userId } = await requireCollaborationSession()
+  await requireCollaborationManager(userId, projectId)
+  return getCollaborationProjectDeleteBlockers(projectId)
+}
+
+export async function deleteCollaborationProject(projectId: string, confirmedProjectNumber: string) {
+  const { userId, userEmail } = await requireCollaborationSession()
+  await requireCollaborationManager(userId, projectId)
+  return prisma.$transaction(async (tx) => {
+    const project = await tx.collaborationProject.findFirst({ where: { id: projectId, active: true, deletedAt: null }, select: { id: true, projectNumber: true, name: true } })
+    if (!project) throw new NotFoundError('Projekt nicht gefunden')
+    if (project.projectNumber !== confirmedProjectNumber) throw new ValidationError('Die eingegebene Projektnummer stimmt nicht mit diesem Projekt überein.')
+
+    const blockers = await getCollaborationProjectDeleteBlockers(projectId, tx)
+    if (blockers.length > 0) {
+      throw new BusinessRuleError(`Dieses Projekt kann nicht entfernt werden, weil bereits fachliche Daten vorhanden sind:\n${blockers.join('\n')}`)
+    }
+
+    // updateMany mit active/deletedAt-Guard statt update(): eine doppelte/
+    // parallele Entfernungsanfrage findet beim zweiten Versuch count===0 und
+    // beendet sich sauber, ohne Fehler oder doppelten Audit-Eintrag.
+    const result = await tx.collaborationProject.updateMany({ where: { id: projectId, active: true, deletedAt: null }, data: { active: false, deletedAt: new Date() } })
+    if (result.count === 0) return
+    await buildAuditLogCreate(tx, { userId, userEmail, action: 'UPDATE', entityType: 'collaboration_project', entityId: projectId, oldValue: { active: true, deletedAt: null }, newValue: { active: false, deletedAt: 'now' }, metadata: { reason: 'Collaboration-Projekt durch Projektverwaltung entfernt', projectNumber: project.projectNumber, projectName: project.name } })
+  })
 }
 
 // ── Cross-Projekt-Sichten (Checklisten, Blocker, Team) ─────────

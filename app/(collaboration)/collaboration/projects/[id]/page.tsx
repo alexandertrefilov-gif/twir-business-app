@@ -21,6 +21,7 @@ import {
 } from '@/types/enums'
 import { CollaborationStageActions } from '@/components/collaboration/CollaborationStageActions'
 import { CollaborationProjectStatusActions } from '@/components/collaboration/CollaborationProjectStatusActions'
+import { CollaborationProjectDeleteAction } from '@/components/collaboration/CollaborationProjectDeleteAction'
 
 const healthBadgeClass: Record<string, string> = { GREEN: 'bg-emerald-50 text-emerald-700', YELLOW: 'bg-amber-50 text-amber-700', RED: 'bg-red-50 text-red-700' }
 
@@ -123,12 +124,13 @@ export default async function CollaborationProjectPage({ params, searchParams }:
   const filterParam = typeof query.filter === 'string' ? query.filter : 'alle'
   const filter: CabinetFilter = (Object.keys(CABINET_FILTER_LABELS) as CabinetFilter[]).includes(filterParam as CabinetFilter) ? (filterParam as CabinetFilter) : 'alle'
   const search = typeof query.q === 'string' ? query.q.trim().slice(0, 200) : ''
+  const selectedStageId = typeof query.stage === 'string' ? query.stage : null
 
   const project = await getCollaborationPhase2Project(id).catch((error: unknown) => {
     if (error instanceof NotFoundError) notFound()
     throw error
   })
-  const activity = await getRecentCollaborationActivity(id)
+  const activity = await getRecentCollaborationActivity(id, 5)
   // Produktblock 2: dieselbe, bereits für das Dashboard (REQ-014) gebaute
   // Cross-Projekt-Ableitung — hier nur auf dieses eine Projekt gefiltert.
   // Kein zweiter Query-Pfad/keine zweite Cabinet-Statuslogik.
@@ -170,7 +172,16 @@ export default async function CollaborationProjectPage({ params, searchParams }:
   // Produktblock 5 Abschnitt 5: "aktuelle Phase" — bereits bestehende
   // Ableitung (erste IN_PROGRESS-Stage), nicht neu berechnet.
   const aktuellePhase = project.stages.find((stage) => stage.derivedStatus === 'IN_PROGRESS')
+  const ausgewaehltePhase = project.stages.find((stage) => stage.id === selectedStageId) ?? aktuellePhase ?? project.stages.find((stage) => stage.derivedStatus === 'READY') ?? project.stages[0] ?? null
+  const phaseHref = (stageId: string) => `/collaboration/projects/${id}?stage=${encodeURIComponent(stageId)}#selected-phase-title`
+  const meilensteine = (ausgewaehltePhase?.tasks ?? []).filter((task) => task.dueDate).slice(0, 5)
   const direkteAktion = projektDirekteAktion(project.stages, blockers.length, openTasks.length, checklist.some((c) => c.isRequired && !c.completed))
+  // Verbleibende Zeit: nur berechnet, wenn ein echter Phasentermin hinterlegt
+  // ist (kein erfundener Wert) — ganze Kalendertage bis plannedEnd, negativ
+  // bei Überschreitung.
+  const verbleibendeZeit = ausgewaehltePhase?.plannedEnd
+    ? Math.ceil((ausgewaehltePhase.plannedEnd.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+    : null
 
   // Produktblock 5 Abschnitt 2/4/8/9: Timeline-Zeile je Phase — ausschließlich
   // bereits vorhandene Ableitungen kombiniert (derivedStatus, getStageCompletion-
@@ -214,7 +225,19 @@ export default async function CollaborationProjectPage({ params, searchParams }:
       </div>
       <div className="flex items-center gap-2"><span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-600">{COLLABORATION_PROJECT_STATUS_LABELS[project.status as keyof typeof COLLABORATION_PROJECT_STATUS_LABELS]}</span><span className={`rounded-full px-3 py-1.5 text-xs font-600 ${healthBadgeClass[project.healthStatus] ?? healthBadgeClass.GREEN}`}>{COLLABORATION_HEALTH_STATUS_LABELS[project.healthStatus]}</span></div>
     </div>
-    <div className="mt-3"><CollaborationProjectStatusActions projectId={project.id} role={project.role} allowedTransitions={allowedProjectTransitions} /></div>
+    <div className="mt-3 flex flex-wrap items-center gap-3"><CollaborationProjectStatusActions projectId={project.id} role={project.role} allowedTransitions={allowedProjectTransitions} /><CollaborationProjectDeleteAction projectId={project.id} projectNumber={project.projectNumber} projectName={project.name} role={project.role} /></div>
+
+    <nav aria-label="Projektbereiche" className="mt-5 overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm">
+      <div className="flex min-w-max items-center gap-1 px-3 py-2 text-sm">
+        <a href="#selected-phase-title" className="rounded-md bg-blue-50 px-3 py-2 font-600 text-blue-800">Übersicht</a>
+        <a href="#aufgaben" className="rounded-md px-3 py-2 text-stone-700 hover:bg-stone-50">Aufgaben <span className="text-xs text-muted-foreground">{tasks.length}</span></a>
+        <a href="#checkliste" className="rounded-md px-3 py-2 text-stone-700 hover:bg-stone-50">Checklisten <span className="text-xs text-muted-foreground">{checklist.length}</span></a>
+        <a href="#schrankmatrix" className="rounded-md px-3 py-2 text-stone-700 hover:bg-stone-50">GGA-Schränke <span className="text-xs text-muted-foreground">{projectCabinets.length}</span></a>
+        <a href="#freigaben" className="rounded-md px-3 py-2 text-stone-700 hover:bg-stone-50">Freigaben <span className="text-xs text-muted-foreground">{approvals.length}</span></a>
+        <a href="#blocker" className="rounded-md px-3 py-2 text-stone-700 hover:bg-stone-50">Blocker <span className={`text-xs ${blockers.length ? 'font-600 text-red-700' : 'text-muted-foreground'}`}>{blockers.length}</span></a>
+        <a href="#activity-title" className="rounded-md px-3 py-2 text-stone-700 hover:bg-stone-50">Aktivitäten</a>
+      </div>
+    </nav>
 
     {/* Kompakter Projektkopf (Produktblock 2 Abschnitt 2, Produktblock 5 Abschnitt 5): Lageübersicht statt großer KPI-Karten */}
     <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
@@ -235,13 +258,14 @@ export default async function CollaborationProjectPage({ params, searchParams }:
 
     {/* Projekt-Timeline (Produktblock 5 Abschnitt 2/3/4/8/9): kompakte, operative Phasen-Timeline — ersetzt den bisherigen reinen Symbol-Streifen, keine zweite Phasenlogik */}
     <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white shadow-sm">
-      <div className="flex min-w-[900px] divide-x divide-stone-100 sm:min-w-0 sm:flex-wrap sm:divide-x-0 sm:divide-y">
-        {timeline.map((entry) => <div key={entry.stage.id} className="flex-1 px-4 py-4 sm:flex-none">
-          <p className="flex items-center gap-1.5 text-sm font-600">
-            <span aria-hidden="true" className={STAGE_SYMBOL[entry.stage.derivedStatus].className}>{STAGE_SYMBOL[entry.stage.derivedStatus].symbol}</span>
-            <span className="text-stone-900">{entry.stage.title}</span>
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{COLLABORATION_STAGE_STATUS_LABELS[entry.stage.derivedStatus]}</p>
+      <div className="relative flex min-w-[900px] px-4 py-5 sm:min-w-0">
+        <div aria-hidden="true" className="absolute left-12 right-12 top-[38px] h-px bg-stone-200" />
+        {timeline.map((entry) => <div key={entry.stage.id} className="relative z-10 min-w-[170px] flex-1 px-2 text-center">
+          <Link href={phaseHref(entry.stage.id)} className={`group block rounded-lg px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${ausgewaehltePhase?.id === entry.stage.id ? 'bg-blue-50' : ''}`}>
+            <span aria-hidden="true" className={`mx-auto flex h-7 w-7 items-center justify-center rounded-full border-2 bg-white text-sm font-700 ${entry.stage.derivedStatus === 'IN_PROGRESS' ? 'border-blue-600 text-blue-700' : entry.stage.derivedStatus === 'BLOCKED' ? 'border-red-600 text-red-700' : entry.stage.derivedStatus === 'COMPLETED' || entry.stage.derivedStatus === 'SKIPPED' ? 'border-emerald-600 text-emerald-700' : 'border-stone-300 text-stone-400'}`}>{STAGE_SYMBOL[entry.stage.derivedStatus].symbol}</span>
+            <p className="mt-2 text-sm font-600 text-stone-900 group-hover:text-blue-700">{entry.stage.title}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{COLLABORATION_STAGE_STATUS_LABELS[entry.stage.derivedStatus]}</p>
+          </Link>
           {entry.fortschritt !== null && <div className="mt-2 flex items-center gap-2"><div className="h-1.5 w-16 overflow-hidden rounded-full bg-stone-200"><div className="h-full rounded-full bg-stone-700" style={{ width: `${entry.fortschritt}%` }} /></div><span className="text-xs tabular-nums text-muted-foreground">{entry.fortschritt}%</span></div>}
           {(entry.offenePunkte > 0 || entry.offeneBlocker > 0) && <p className="mt-2 text-xs text-muted-foreground">{entry.offenePunkte > 0 ? `${entry.offenePunkte} offene Punkt${entry.offenePunkte === 1 ? '' : 'e'}` : ''}{entry.offenePunkte > 0 && entry.offeneBlocker > 0 ? ' · ' : ''}{entry.offeneBlocker > 0 ? <span className="font-600 text-red-700">{entry.offeneBlocker} Blocker</span> : ''}</p>}
           {entry.wartetAuf && <p className="mt-2 text-xs text-amber-700">{entry.wartetAuf}</p>}
@@ -251,6 +275,21 @@ export default async function CollaborationProjectPage({ params, searchParams }:
         </div>)}
       </div>
     </div>
+
+    {ausgewaehltePhase && <section aria-labelledby="selected-phase-title" className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="overflow-hidden rounded-xl border border-blue-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-blue-100 bg-blue-50/60 px-5 py-4">
+          <div><p className="text-xs font-600 uppercase tracking-wide text-blue-700">Ausgewählte Phase</p><h2 id="selected-phase-title" className="mt-1 text-xl font-600">{ausgewaehltePhase.title}</h2><p className="mt-1 text-sm text-muted-foreground">{COLLABORATION_STAGE_STATUS_LABELS[ausgewaehltePhase.derivedStatus]}</p></div>
+          <span className="rounded-full bg-blue-100 px-3 py-1.5 text-xs font-600 text-blue-800">{calculateStageProgress(ausgewaehltePhase) === null ? 'Fortschritt offen' : `${calculateStageProgress(ausgewaehltePhase)} % Fortschritt`}</span>
+        </div>
+        <div className="grid gap-4 p-5 md:grid-cols-3">
+          <div className="rounded-lg border border-stone-200 p-4"><h3 className="font-600">Fortschritt</h3><div className="mt-4 flex items-center gap-3"><div className="h-2 flex-1 overflow-hidden rounded-full bg-stone-200"><div className="h-full rounded-full bg-blue-600" style={{ width: `${calculateStageProgress(ausgewaehltePhase) ?? 0}%` }} /></div><span className="text-sm font-600 tabular-nums">{calculateStageProgress(ausgewaehltePhase) === null ? '–' : `${calculateStageProgress(ausgewaehltePhase)} %`}</span></div><p className="mt-3 text-xs text-muted-foreground">{ausgewaehltePhase.tasks?.filter((task) => task.isRequired && ['DONE', 'SKIPPED'].includes(task.status)).length ?? 0} von {(ausgewaehltePhase.tasks ?? []).filter((task) => task.isRequired).length} Pflichtaufgaben erledigt</p></div>
+          <div className="rounded-lg border border-stone-200 p-4"><h3 className="font-600">Pflichtpunkte</h3><ul className="mt-3 space-y-2 text-sm">{(ausgewaehltePhase.checklistItems ?? []).filter((item) => item.isRequired).slice(0, 5).map((item) => <li key={item.id} className="flex items-start gap-2"><span className={item.completed ? 'text-emerald-600' : 'text-stone-400'} aria-hidden="true">{item.completed ? '✓' : '○'}</span><span className={item.completed ? 'text-stone-600' : 'text-stone-900'}>{item.title}</span></li>)}{!(ausgewaehltePhase.checklistItems ?? []).some((item) => item.isRequired) && <li className="text-xs text-muted-foreground">Keine Pflichtpunkte hinterlegt.</li>}</ul><h3 className="mt-5 border-t border-stone-100 pt-4 text-xs font-600 uppercase tracking-wide text-muted-foreground">Meilensteine</h3><ul className="mt-2 space-y-2 text-xs">{meilensteine.map((task) => <li key={task.id} className="flex items-start justify-between gap-2"><span>{task.title}</span><span className="shrink-0 tabular-nums text-muted-foreground">{task.dueDate?.toLocaleDateString('de-DE')}</span></li>)}{meilensteine.length === 0 && <li className="text-muted-foreground">Keine Fristen hinterlegt.</li>}</ul></div>
+          <div className="rounded-lg border border-stone-200 p-4"><div className="flex items-center justify-between gap-2"><h3 className="font-600">Aufgaben / Checkliste</h3><span className="text-xs text-muted-foreground">{(ausgewaehltePhase.tasks ?? []).filter((task) => task.isRequired && ['DONE', 'SKIPPED'].includes(task.status)).length} / {(ausgewaehltePhase.tasks ?? []).filter((task) => task.isRequired).length}</span></div><ul className="mt-3 space-y-2 text-sm">{(ausgewaehltePhase.tasks ?? []).filter((task) => task.isRequired).slice(0, 5).map((task) => <li key={task.id} className="flex items-start gap-2"><span className={['DONE', 'SKIPPED'].includes(task.status) ? 'text-emerald-600' : 'text-stone-400'} aria-hidden="true">{['DONE', 'SKIPPED'].includes(task.status) ? '✓' : '○'}</span><span>{task.title}</span></li>)}{!(ausgewaehltePhase.tasks ?? []).some((task) => task.isRequired) && <li className="text-xs text-muted-foreground">Keine Pflichtaufgaben hinterlegt.</li>}</ul></div>
+        </div>
+      </div>
+      <aside aria-labelledby="phase-status-title" className="rounded-xl border border-stone-200 bg-white p-5 shadow-sm"><h2 id="phase-status-title" className="font-600">Status & nächste Schritte</h2><dl className="mt-4 space-y-4 text-sm"><div><dt className="text-xs text-muted-foreground">Projektstart</dt><dd className="mt-1 font-600">{project.plannedStart ? project.plannedStart.toLocaleDateString('de-DE') : 'Kein Termin hinterlegt'}</dd></div><div><dt className="text-xs text-muted-foreground">Geplantes Ende der Phase</dt><dd className="mt-1 font-600">{ausgewaehltePhase.plannedEnd ? ausgewaehltePhase.plannedEnd.toLocaleDateString('de-DE') : 'Kein Termin hinterlegt'}</dd></div>{verbleibendeZeit !== null && <div><dt className="text-xs text-muted-foreground">Verbleibende Zeit</dt><dd className={`mt-1 font-600 ${verbleibendeZeit < 0 ? 'text-red-700' : verbleibendeZeit <= 2 ? 'text-amber-700' : ''}`}>{verbleibendeZeit < 0 ? `${Math.abs(verbleibendeZeit)} Tag${Math.abs(verbleibendeZeit) === 1 ? '' : 'e'} überfällig` : verbleibendeZeit === 0 ? 'Heute fällig' : `noch ${verbleibendeZeit} Tag${verbleibendeZeit === 1 ? '' : 'e'}`}</dd></div>}<div><dt className="text-xs text-muted-foreground">Abhängigkeiten</dt><dd className="mt-1">{deriveStageDependencyWaitReason(ausgewaehltePhase, project.stages, (status) => COLLABORATION_STAGE_STATUS_LABELS[status]) ?? 'Keine offenen Abhängigkeiten'}</dd></div><div><dt className="text-xs text-muted-foreground">Blocker</dt><dd className={ausgewaehltePhase.blockers?.length ? 'mt-1 font-600 text-red-700' : 'mt-1'}>{ausgewaehltePhase.blockers?.length ? `${ausgewaehltePhase.blockers.length} offen` : 'Keine offenen Blocker'}</dd></div><div><dt className="text-xs text-muted-foreground">Freigabe</dt><dd className="mt-1">{ausgewaehltePhase.approvals?.some((approval) => approval.status === 'REQUESTED') ? 'Freigabe ausstehend' : ausgewaehltePhase.requiresApproval ? 'Keine offene Freigabe' : 'Nicht erforderlich'}</dd></div></dl>{direkteAktion && <Link href={direkteAktion.href} className="mt-5 block rounded-lg bg-blue-700 px-4 py-3 text-center text-sm font-600 text-white hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">Nächsten Schritt bearbeiten →</Link>}</aside>
+    </section>}
 
     {/* Aktivitätsverlauf (Produktblock 5 Abschnitt 6/7): direkt unterhalb der Timeline, ausschließlich bereits persistierte Ereignisse (getRecentCollaborationActivity) */}
     <section aria-labelledby="activity-title" className="mt-4 rounded-xl border border-stone-200 bg-white shadow-sm">
@@ -328,7 +367,7 @@ export default async function CollaborationProjectPage({ params, searchParams }:
       {sichtbareSchraenke.length === 0 && <p className="px-5 py-8 text-sm text-muted-foreground">{projectCabinets.length === 0 ? 'Noch keine GGA-Schränke in diesem Projekt.' : 'Keine Schränke in dieser Ansicht.'}</p>}
     </div>
 
-    <section aria-labelledby="stage-title" className="mt-8 rounded-xl border border-stone-200 bg-white shadow-sm"><div className="border-b border-stone-200 px-5 py-4"><h2 id="stage-title" className="font-600">Projektphasen</h2></div><ol className="divide-y divide-stone-100">{project.stages.map((stage) => <li key={stage.id} className="px-5 py-5"><div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-sm font-600 text-white" aria-hidden="true">{stage.sequence}</span><div><p className="font-600">{stage.title}</p><p className="mt-1 text-sm text-muted-foreground">{stage.code} · {COLLABORATION_STAGE_STATUS_LABELS[stage.derivedStatus]}</p></div><span className="text-sm text-muted-foreground">{stage.weight > 0 ? `${stage.weight} % Gewicht` : 'Ohne Gewicht'}</span></div><CollaborationStageActions stage={stage} role={project.role} projectId={project.id} memberships={project.memberships} showCreationForms={canSeeCreationForms} /></li>)}</ol></section>
+    <section aria-labelledby="stage-title" className="mt-8 rounded-xl border border-stone-200 bg-white shadow-sm"><div className="border-b border-stone-200 px-5 py-4"><h2 id="stage-title" className="font-600">Pipeline-Arbeitsbereich</h2><p className="mt-1 text-sm text-muted-foreground">Wählen Sie oben eine Phase. Die fachlichen Aktionen und Inhalte bleiben je Phase gebündelt.</p></div><ol className="divide-y divide-stone-100">{project.stages.map((stage) => <li id={`phase-${stage.id}`} key={stage.id} className="scroll-mt-6 px-5 py-5"><div className="grid gap-3 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-sm font-600 text-white" aria-hidden="true">{stage.sequence}</span><div><p className="font-600">{stage.title}</p><p className="mt-1 text-sm text-muted-foreground">{stage.code} · {COLLABORATION_STAGE_STATUS_LABELS[stage.derivedStatus]}</p></div><span className="text-sm text-muted-foreground">{stage.weight > 0 ? `${stage.weight} % Gewicht` : 'Ohne Gewicht'}</span></div><CollaborationStageActions stage={stage} role={project.role} projectId={project.id} memberships={project.memberships} showCreationForms={canSeeCreationForms} /></li>)}</ol></section>
 
     <div className="mt-8 grid gap-6 lg:grid-cols-2">
       <section id="aufgaben" aria-labelledby="tasks-title" className="scroll-mt-4 rounded-xl border border-stone-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-stone-200 px-5 py-4"><h2 id="tasks-title" className="font-600">Aufgaben <span className="text-sm font-normal text-muted-foreground">({tasks.length})</span></h2><Link href="/collaboration/tasks" className="text-sm text-blue-700 hover:underline">Alle</Link></div><ul className="divide-y divide-stone-100">{tasks.slice(0, 8).map((task) => <li key={task.id} className="px-5 py-3"><p className="font-600">{task.title}</p><p className="text-xs text-muted-foreground">{task.stageTitle} · {task.status} · {task.isRequired ? 'Erforderlich' : 'Optional'}</p></li>)}</ul>{tasks.length === 0 && <p className="px-5 py-6 text-sm text-muted-foreground">Keine Aufgaben.</p>}</section>

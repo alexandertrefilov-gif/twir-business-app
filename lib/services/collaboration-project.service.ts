@@ -65,6 +65,13 @@ const projectSelect = {
   plannedEnd: true,
   stages: { orderBy: { sequence: 'asc' as const }, select: stageSelect },
   blockers: { where: { status: 'OPEN' as const }, orderBy: { createdAt: 'asc' as const }, select: { id: true, title: true, status: true, cabinetId: true } },
+  // Dashboard-Konsolidierung: dieselbe, bereits bestehende Relation
+  // CollaborationProject → Project → Customer wie commercialReference in
+  // getCollaborationPhase2Project() (Business → Collaboration Handover V1
+  // Abschnitt 10) — keine neue Architektur, nur hier zusätzlich für die
+  // Listen-/Karten-Ansicht mitgeladen. Nur der Kundenname, keine Order-/
+  // Angebotsdetails nötig (die Karte zeigt nur "Kunde", keine Belegnummern).
+  internalProject: { select: { customer: { select: { name: true } } } },
 } as const
 
 type ProjectRow = Prisma.CollaborationProjectGetPayload<{ select: typeof projectSelect }>
@@ -97,6 +104,9 @@ function toProjectView(project: ProjectRow, role?: string) {
     // Projektmatrix einen "Kritisch"-Status ehrlich einem projektweiten
     // Blocker zuschreiben, statt ihn mit einem GGA-Schrank-Grund zu vermischen.
     offeneProjektweiteBlocker: project.blockers.filter((blocker) => !blocker.cabinetId).length,
+    // Nur gesetzt, wenn tatsächlich ein internes Project verknüpft ist —
+    // sonst null, keine erfundenen Werte (dasselbe Prinzip wie commercialReference).
+    customerName: project.internalProject?.customer.name ?? null,
   }
 }
 

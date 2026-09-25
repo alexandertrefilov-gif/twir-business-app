@@ -20,9 +20,11 @@ type ProjectMatrixCard = {
   id: string
   projectNumber: string | null
   name: string
+  customerName: string | null
   standort: string | null
   status: string
   aktuellePhase: string | null
+  aktuellePhaseTitel: string | null
   progressPercent: number | null
   presentationStatus: GgaPresentationStatus
   ursache: string | null
@@ -50,11 +52,14 @@ function buildProjectMatrixCard(project: CollaborationProjectView, ggaSummary: G
   const ursache = ursacheTeile.length > 0
     ? ursacheTeile.join(' · ')
     : (presentationStatus === 'KRITISCH' ? 'Projektweiter Grund — Details auf der Projektseite' : null)
+  const aktuelleStage = project.stages.find((stage) => stage.derivedStatus === 'IN_PROGRESS')
   return {
     id: project.id, projectNumber: project.projectNumber, name: project.name,
+    customerName: project.customerName,
     standort: [project.location, project.building, project.floor].filter(Boolean).join(' · ') || null,
     status: project.status,
-    aktuellePhase: project.stages.find((stage) => stage.derivedStatus === 'IN_PROGRESS')?.code ?? null,
+    aktuellePhase: aktuelleStage?.code ?? null,
+    aktuellePhaseTitel: aktuelleStage?.title ?? null,
     progressPercent: project.progressPercent,
     presentationStatus, ursache,
     schraenke: ggaSummary.gesamt, pruefungenOffen: ggaSummary.pruefungOffen, maengelOffen,
@@ -131,7 +136,7 @@ export default async function CollaborationDashboardPage({ searchParams }: { sea
 
   return <div>
     <div className="flex flex-wrap items-end justify-between gap-4">
-      <div><p className="text-xs font-600 uppercase tracking-[0.18em] text-blue-700">Control Tower</p><h1 className="mt-2 text-3xl font-600 tracking-tight">Projektübersicht</h1><p className="mt-2 text-sm text-muted-foreground">Freigegebene Projekte, aktueller Fortschritt und nächste Schritte.</p></div>
+      <div><p className="text-xs font-600 uppercase tracking-[0.18em] text-blue-700">Collaboration</p><h1 className="mt-2 text-3xl font-600 tracking-tight">Projektübersicht</h1><p className="mt-2 text-sm text-muted-foreground">Freigegebene Projekte, aktueller Fortschritt und nächste Schritte.</p></div>
       <div className="flex items-center gap-4">
         <Link href="/collaboration/my-work" className="text-sm font-600 text-blue-700 hover:underline">Meine Arbeit öffnen →</Link>
         <Link href="/collaboration/projects" className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-600 hover:border-blue-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">Alle Projekte</Link>
@@ -153,10 +158,14 @@ export default async function CollaborationDashboardPage({ searchParams }: { sea
       </div>
     </section>
 
-    {/* Projektmatrix (GGA-Portal Produktblock 1): Fortschritt (%) und Situation
-        (Status/Ampel) getrennt je Karte, bleibt das Zentrum des Dashboards. */}
+    {/* Projektliste (GGA-Portal Produktblock 1): Fortschritt (%) und Situation
+        (Status/Ampel) getrennt je Karte, bleibt das Zentrum des Dashboards.
+        UI-Text bewusst "Projektliste" statt "Projektmatrix" (Glossar-Vorgabe
+        aus SPEC-projektuebersicht.md) — nur die Benutzeroberfläche betroffen,
+        keine Umbenennung von Typen/Funktionen (ProjectMatrixCard etc. bleiben
+        interne Bezeichner, keine SSOT-Änderung). */}
     <section aria-labelledby="matrix-title" className="mt-6">
-      <h2 id="matrix-title" className="sr-only">Projektmatrix</h2>
+      <h2 id="matrix-title" className="sr-only">Projektliste</h2>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-1.5">
           {(Object.keys(PROJECT_FILTER_LABELS) as ProjectFilter[]).map((f) => <Link key={f} href={projectMatrixHref(f, search)} className={`rounded-full border px-3 py-1 text-xs font-600 ${pfilter === f ? 'border-stone-800 bg-stone-800 text-white' : 'border-stone-300 text-stone-700 hover:border-stone-500'}`}>{PROJECT_FILTER_LABELS[f]}</Link>)}
@@ -173,13 +182,16 @@ export default async function CollaborationDashboardPage({ searchParams }: { sea
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="truncate font-600">{card.projectNumber ? `${card.projectNumber} · ` : ''}{card.name}</p>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{card.standort ?? 'Keine Ortsangaben hinterlegt'}</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{[card.customerName, card.standort].filter(Boolean).join(' · ') || 'Keine Kunden-/Ortsangaben hinterlegt'}</p>
             </div>
             <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-600 ${GGA_STATUS_BADGE_CLASS[card.presentationStatus]}`}>{GGA_STATUS_LABELS[card.presentationStatus]}</span>
           </div>
 
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>{card.aktuellePhaseTitel ?? 'Keine aktive Phase'}</span>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-stone-200"><div className="h-full rounded-full bg-stone-700" style={{ width: `${card.progressPercent ?? 0}%` }} /></div>
               <span className="shrink-0 text-xs font-600 tabular-nums">{card.progressPercent === null ? '–' : `${card.progressPercent} %`}</span>
             </div>

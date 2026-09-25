@@ -14,6 +14,8 @@ import {
   setCollaborationTaskStatus,
   transitionCollaborationStage,
   transitionCollaborationProjectStatus,
+  deleteCollaborationProject,
+  getCollaborationProjectDeleteBlockersFor,
 } from '@/lib/services/collaboration-phase2.service'
 import {
   createGgaCabinet,
@@ -36,7 +38,7 @@ const bodySchema = z.object({
     'create-cabinet', 'update-cabinet', 'delete-cabinet', 'set-cabinet',
     'apply-cabinet-checklist-template', 'set-cabinet-inspection-item',
     'request-operator-approval', 'decide-operator-approval', 'set-document-visibility',
-    'record-pruefnachweis',
+    'record-pruefnachweis', 'delete-project', 'project-delete-info',
   ]),
   id: z.string().min(1),
   projectId: z.string().min(1).optional(),
@@ -117,6 +119,11 @@ export async function POST(request: Request) {
       if (!input.ergebnis) throw new ValidationError('Ergebnis fehlt')
       result = await recordGgaCabinetPruefnachweis(input.id, input.pruefart, input.ergebnis, input.data ?? {})
     }
+    else if (input.action === 'delete-project') {
+      if (!input.confirmedKennung) throw new ValidationError('Zur Bestätigung wird die Projektnummer benötigt')
+      result = await deleteCollaborationProject(input.id, input.confirmedKennung)
+    }
+    else if (input.action === 'project-delete-info') result = { blockers: await getCollaborationProjectDeleteBlockersFor(input.id) }
     else if (input.action === 'transition-project') result = await transitionCollaborationProjectStatus(input.id, input.status ?? '')
     else result = await transitionCollaborationStage(input.id, input.status ?? '')
     return NextResponse.json({ ok: true, result })

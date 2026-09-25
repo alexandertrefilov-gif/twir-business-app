@@ -256,8 +256,12 @@ async function getCollaborationReleaseBlockers(collaborationProjectId: string, t
 
 // Für die UI: dieselbe Prüfung, ohne zu mutieren — damit vorab entschieden
 // werden kann, ob FALL A (blockiert) oder FALL B (bestätigbar) angezeigt wird.
-export async function getCollaborationReleaseBlockersFor(collaborationProjectId: string): Promise<string[]> {
-  return getCollaborationReleaseBlockers(collaborationProjectId)
+// Optionaler tx-Parameter: erlaubt anderen Services (z.B.
+// deleteCollaborationProject in collaboration-phase2.service.ts), dieselbe
+// Prüfung innerhalb ihrer EIGENEN Transaktion wiederzuverwenden, statt eine
+// zweite Dependency-Prüfung zu bauen.
+export async function getCollaborationReleaseBlockersFor(collaborationProjectId: string, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<string[]> {
+  return getCollaborationReleaseBlockers(collaborationProjectId, tx)
 }
 
 export async function releaseCollaboration(projectId: string, confirmedProjectNumber: string, actor: Actor) {
