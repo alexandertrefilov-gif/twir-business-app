@@ -22,6 +22,7 @@ import type { OfferCreateInput, OfferUpdateInput } from '@/lib/validators/offer.
 import { calcItemAmounts, calcOfferTotals } from '@/lib/validators/offer.schema'
 import { offerToOrderDescription } from '@/lib/offers/rich-text'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
+import { berlinDayStartUtc } from '@/lib/utils/berlin-date'
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -523,6 +524,8 @@ export async function convertOfferToOrder(
         totalNet:         offer.totalNet,
         totalTax:         offer.totalTax,
         totalGross:       offer.totalGross,
+        // P5-6 C-2/D7: Kalenderfeld = Berliner Kalendertag als UTC-Mitternacht, nicht der DB-Default now() (Instant).
+        orderDate:        berlinDayStartUtc(new Date()),
         createdById:      userId,
         items: {
           create: offer.items.map((item) => ({
