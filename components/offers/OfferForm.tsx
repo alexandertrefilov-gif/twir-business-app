@@ -13,6 +13,7 @@ import { OfferNumberEditor } from '@/components/offers/OfferNumberEditor'
 import type { ActionState } from '@/app/(dashboard)/offers/actions'
 import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
 import { berlinTodayIso, berlinTodayPlusDaysIso } from '@/lib/utils/berlin-date'
+import { previewDocument } from '@/lib/billing/document-preview'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -87,33 +88,31 @@ export function OfferForm({ mode, offerNumber, changeNumberAction, customers, de
   )
 
   // ── Computed totals ──────────────────────────────────────────
+  // REQ-029 F2-B: gleiche Rechenquelle wie Server und Rechnung (Decimal, Steuer je Satz); kein eigener Rundungspfad.
+  const preview = useMemo(
+    () => previewDocument(items.map((item) => ({ quantity: item.quantity, unitPrice: item.unitPrice, taxRate: item.taxRate }))),
+    [items],
+  )
+
   const computed = useMemo(() => {
-    return items.map((item) => {
-      const qty   = parseFloat(item.quantity)  || 0
-      const price = parseFloat(item.unitPrice) || 0
-      const tax   = parseFloat(item.taxRate)   || 0
-      const net   = Math.round(qty * price * 100)      / 100
-      const taxA  = Math.round(net * tax / 100 * 100)  / 100
-      const gross = Math.round((net + taxA) * 100)     / 100
-      return { ...item, net, taxA, gross }
-    })
-  }, [items])
+    return items.map((item, index) => ({
+      ...item,
+      net:   Number(preview.lines[index].netAmount),
+      taxA:  Number(preview.lines[index].taxAmount),
+      gross: Number(preview.lines[index].grossAmount),
+    }))
+  }, [items, preview])
 
   const totals = useMemo(() => {
-    const totalNet = computed.reduce((s, i) => s + i.net, 0)
     const groups: Record<string, number> = {}
-    for (const i of computed) {
-      const k = i.taxRate
-      groups[k] = Math.round(((groups[k] ?? 0) + i.taxA) * 100) / 100
-    }
-    const totalTax = Object.values(groups).reduce((s, v) => s + v, 0)
+    for (const group of preview.taxGroups) groups[String(Number(group.rate))] = Number(group.taxAmount)
     return {
-      totalNet:   Math.round(totalNet * 100) / 100,
+      totalNet:   Number(preview.totalNet),
       taxGroups:  groups,
-      totalTax:   Math.round(totalTax * 100) / 100,
-      totalGross: Math.round((totalNet + totalTax) * 100) / 100,
+      totalTax:   Number(preview.totalTax),
+      totalGross: Number(preview.totalGross),
     }
-  }, [computed])
+  }, [preview])
 
   // ── Item helpers ─────────────────────────────────────────────
 

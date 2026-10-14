@@ -19,7 +19,7 @@ import {
   BusinessRuleError,
 } from '@/lib/auth/permissions'
 import type { OfferCreateInput, OfferUpdateInput } from '@/lib/validators/offer.schema'
-import { calcItemAmounts, calcOfferTotals } from '@/lib/validators/offer.schema'
+import { calculateDocumentForPersistence } from '@/lib/services/document-calculation.service'
 import { offerToOrderDescription } from '@/lib/offers/rich-text'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
 import { berlinDayStartUtc } from '@/lib/utils/berlin-date'
@@ -192,7 +192,9 @@ export async function createOffer(
   })
   if (!customer) throw new NotFoundError('Kunde nicht gefunden')
 
-  const totals = calcOfferTotals(data.items)
+  // REQ-029 F2-B: zentrale Rechenquelle (Decimal, Steuer je Satz); kein eigener Rundungspfad für Angebote.
+  const calc   = calculateDocumentForPersistence(data.items)
+  const totals = { totalNet: calc.totalNet, totalTax: calc.totalTax, totalGross: calc.totalGross }
 
   return prisma.$transaction(async (tx) => {
     const offerNumber = await nextNumber(NumberSequenceType.OFFER, tx)
@@ -213,8 +215,8 @@ export async function createOffer(
         totalGross:  totals.totalGross,
         createdById: userId,
         items: {
-          create: data.items.map((item) => {
-            const { netAmount, taxAmount, grossAmount } = calcItemAmounts(item)
+          create: data.items.map((item, index) => {
+            const { netAmount, taxAmount, grossAmount } = calc.lines[index]
             return {
               position:    item.position,
               description: item.description,
@@ -264,7 +266,9 @@ export async function updateOffer(
     )
   }
 
-  const totals = calcOfferTotals(data.items)
+  // REQ-029 F2-B: zentrale Rechenquelle (Decimal, Steuer je Satz); kein eigener Rundungspfad für Angebote.
+  const calc   = calculateDocumentForPersistence(data.items)
+  const totals = { totalNet: calc.totalNet, totalTax: calc.totalTax, totalGross: calc.totalGross }
 
   await prisma.$transaction(async (tx) => {
     // Items komplett ersetzen (delete all + recreate)
@@ -284,8 +288,8 @@ export async function updateOffer(
         totalTax:    totals.totalTax,
         totalGross:  totals.totalGross,
         items: {
-          create: data.items.map((item) => {
-            const { netAmount, taxAmount, grossAmount } = calcItemAmounts(item)
+          create: data.items.map((item, index) => {
+            const { netAmount, taxAmount, grossAmount } = calc.lines[index]
             return {
               position:    item.position,
               description: item.description,

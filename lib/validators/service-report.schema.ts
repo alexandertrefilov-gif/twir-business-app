@@ -2,7 +2,6 @@
 
 import { z } from 'zod'
 import { canonicalizeOfferTextValue, isValidOfferTextValue } from '@/lib/offers/rich-text'
-import { calcItemAmounts } from '@/lib/validators/offer.schema'
 import {
   decimalInputSchema,
   legacyNumberToDecimalString,
@@ -102,8 +101,8 @@ export function calcReportItemAmounts(item: NumericItem) {
       grossAmount:    Number(result.totals.grandTotal),
     }
   } catch {
-    // Nur Anzeige bei ungültiger Zwischeneingabe (Server validiert streng): bisheriges Verhalten
-    return calcItemAmounts({ ...item, taxRate: item.taxRate ?? 19 })
+    // Nur Anzeige bei ungültiger Zwischeneingabe (Server validiert streng): keine Beträge statt eines zweiten Rechenwegs (REQ-029 F2-B)
+    return { subtotal: 0, discountAmount: 0, netAmount: 0, taxAmount: 0, grossAmount: 0 }
   }
 }
 

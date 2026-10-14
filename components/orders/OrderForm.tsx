@@ -7,6 +7,7 @@ import type { ActionState } from '@/app/(dashboard)/orders/actions'
 import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEditor'
 import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
 import { berlinTodayIso } from '@/lib/utils/berlin-date'
+import { previewDocument } from '@/lib/billing/document-preview'
 
 interface CustomerOption { id: string; name: string; number: string }
 
@@ -52,12 +53,14 @@ export function OrderForm({ mode, customers, defaults = {}, action, lockCustomer
   const formRef = useRef<HTMLFormElement>(null)
   const [items, setItems] = useState<ItemRow[]>(defaults.items ?? [])
 
-  const computed = useMemo(() => items.map((r) => {
-    const net = Math.round((parseFloat(r.quantity) || 0) * (parseFloat(r.unitPrice) || 0) * 100) / 100
-    return { ...r, net }
-  }), [items])
+  // REQ-029 F2-B: gleiche Rechenquelle wie Server und Rechnung; kein eigener Rundungspfad.
+  const preview = useMemo(
+    () => previewDocument(items.map((r) => ({ quantity: r.quantity, unitPrice: r.unitPrice, taxRate: r.taxRate }))),
+    [items],
+  )
+  const computed = useMemo(() => items.map((r, index) => ({ ...r, net: Number(preview.lines[index].netAmount) })), [items, preview])
 
-  const totalNet = computed.reduce((s, i) => s + i.net, 0)
+  const totalNet = Number(preview.totalNet)
 
   function upd(key: string, field: keyof ItemRow, val: string) {
     setItems((p) => p.map((r) => r._key === key ? { ...r, [field]: val } : r))

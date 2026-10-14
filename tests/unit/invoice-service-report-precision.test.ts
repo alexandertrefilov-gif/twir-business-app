@@ -154,12 +154,14 @@ describe('Quelltext-Garantien', () => {
     expect(form).not.toMatch(/zzgl\./)
   })
 
-  it('Angebote und Aufträge bleiben unverändert: kein Import des neuen Billing-Moduls', () => {
-    // Seit P4-B nutzt der Rechnungs-Service die Billing-Bausteine (Rabattprüfung, Dezimalrechnung) bewusst;
-    // Angebote, Aufträge und die Rechnungs-Server-Action dürfen sie weiterhin nicht direkt importieren.
-    // Seit P4-D nutzt auch der Zahlungs-Service die Billing-Bausteine (exakte Zahlungs-/Restbetragsrechnung).
+  it('Angebote und Aufträge rechnen seit REQ-029 F2-B über die zentrale Billing-Quelle; PDF/Anzeige und Rechnungs-Action bleiben ohne Berechnung', () => {
+    // F2-B (Owner-Entscheidung 14.10.2026): Angebot, Auftrag und Rechnung nutzen dieselbe Decimal-Rechenquelle.
+    // Die Persistenz-Services gehen über den Adapter document-calculation.service; Angebots-PDF und Rechnungs-Server-Action
+    // rechnen weiterhin nicht selbst (gespeicherte Beträge). Seit P4-B/P4-D nutzen Rechnungs- und Zahlungs-Service die Billing-Bausteine.
+    expect(read('lib/validators/offer.schema.ts')).toContain('@/lib/billing/')
+    expect(read('lib/services/offer.service.ts')).toContain('@/lib/services/document-calculation.service')
+    expect(read('lib/services/order.service.ts')).toContain('@/lib/services/document-calculation.service')
     for (const file of [
-      'lib/validators/offer.schema.ts', 'lib/services/offer.service.ts', 'lib/services/order.service.ts',
       'lib/services/offer-pdf.service.ts',
       'app/(dashboard)/invoices/actions.ts',
     ]) {

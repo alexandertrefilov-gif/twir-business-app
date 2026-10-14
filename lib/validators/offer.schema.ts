@@ -1,5 +1,8 @@
 // lib/validators/offer.schema.ts
 import { z } from 'zod'
+import { calculateDocumentAmounts } from '@/lib/billing/document-amounts'
+import { calculateInvoice } from '@/lib/billing/invoice-calculator'
+import { legacyNumberToDecimalString } from '@/lib/billing/decimal-input'
 import {
   canonicalizeOfferTextValue,
   isValidOfferTextValue,
@@ -65,38 +68,46 @@ export type OfferUpdateInput = z.infer<typeof OfferUpdateSchema>
 export type OfferNumberChangeInput = z.infer<typeof OfferNumberChangeSchema>
 
 // ── Helpers ──────────────────────────────────────────────────
+// REQ-029 F2-B: Angebot, Auftrag und Rechnung rechnen über EINE Quelle (`lib/billing`, twir-calc-1, Decimal, HALF_UP).
+// Diese Funktionen sind nur noch Adapter (Zahlen-API unverändert); es gibt keinen eigenen Rundungspfad mehr.
+// Persistiert wird über `calculateDocumentForPersistence` (lib/services/document-calculation.service.ts).
 
-export function calcItemAmounts(item: {
+type NumericItem = {
   quantity: number
   unitPrice: number
   taxRate:  number
   discountRate?: number
-}) {
-  const subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
-  const discountAmount = Math.round(subtotal * (item.discountRate ?? 0) / 100 * 100) / 100
-  const net   = Math.round((subtotal - discountAmount) * 100) / 100
-  const tax   = Math.round(net * item.taxRate / 100 * 100) / 100
-  const gross = Math.round((net + tax) * 100) / 100
-  return { subtotal, discountAmount, netAmount: net, taxAmount: tax, grossAmount: gross }
 }
 
-export function calcOfferTotals(items: OfferItemInput[]) {
-  let totalNet = 0
-  let totalTax = 0
-  const taxGroups: Record<string, number> = {}
-
-  for (const item of items) {
-    const { netAmount, taxAmount } = calcItemAmounts(item)
-    totalNet += netAmount
-    totalTax += taxAmount
-    const key = String(item.taxRate)
-    taxGroups[key] = Math.round(((taxGroups[key] ?? 0) + taxAmount) * 100) / 100
-  }
-
+function toLine(item: NumericItem) {
   return {
-    totalNet:   Math.round(totalNet * 100) / 100,
-    totalTax:   Math.round(totalTax * 100) / 100,
-    totalGross: Math.round((totalNet + totalTax) * 100) / 100,
+    quantity:     legacyNumberToDecimalString(item.quantity),
+    unitPrice:    legacyNumberToDecimalString(item.unitPrice),
+    taxRate:      legacyNumberToDecimalString(item.taxRate),
+    discountRate: legacyNumberToDecimalString(item.discountRate ?? 0),
+  }
+}
+
+export function calcItemAmounts(item: NumericItem) {
+  const result = calculateInvoice([{ key: '1', ...toLine(item), taxCategory: 'S' }])
+  const line = result.lines[0]
+  return {
+    subtotal:       Number(line.baseAmountRounded),
+    discountAmount: Number(line.discountAmountDerived),
+    netAmount:      Number(line.lineNet),
+    taxAmount:      Number(result.totals.taxTotal),
+    grossAmount:    Number(result.totals.grandTotal),
+  }
+}
+
+export function calcOfferTotals(items: NumericItem[]) {
+  const result = calculateDocumentAmounts(items.map(toLine))
+  const taxGroups: Record<string, number> = {}
+  for (const group of result.taxGroups) taxGroups[String(Number(group.rate))] = Number(group.taxAmount)
+  return {
+    totalNet:   Number(result.totalNet),
+    totalTax:   Number(result.totalTax),
+    totalGross: Number(result.totalGross),
     taxGroups,
   }
 }

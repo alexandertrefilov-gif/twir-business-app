@@ -3,7 +3,7 @@
 //   nextNumber        (Phase 2)
 //   buildAuditLogCreate (Phase 2)
 //   OrderStatus / AuditAction / NumberSequenceType (Phase 2 enums)
-//   calcItemAmounts / calcOrderTotals (Phase 4 offer.schema – re-exported in order.schema)
+//   calculateDocumentForPersistence (REQ-029 F2-B: zentrale Rechenquelle lib/billing, identisch zur Rechnung)
 //
 // convertOfferToOrder ist in offer.service.ts (Phase 4) implementiert – nicht hier.
 
@@ -22,7 +22,7 @@ import {
   BusinessRuleError,
 } from '@/lib/auth/permissions'
 import type { OrderCreateInput, OrderUpdateInput } from '@/lib/validators/order.schema'
-import { calcItemAmounts, calcOrderTotals } from '@/lib/validators/order.schema'
+import { calculateDocumentForPersistence } from '@/lib/services/document-calculation.service'
 import { removeOrderContentCard as removeContentCardValue, type OrderContentCard } from '@/lib/offers/rich-text'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
 
@@ -188,9 +188,9 @@ export async function createOrder(
   })
   if (!customer) throw new NotFoundError('Kunde nicht gefunden')
 
-  const totals = data.items.length > 0
-    ? calcOrderTotals(data.items)
-    : { totalNet: 0, totalTax: 0, totalGross: 0 }
+  // REQ-029 F2-B: zentrale Rechenquelle (Decimal, Steuer je Satz); kein eigener Rundungspfad für Aufträge.
+  const calc   = calculateDocumentForPersistence(data.items)
+  const totals = { totalNet: calc.totalNet, totalTax: calc.totalTax, totalGross: calc.totalGross }
 
   return prisma.$transaction(async (tx) => {
     const orderNumber = await nextNumber(NumberSequenceType.ORDER, tx)
@@ -211,8 +211,8 @@ export async function createOrder(
         createdById: userId,
         ...(data.items.length > 0 && {
           items: {
-            create: data.items.map((item) => {
-              const { netAmount, taxAmount, grossAmount } = calcItemAmounts(item)
+            create: data.items.map((item, index) => {
+              const { netAmount, taxAmount, grossAmount } = calc.lines[index]
               return {
                 position:    item.position,
                 description: item.description,
@@ -263,9 +263,9 @@ export async function updateOrder(
     )
   }
 
-  const totals = data.items.length > 0
-    ? calcOrderTotals(data.items)
-    : { totalNet: 0, totalTax: 0, totalGross: 0 }
+  // REQ-029 F2-B: zentrale Rechenquelle (Decimal, Steuer je Satz); kein eigener Rundungspfad für Aufträge.
+  const calc   = calculateDocumentForPersistence(data.items)
+  const totals = { totalNet: calc.totalNet, totalTax: calc.totalTax, totalGross: calc.totalGross }
 
   await prisma.$transaction(async (tx) => {
     await tx.orderItem.deleteMany({ where: { orderId: id } })
@@ -284,8 +284,8 @@ export async function updateOrder(
         totalGross:  totals.totalGross,
         ...(data.items.length > 0 && {
           items: {
-            create: data.items.map((item) => {
-              const { netAmount, taxAmount, grossAmount } = calcItemAmounts(item)
+            create: data.items.map((item, index) => {
+              const { netAmount, taxAmount, grossAmount } = calc.lines[index]
               return {
                 position:    item.position,
                 description: item.description,
