@@ -15,12 +15,14 @@ import {
   getInvoiceById,
   getInvoicePayments,
 } from '@/lib/services/invoice-query.service'
-import { getDunningNoticesForInvoice } from '@/lib/services/dunning.service'
+import { getDunningEligibility, getDunningNoticesForInvoice } from '@/lib/services/dunning.service'
+import type { DunningEligibilityDto } from '@/lib/services/dunning.service'
+import { DUNNABLE_INVOICE_STATUSES } from '@/lib/services/dunning-policy'
+import { groupTaxFromStoredNet, isPositiveMoney, resolveOpenAmount } from '@/lib/billing'
+import { formatDecimalDe } from '@/lib/billing/format'
 import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { InvoiceStatus, INVOICE_TYPE_LABELS } from '@/types/enums'
 import { addPaymentAction }   from '@/app/(dashboard)/payments/actions'
-import { format }             from 'date-fns'
-import { de }                 from 'date-fns/locale'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { getSupplierNumber } from '@/lib/services/settings.service'
 import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
@@ -32,6 +34,7 @@ import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { OfferRichText } from '@/components/offers/OfferRichText'
 import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
 import { listProjectsForCustomer } from '@/lib/services/project.service'
+import { formatBerlinDate, formatBerlinDateTime, formatCalendarDateLong } from '@/lib/utils/berlin-date'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -82,9 +85,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   ])
   const availableProjects = canManageProject && !process.project ? await listProjectsForCustomer(invoice.customerId) : []
 
-  const paymentRecords = canReadPayments
+  // P5-4: Der aktuelle Rest wird aus den aktiven Zahlungszeilen bestimmt (Quelle wie addPayment). Dieselbe bestehende
+  // Abfrage dient auch dem Erfassungsformular; die Zahlungsliste selbst bleibt an die Leseberechtigung gebunden.
+  const paymentRecords = canReadPayments || canCreatePayment
     ? await getInvoicePayments(invoice.id)
-    : []
+    : null
 
   let dunningNotices: Awaited<ReturnType<typeof getDunningNoticesForInvoice>> = []
   if (canManageDunning) {
@@ -92,33 +97,47 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     catch { /* dunning table may not exist pre-migration */ }
   }
 
+  // REQ-029 P5-3: Mahnfähigkeit nur zur Anzeige (serverseitig berechnet). Verbindlich prüft createDunningNotice.
+  // Schlägt die Berechnung fehl, wird nichts angeboten (null → Hinweis im Panel) statt still freizugeben.
+  let dunningEligibility: DunningEligibilityDto | null = null
+  if (canManageDunning && invoice.status !== 'DRAFT') {
+    try { dunningEligibility = await getDunningEligibility(invoice.id) }
+    catch { dunningEligibility = null }
+  }
+  const canMarkDunningSent = DUNNABLE_INVOICE_STATUSES.includes(invoice.status)
+
   const totalGross = invoice.totalGross.toNumber()
-  const paidAmount = invoice.paidAmount.toNumber()
-  const remaining  = Math.round((totalGross - paidAmount) * 100) / 100
+  // `null` = Zahlungszeilen NICHT geladen (keine Berechtigung) → ausgewiesener Cache-Rückfall.
+  // `[]` = erfolgreich geladen, keine aktiven Zahlungen → 0,00 bezahlt (nicht der Cache).
+  const open = resolveOpenAmount(
+    invoice.totalGross,
+    invoice.paidAmount,
+    paymentRecords === null ? null : paymentRecords.map((p) => p.amount),
+  )
 
   const items = invoice.items.map((item) => ({
     ...item,
     quantity:    item.quantity.toNumber(),
     unitPrice:   item.unitPrice.toNumber(),
+    discountRate: item.discountRate ? item.discountRate.toNumber() : 0,
     taxRate:     item.taxRate.toNumber(),
     netAmount:   item.netAmount.toNumber(),
     taxAmount:   item.taxAmount.toNumber(),
     grossAmount: item.grossAmount.toNumber(),
   }))
 
-  const taxGroups: Record<string, number> = {}
-  for (const item of items) {
-    const k = String(item.taxRate)
-    taxGroups[k] = Math.round(((taxGroups[k] ?? 0) + item.taxAmount) * 100) / 100
-  }
+  const hasDiscount = items.some((item) => item.discountRate > 0)
 
-  const payments = paymentRecords.map((p) => ({
+  // P5-4 (F4): Steuergruppen aus dem gespeicherten Positions-Netto (BT-117), nicht aus einzeln gerundeten Positionssteuern.
+  const taxGroups = groupTaxFromStoredNet(invoice.items)
+
+  const payments = (canReadPayments ? paymentRecords ?? [] : []).map((p) => ({
     id: p.id, amount: p.amount.toNumber(), paymentDate: p.paymentDate,
     method: p.method, reference: p.reference, notes: p.notes, createdAt: p.createdAt,
   }))
 
   const fmt  = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const fmtD = (d: Date) => format(new Date(d), 'dd. MMMM yyyy', { locale: de })
+  const fmtD = (d: Date) => formatCalendarDateLong(d)
   const cs   = invoice.customerSnapshot as Record<string, any> | null
   const cmp  = invoice.companySnapshot  as Record<string, any> | null
   const supplierNumber = invoice.status === InvoiceStatus.DRAFT
@@ -126,7 +145,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     : typeof cmp?.supplierNumber === 'string'
       ? cmp.supplierNumber
       : null
-  const canAddPayment = canCreatePayment && remaining > 0 &&
+  const canAddPayment = canCreatePayment && isPositiveMoney(open.remaining) &&
     !['DRAFT', 'PAID', 'CANCELLED'].includes(invoice.status)
 
   return (
@@ -188,10 +207,10 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
             </dd>
           </div>
           {invoice.finalizedAt && (
-            <HeaderValue label="Finalisiert am" value={format(new Date(invoice.finalizedAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+            <HeaderValue label="Finalisiert am" value={formatBerlinDateTime(invoice.finalizedAt)} />
           )}
           {invoice.sentAt && (
-            <HeaderValue label="Versendet am" value={format(new Date(invoice.sentAt), 'dd.MM.yyyy', { locale: de })} />
+            <HeaderValue label="Versendet am" value={formatBerlinDate(invoice.sentAt)} />
           )}
         </dl>
       </BusinessDocumentHeader>
@@ -256,6 +275,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                             <th className="w-8">#</th><th>Beschreibung</th>
                             <th className="num text-right">Menge</th><th>Einh.</th>
                             <th className="num text-right">Einzelpr.</th>
+                            {hasDiscount && <th className="num text-right">Rabatt</th>}
                             <th className="num text-right">MwSt.</th>
                             <th className="num text-right">Netto</th>
                             <th className="num text-right">Brutto</th>
@@ -269,6 +289,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                               <td className="num text-right mono text-sm">{item.quantity.toLocaleString('de-DE')}</td>
                               <td className="text-sm">{item.unit}</td>
                               <td className="num text-right mono text-sm">{fmt(item.unitPrice)} €</td>
+                              {hasDiscount && <td className="num text-right mono text-sm">{item.discountRate > 0 ? `${fmt(item.discountRate)} %` : '–'}</td>}
                               <td className="num text-right mono text-sm">{item.taxRate} %</td>
                               <td className="num text-right mono text-sm">{fmt(item.netAmount)} €</td>
                               <td className="num text-right mono text-sm font-500">{fmt(item.grossAmount)} €</td>
@@ -280,16 +301,19 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                     <div className="px-5 py-4 border-t border-stone-100 bg-stone-50/50 flex justify-end">
                       <div className="w-72 space-y-1.5">
                         <TR label="Nettobetrag" value={`${fmt(invoice.totalNet.toNumber())} €`} />
-                        {Object.entries(taxGroups).filter(([,v])=>v>0)
-                          .sort(([a],[b])=>parseFloat(b)-parseFloat(a))
-                          .map(([rate,amt])=>(
-                            <TR key={rate} label={`zzgl. ${rate}% MwSt.`} value={`${fmt(amt)} €`} muted />
-                          ))}
+                        {taxGroups.map((group) => (
+                          <TR key={group.rate} label={`zzgl. ${group.rate}% MwSt.`} value={`${formatDecimalDe(group.tax)} €`} muted />
+                        ))}
                         <div className="border-t border-stone-200 pt-1.5">
                           <TR label="Bruttobetrag" value={`${fmt(totalGross)} €`} bold />
                         </div>
-                        {paidAmount > 0 && <TR label="Bereits bezahlt" value={`- ${fmt(paidAmount)} €`} green />}
-                        {remaining > 0  && <TR label="Noch offen"      value={`${fmt(remaining)} €`} amber />}
+                        {isPositiveMoney(open.paid)      && <TR label="Bereits bezahlt" value={`- ${formatDecimalDe(open.paid)} €`} green />}
+                        {isPositiveMoney(open.remaining) && <TR label="Noch offen"      value={`${formatDecimalDe(open.remaining)} €`} amber />}
+                        {open.cacheDrift && (
+                          <p className="text-xs text-amber-700 pt-1">
+                            Hinweis: Der gespeicherte Zahlungsstand ({formatDecimalDe(open.cachePaid)} €) weicht von der Summe der Zahlungen ({formatDecimalDe(open.paid)} €) ab. Angezeigt wird die Summe der Zahlungen.
+                          </p>
+                        )}
                       </div>
                     </div>
                   </>
@@ -305,8 +329,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                 <div className="p-5">
                   <PaymentJournal
                     payments={payments}
-                    totalGross={totalGross}
-                    paidAmount={paidAmount}
+                    paidAmount={open.paid}
+                    remainingAmount={open.remaining}
                     invoiceStatus={invoice.status}
                     canDelete={canCreatePayment}
                   />
@@ -357,15 +381,16 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                 <div className="p-4">
                   <PaymentForm
                     invoiceId={invoice.id}
-                    totalGross={totalGross}
-                    paidAmount={paidAmount}
+                    totalGross={open.totalGross}
+                    paidAmount={open.paid}
+                    remainingAmount={open.remaining}
                     action={addPaymentAction}
                   />
                 </div>
               </div>
             )}
 
-            {!['DRAFT', 'PAID', 'CANCELLED'].includes(invoice.status) && canManageDunning && (
+            {invoice.status !== 'DRAFT' && canManageDunning && (
               <div className="card-base overflow-hidden">
                 <div className="px-4 py-3 border-b border-stone-100">
                   <h3 className="text-sm font-600">Mahnwesen</h3>
@@ -373,9 +398,10 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                 <div className="p-4">
                   <DunningPanel
                     invoiceId={invoice.id}
-                    invoiceStatus={invoice.status}
                     notices={dunningNotices}
                     canManage={canManageDunning}
+                    eligibility={dunningEligibility}
+                    canMarkSent={canMarkDunningSent}
                   />
                 </div>
               </div>
@@ -385,7 +411,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
               <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground">Details</p>
               <MI label="Rechnungs-ID" value={invoice.id.slice(0,8)+'…'} mono />
               <MI label="Angelegt von" value={`${invoice.createdBy.firstName} ${invoice.createdBy.lastName}`} />
-              <MI label="Angelegt am"  value={format(new Date(invoice.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+              <MI label="Angelegt am"  value={formatBerlinDateTime(invoice.createdAt)} />
               {invoice.order && (
                 <div>
                   <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Auftrag</p>

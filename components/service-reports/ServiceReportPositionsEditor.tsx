@@ -5,11 +5,12 @@ import {
   DEFAULT_UNIT,
   SERVICE_ITEM_TYPES,
   SERVICE_ITEM_TYPE_LABELS,
-  calcReportItemAmounts,
-  calcReportTotals,
+  previewReportLine,
+  previewReportTotals,
   type ServiceItemType,
-  type ServiceReportItemInput,
+  type ServiceReportItemFormInput,
 } from '@/lib/validators/service-report.schema'
+import { formatDecimalDe } from '@/lib/billing/format'
 import { UNITS } from '@/lib/validators/offer.schema'
 
 export interface ServiceReportPositionValue {
@@ -28,7 +29,7 @@ export interface ServiceReportPositionValue {
 interface Props {
   defaults?: ServiceReportPositionValue[]
   error?: string
-  onItemsChange?: (items: ServiceReportItemInput[]) => void
+  onItemsChange?: (items: ServiceReportItemFormInput[]) => void
 }
 
 const UNIT_OPTIONS = [...new Set([...UNITS, 'Tag', 'Pauschal', 'Satz'])]
@@ -49,8 +50,8 @@ function createPosition(type: ServiceItemType = 'hours', position = 1): Required
   }
 }
 
-function money(value: number) {
-  return value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function money(value: string) {
+  return formatDecimalDe(value)
 }
 
 export function ServiceReportPositionsEditor({ defaults, error, onItemsChange }: Props) {
@@ -66,22 +67,24 @@ export function ServiceReportPositionsEditor({ defaults, error, onItemsChange }:
   const [automaticPositions, setAutomaticPositions] = useState(true)
   const [draggedKey, setDraggedKey] = useState<string | null>(null)
 
-  const numericItems = useMemo(() => items.map((item, index) => ({
+  // Mengen und Preise bleiben Eingabe-Strings (keine parseFloat-Geldrechnung). Leerer Preis/Rabatt = 0
+  // wie bisher; die strenge Prüfung (max. 2 Nachkommastellen) erfolgt serverseitig und in der Vorschau.
+  const formItems = useMemo<ServiceReportItemFormInput[]>(() => items.map((item, index) => ({
     position: automaticPositions ? index + 1 : item.position,
     type: item.type,
     description: item.description,
-    quantity: Number.parseFloat(item.quantity) || 0,
+    quantity: item.quantity.trim(),
     unit: item.unit,
-    unitPrice: Number.parseFloat(item.unitPrice) || 0,
-    discountRate: Number.parseFloat(item.discountRate) || 0,
-    taxRate: Number.parseFloat(item.taxRate) || 0,
+    unitPrice: item.unitPrice.trim() || '0',
+    discountRate: item.discountRate.trim() || '0',
+    taxRate: Number(item.taxRate) || 0,
     notes: item.notes || null,
   })), [automaticPositions, items])
-  const totals = useMemo(() => calcReportTotals(numericItems), [numericItems])
+  const totals = useMemo(() => previewReportTotals(formItems), [formItems])
 
   useEffect(() => {
-    onItemsChange?.(numericItems)
-  }, [numericItems, onItemsChange])
+    onItemsChange?.(formItems)
+  }, [formItems, onItemsChange])
 
   function updateItem(key: string, patch: Partial<ServiceReportPositionValue>) {
     setItems((current) => current.map((item) => item._key === key ? { ...item, ...patch } : item))
@@ -122,7 +125,7 @@ export function ServiceReportPositionsEditor({ defaults, error, onItemsChange }:
 
   return (
     <div className="min-w-0">
-      <input type="hidden" name="itemsJson" value={JSON.stringify(numericItems)} />
+      <input type="hidden" name="itemsJson" value={JSON.stringify(formItems)} />
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-3">
         <div>{error && <p className="field-error">{error}</p>}</div>
         <button type="button" onClick={addItem} className="inline-flex min-h-9 items-center rounded border border-blue-200 bg-blue-50 px-3 text-xs font-500 text-blue-700 hover:bg-blue-100">
@@ -144,12 +147,7 @@ export function ServiceReportPositionsEditor({ defaults, error, onItemsChange }:
       <div className="mt-3 space-y-3">
         {items.map((item, index) => {
           const key = item._key as string
-          const amount = calcReportItemAmounts({
-            quantity: Number.parseFloat(item.quantity) || 0,
-            unitPrice: Number.parseFloat(item.unitPrice) || 0,
-            discountRate: Number.parseFloat(item.discountRate) || 0,
-            taxRate: Number.parseFloat(item.taxRate) || 0,
-          })
+          const amount = previewReportLine(formItems[index])
           return (
             <article
               key={key}
@@ -199,7 +197,7 @@ export function ServiceReportPositionsEditor({ defaults, error, onItemsChange }:
                   <label className="text-xs text-muted-foreground">Einzelpreis<input type="number" min="0" step="0.01" value={item.unitPrice} onChange={(event) => updateItem(key, { unitPrice: event.target.value })} className="mt-1 h-9 w-full rounded-md border border-stone-200 bg-white px-2 text-right text-sm tabular-nums" /></label>
                   <label className="text-xs text-muted-foreground">Rabatt %<input type="number" min="0" max="100" step="0.01" value={item.discountRate} onChange={(event) => updateItem(key, { discountRate: event.target.value })} className="mt-1 h-9 w-full rounded-md border border-stone-200 bg-white px-2 text-right text-sm tabular-nums" /></label>
                   <label className="text-xs text-muted-foreground">MwSt.<select value={item.taxRate} onChange={(event) => updateItem(key, { taxRate: event.target.value })} className="mt-1 h-9 w-full rounded-md border border-stone-200 bg-white px-2 text-sm">{TAX_OPTIONS.map((tax) => <option key={tax} value={tax}>{tax} %</option>)}</select></label>
-                  <div className="text-xs text-muted-foreground">Gesamt<div className="mt-1 flex h-9 items-center justify-end rounded-md border border-stone-100 bg-white px-2 text-sm tabular-nums">{money(amount.netAmount)} €</div></div>
+                  <div className="text-xs text-muted-foreground">Gesamt<div className="mt-1 flex h-9 items-center justify-end rounded-md border border-stone-100 bg-white px-2 text-sm tabular-nums">{amount === null ? '–' : `${money(amount)} €`}</div></div>
                 </>}
               </div>
             </article>
@@ -213,16 +211,21 @@ export function ServiceReportPositionsEditor({ defaults, error, onItemsChange }:
       {showPrices && (
         <dl className="ml-auto mt-5 w-full max-w-xs space-y-1.5 border-t border-stone-200 pt-4 text-sm tabular-nums">
           <Total label="Zwischensumme" value={totals.subtotal} />
-          <Total label="Rabatt gesamt" value={-totals.totalDiscount} />
+          <Total label="Rabatt gesamt" value={totals.totalDiscount === '0.00' ? '0.00' : `-${totals.totalDiscount}`} />
           <Total label="Netto" value={totals.totalNet} />
           <Total label="MwSt." value={totals.totalTax} />
           <Total label="Gesamtbetrag" value={totals.totalGross} strong />
+          {totals.invalidPositions.length > 0 && (
+            <p className="pt-1 text-xs text-amber-700">
+              Position {totals.invalidPositions.join(', ')}: Eingabe unvollständig oder ungültig (Menge höchstens 3, Preis und Rabatt höchstens 2 Nachkommastellen) – nicht in den Summen enthalten.
+            </p>
+          )}
         </dl>
       )}
     </div>
   )
 }
 
-function Total({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+function Total({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
   return <div className={`flex justify-between gap-4 ${strong ? 'border-t border-stone-300 pt-2 font-600' : ''}`}><dt>{label}</dt><dd>{money(value)} €</dd></div>
 }

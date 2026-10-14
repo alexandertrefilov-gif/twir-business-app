@@ -1,4 +1,3 @@
-import { format } from 'date-fns'
 import type { InvoicePdfData } from '@/lib/pdf-templates/invoice.template'
 import { getInvoiceById } from '@/lib/services/invoice-query.service'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
@@ -6,7 +5,9 @@ import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.ser
 import { prisma } from '@/lib/db/prisma'
 import { BusinessRuleError, NotFoundError } from '@/lib/auth/permissions'
 import { resolveInvoiceRecipientSnapshot } from '@/lib/services/invoice.service'
+import { calculateInvoiceForPersistence } from '@/lib/services/invoice-calculation.service'
 import type { InvoiceDraftInput } from '@/lib/validators/invoice.schema'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 type Snapshot = Record<string, unknown>
 const text = (source: Snapshot, key: string) => typeof source[key] === 'string' ? source[key] as string : null
@@ -35,14 +36,14 @@ export async function getInvoicePdfData(invoiceId: string): Promise<InvoicePdfDa
   const logo = await loadCompanyLogoForPdf(logoStorageKey)
   return {
     invoiceNumber: invoice.invoiceNumber,
-    invoiceDate: format(invoice.invoiceDate, 'dd.MM.yyyy'), dueDate: invoice.dueDate ? format(invoice.dueDate, 'dd.MM.yyyy') : null,
-    deliveryDate: invoice.deliveryDate ? format(invoice.deliveryDate, 'dd.MM.yyyy') : null, orderNumber: invoice.order?.orderNumber,
+    invoiceDate: formatCalendarDate(invoice.invoiceDate), dueDate: invoice.dueDate ? formatCalendarDate(invoice.dueDate) : null,
+    deliveryDate: invoice.deliveryDate ? formatCalendarDate(invoice.deliveryDate) : null, orderNumber: invoice.order?.orderNumber,
     introText: invoice.introText, outroText: invoice.outroText, company, customer,
     logoDataUri: logo?.dataUri, logoScale: storedCompany ? number(storedCompany, 'logoScale') : liveCompany.logoScale,
     logoSourceWidth: logo?.width ?? (storedCompany ? number(storedCompany, 'logoWidth') : liveCompany.logoWidth ?? undefined),
     logoSourceHeight: logo?.height ?? (storedCompany ? number(storedCompany, 'logoHeight') : liveCompany.logoHeight ?? undefined),
     items: invoice.items.map((item) => ({ position: item.position, description: item.description, quantity: item.quantity.toNumber(), unit: item.unit,
-      unitPrice: item.unitPrice.toNumber(), taxRate: item.taxRate.toNumber(), netAmount: item.netAmount.toNumber(), grossAmount: item.grossAmount.toNumber() })),
+      unitPrice: item.unitPrice.toNumber(), discountRate: item.discountRate ? item.discountRate.toNumber() : 0, taxRate: item.taxRate.toNumber(), netAmount: item.netAmount.toNumber(), grossAmount: item.grossAmount.toNumber() })),
     totalNet: invoice.totalNet.toNumber(), totalTax: invoice.totalTax.toNumber(), totalGross: invoice.totalGross.toNumber(),
   }
 }
@@ -76,14 +77,16 @@ export async function getInvoiceDraftPdfData(draft: InvoiceDraftInput, invoiceId
     }),
     loadCompanyLogoForPdf(company.logoStorageKey),
   ])
-  const totalNet = Math.round(draft.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0) * 100) / 100
-  const totalTax = Math.round(draft.items.reduce((sum, item) => sum + item.quantity * item.unitPrice * item.taxRate / 100, 0) * 100) / 100
+  // P4-A: dieselbe Rechenquelle wie Anlegen/Bearbeiten (Dezimalarithmetik); Zahlen nur für die Darstellung.
+  const calc = calculateInvoiceForPersistence(draft.items.map(item => ({
+    quantity: item.quantity, unitPrice: item.unitPrice, taxRate: item.taxRate, discountRate: item.discountRate,
+  })))
 
   return {
     invoiceNumber: null,
-    invoiceDate: format(draft.invoiceDate, 'dd.MM.yyyy'),
-    dueDate: draft.dueDate ? format(draft.dueDate, 'dd.MM.yyyy') : null,
-    deliveryDate: draft.deliveryDate ? format(draft.deliveryDate, 'dd.MM.yyyy') : null,
+    invoiceDate: formatCalendarDate(draft.invoiceDate),
+    dueDate: draft.dueDate ? formatCalendarDate(draft.dueDate) : null,
+    deliveryDate: draft.deliveryDate ? formatCalendarDate(draft.deliveryDate) : null,
     orderNumber,
     introText: draft.introText, outroText: draft.outroText,
     company,
@@ -91,12 +94,11 @@ export async function getInvoiceDraftPdfData(draft: InvoiceDraftInput, invoiceId
     logoDataUri: logo?.dataUri, logoScale: company.logoScale,
     logoSourceWidth: logo?.width ?? company.logoWidth ?? undefined,
     logoSourceHeight: logo?.height ?? company.logoHeight ?? undefined,
-    items: draft.items.map(item => {
-      const netAmount = Math.round(item.quantity * item.unitPrice * 100) / 100
-      return { position: item.position, description: item.description, quantity: item.quantity, unit: item.unit,
-        unitPrice: item.unitPrice, taxRate: item.taxRate, netAmount,
-        grossAmount: Math.round(netAmount * (1 + item.taxRate / 100) * 100) / 100 }
-    }),
-    totalNet, totalTax, totalGross: Math.round((totalNet + totalTax) * 100) / 100,
+    items: draft.items.map((item, index) => ({
+      position: item.position, description: item.description, quantity: item.quantity, unit: item.unit,
+      unitPrice: item.unitPrice, discountRate: Number(item.discountRate ?? 0), taxRate: item.taxRate,
+      netAmount: Number(calc.lines[index].netAmount), grossAmount: Number(calc.lines[index].grossAmount),
+    })),
+    totalNet: Number(calc.totalNet), totalTax: Number(calc.totalTax), totalGross: Number(calc.totalGross),
   }
 }

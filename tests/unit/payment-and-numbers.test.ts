@@ -5,18 +5,12 @@ import { describe, it, expect } from 'vitest'
 import { InvoiceStatus } from '@/types/enums'
 
 // ── Zahlungsstatus-Ableitung ──────────────────────────────────
-// Isolierte Logik aus payment.service.ts (extrahiert für Unit-Test)
+// REQ-029 P4-D: testet die ECHTE Funktion (lib/billing/payment-math) statt einer Kopie; exakte Dezimalvergleiche.
 
-function deriveInvoiceStatus(
-  totalGross:    number,
-  paidAmount:    number,
-  currentStatus: string,
-): InvoiceStatus {
-  if (paidAmount >= totalGross) return InvoiceStatus.PAID
-  if (paidAmount > 0)           return InvoiceStatus.PARTIALLY_PAID
-  if (currentStatus === InvoiceStatus.OVERDUE) return InvoiceStatus.OVERDUE
-  return InvoiceStatus.SENT
-}
+import { derivePaymentStatus } from '@/lib/billing/payment-math'
+
+const deriveInvoiceStatus = (totalGross: number, paidAmount: number, currentStatus: string): InvoiceStatus =>
+  derivePaymentStatus(String(totalGross), String(paidAmount), currentStatus) as InvoiceStatus
 
 describe('Payment Status Derivation', () => {
   const TOTAL = 1190.00
@@ -25,9 +19,12 @@ describe('Payment Status Derivation', () => {
     expect(deriveInvoiceStatus(TOTAL, TOTAL, 'SENT')).toBe(InvoiceStatus.PAID)
   })
 
-  it('Überzahlung → PAID (Rundungspuffer)', () => {
-    // 1190.001 sollte als bezahlt gelten
-    expect(deriveInvoiceStatus(TOTAL, TOTAL + 0.001, 'SENT')).toBe(InvoiceStatus.PAID)
+  it('Zahlungssumme über Brutto → PAID (exakter Vergleich, keine Toleranz)', () => {
+    expect(deriveInvoiceStatus(TOTAL, 1190.01, 'SENT')).toBe(InvoiceStatus.PAID)
+  })
+
+  it('1 Cent unter Brutto → PARTIALLY_PAID (kein Rundungspuffer mehr)', () => {
+    expect(deriveInvoiceStatus(TOTAL, 1189.99, 'SENT')).toBe(InvoiceStatus.PARTIALLY_PAID)
   })
 
   it('Teilzahlung → PARTIALLY_PAID', () => {
@@ -46,8 +43,12 @@ describe('Payment Status Derivation', () => {
     expect(deriveInvoiceStatus(TOTAL, 0, 'OVERDUE')).toBe(InvoiceStatus.OVERDUE)
   })
 
-  it('Teilzahlung nach Überfälligkeit → PARTIALLY_PAID', () => {
-    expect(deriveInvoiceStatus(TOTAL, 500, 'OVERDUE')).toBe(InvoiceStatus.PARTIALLY_PAID)
+  it('Teilzahlung bei überfälliger Rechnung → OVERDUE bleibt (Überfälligkeit geht nicht verloren, P4-D)', () => {
+    expect(deriveInvoiceStatus(TOTAL, 500, 'OVERDUE')).toBe(InvoiceStatus.OVERDUE)
+  })
+
+  it('Volle Zahlung bei überfälliger Rechnung → PAID', () => {
+    expect(deriveInvoiceStatus(TOTAL, TOTAL, 'OVERDUE')).toBe(InvoiceStatus.PAID)
   })
 
   it('Betrag = 0, total = 0 → PAID (Sonderfall Nullrechnung)', () => {

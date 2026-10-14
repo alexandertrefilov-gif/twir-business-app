@@ -10,6 +10,7 @@ import { deriveBusinessProcessStages, derivePurchaseOrderIndicatorState, deriveW
 import { DocumentLifecycleControls } from '@/components/workflow/DocumentLifecycleControls'
 import { ORDER_CONFIRMATION_TYPE_LABELS, type OrderConfirmationType } from '@/types/enums'
 import { isServiceReportReadyForInvoice } from '@/lib/workflow/invoice-eligibility'
+import { formatCalendarDateCompact } from '@/lib/utils/berlin-date'
 
 interface Props {
   process: BusinessProcessData
@@ -48,7 +49,6 @@ const statusLabels: Record<string, string> = {
   PARTIALLY_PAID: 'Teilbezahlt', CREATED: 'Erstellt',
 }
 const invoiceTypeLabels: Record<string, string> = { CORRECTION: 'Korrekturrechnung', CANCELLATION: 'Stornorechnung', ADVANCE: 'Abschlagsrechnung', PARTIAL: 'Teilrechnung', FINAL: 'Schlussrechnung' }
-const germanDateFormatter = new Intl.DateTimeFormat('de-DE')
 const offerBasedStageNumber: Record<ProcessStageKey, number> = {
   offer: 1,
   order: 3,
@@ -232,11 +232,11 @@ function CustomerPurchaseOrderStep({ process, action }: { process: BusinessProce
       {!present ? <>
         <p className="mt-1 text-xs text-amber-800">{awaitingDecision ? 'Noch nicht vorhanden · nach Annahme ergänzbar' : 'Bestelldokument noch nicht hinterlegt'}</p>
         {purchaseOrder?.orderNumber && <p className="mt-2 text-xs"><span className="text-muted-foreground">Bestellnummer:</span> {purchaseOrder.orderNumber}</p>}
-        {purchaseOrder?.orderDate && <p className="mt-1 text-xs"><span className="text-muted-foreground">Bestelldatum:</span> {germanDateFormatter.format(new Date(purchaseOrder.orderDate))}</p>}
+        {purchaseOrder?.orderDate && <p className="mt-1 text-xs"><span className="text-muted-foreground">Bestelldatum:</span> {formatCalendarDateCompact(purchaseOrder.orderDate)}</p>}
         {action && <div className="mt-3">{action}</div>}
       </> : <div className="mt-2 space-y-2 text-xs">
         {purchaseOrder?.orderNumber && <p><span className="text-muted-foreground">Bestellnummer:</span> {purchaseOrder.orderNumber}</p>}
-        {purchaseOrder?.orderDate && <p><span className="text-muted-foreground">Bestelldatum:</span> {germanDateFormatter.format(new Date(purchaseOrder.orderDate))}</p>}
+        {purchaseOrder?.orderDate && <p><span className="text-muted-foreground">Bestelldatum:</span> {formatCalendarDateCompact(purchaseOrder.orderDate)}</p>}
         {purchaseOrder?.documents.map(document => <div key={document.id} className="rounded border border-stone-200 bg-stone-50 p-2">
           <p className="break-all font-500">{document.originalName}</p>
           <div className="mt-2 grid grid-cols-2 gap-1.5">

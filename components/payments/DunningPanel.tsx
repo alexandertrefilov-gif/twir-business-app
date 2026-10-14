@@ -8,26 +8,49 @@ import { FormSubmitButton }          from '@/components/shared/FormSubmitButton'
 import { ConfirmDialog }             from '@/components/shared/ConfirmDialog'
 import { createDunningAction, markDunningNoticeSentAction } from '@/app/(dashboard)/payments/actions'
 import { DUNNING_LEVELS }            from '@/lib/services/dunning.service'
-import type { DunningNoticeData }    from '@/lib/services/dunning.service'
+import type { DunningEligibilityDto, DunningNoticeData } from '@/lib/services/dunning.service'
 import type { ActionState }          from '@/app/(dashboard)/payments/actions'
-import { format }                    from 'date-fns'
-import { de }                        from 'date-fns/locale'
+import { formatBerlinDateShortYear, formatCalendarDate } from '@/lib/utils/berlin-date'
 
 interface DunningPanelProps {
   invoiceId:   string
-  invoiceStatus: string
   notices:     DunningNoticeData[]
   canManage:   boolean
+  /**
+   * REQ-029 P5-3: Ergebnis der zentralen Mahn-Policy (serverseitig berechnet), nur zur ANZEIGE.
+   * `null` = konnte nicht ermittelt werden → es wird nichts angeboten. Die verbindliche Prüfung erfolgt
+   * unabhängig davon beim Anlegen im Service (`createDunningNotice`).
+   */
+  eligibility: DunningEligibilityDto | null
+  /** Rechnungsstatus erlaubt „als versendet markieren“ (Anzeige; der Service prüft erneut). */
+  canMarkSent: boolean
 }
 
 const INIT: ActionState = {}
 
-function addDays(d: Date, n: number) {
-  const r = new Date(d); r.setDate(r.getDate() + n); return r.toISOString().slice(0, 10)
+/** Addiert Kalendertage auf ein `JJJJ-MM-TT`-Datum (UTC-Rechnung, unabhängig von der Browser-Zeitzone). */
+export function addDaysIso(isoDate: string, days: number): string {
+  const d = new Date(`${isoDate}T00:00:00.000Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/** `JJJJ-MM-TT` → `TT.MM.JJJJ`. */
+export function formatIsoDateDe(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-')
+  return `${day}.${month}.${year}`
+}
+
+/** Cent-String ("1234.50") → "1.234,50" – reine Zeichenkettenarbeit, keine Gleitkommazahl. */
+export function formatEuroAmount(amount: string): string {
+  const negative = amount.startsWith('-')
+  const [integer, fraction = '00'] = amount.replace('-', '').split('.')
+  const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return `${negative ? '-' : ''}${grouped},${fraction.padEnd(2, '0')}`
 }
 
 export function DunningPanel({
-  invoiceId, invoiceStatus, notices, canManage,
+  invoiceId, notices, canManage, eligibility, canMarkSent,
 }: DunningPanelProps) {
   const router            = useRouter()
   const [state, formAction] = useActionState(
@@ -39,14 +62,18 @@ export function DunningPanel({
     INIT,
   )
   const [showForm, setShowForm] = useState(false)
+  const [markError, setMarkError] = useState<string | null>(null)
 
-  const highestLevel   = Math.max(0, ...notices.map((n) => n.level))
-  const nextLevel      = (highestLevel + 1) as 1 | 2 | 3
-  const canCreate      = canManage && nextLevel <= 3
-    && !['PAID', 'CANCELLED', 'DRAFT'].includes(invoiceStatus)
+  // Anzeige-Entscheidung kommt allein aus der serverseitigen Policy; hier gibt es keine eigene Status- oder Stufenlogik.
+  const nextLevel   = eligibility?.ok ? eligibility.nextLevel : null
+  const canCreate   = canManage && eligibility?.ok === true && nextLevel !== null
+  const maxReached  = eligibility?.reasons.includes('MAX_LEVEL') === true
+  const berlinDate  = eligibility?.berlinDate ?? null
 
-  const defaultDue = addDays(new Date(), DUNNING_LEVELS[nextLevel <= 3 ? nextLevel : 3].dueDays)
-  const defaultFee = nextLevel <= 3 ? DUNNING_LEVELS[nextLevel].defaultFee : null
+  // Vorschlag in Berliner Kalendertagen; Mindestwert = morgen (der Service lehnt „heute und früher“ ab).
+  const defaultDue  = canCreate && berlinDate && nextLevel ? addDaysIso(berlinDate, DUNNING_LEVELS[nextLevel].dueDays) : ''
+  const minDue      = berlinDate ? addDaysIso(berlinDate, 1) : undefined
+  const defaultFee  = nextLevel ? DUNNING_LEVELS[nextLevel].defaultFee : null
 
   return (
     <div className="space-y-4">
@@ -68,18 +95,19 @@ export function DunningPanel({
                   <span className="text-sm font-500 text-foreground">{n.levelLabel}</span>
                 </div>
                 <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                  <span>Fällig: {format(new Date(n.dueDate), 'dd.MM.yyyy', { locale: de })}</span>
+                  <span>Fällig: {formatCalendarDate(n.dueDate)}</span>
                   {n.fee && <span>Gebühr: {n.fee.toFixed(2)} €</span>}
-                  {n.sentAt && <span className="text-emerald-600">✓ Versendet {format(new Date(n.sentAt), 'dd.MM.yy', { locale: de })}</span>}
+                  {n.sentAt && <span className="text-emerald-600">✓ Versendet {formatBerlinDateShortYear(n.sentAt)}</span>}
                 </div>
               </div>
-              {canManage && !n.sentAt && (
+              {canManage && canMarkSent && !n.sentAt && (
                 <ConfirmDialog
                   title="Als versendet markieren?"
                   description={`„${n.levelLabel}" wird als versendet markiert. Das Datum wird gespeichert.`}
                   confirmLabel="Versendet"
                   onConfirm={async () => {
-                    await markDunningNoticeSentAction(n.id, null)
+                    const res = await markDunningNoticeSentAction(n.id, null)
+                    setMarkError(res.success ? null : (res.error ?? 'Die Mahnung konnte nicht als versendet markiert werden.'))
                     router.refresh()
                   }}
                   trigger={
@@ -98,6 +126,19 @@ export function DunningPanel({
         <p className="text-sm text-muted-foreground">Keine Mahnungen zu dieser Rechnung.</p>
       )}
 
+      {markError && (
+        <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+          {markError}
+        </p>
+      )}
+
+      {/* Mahnbasis (nur wenn die Policy eine Mahnung zulässt) */}
+      {canManage && eligibility?.ok && eligibility.outstandingAmount !== null && (
+        <p className="text-xs text-muted-foreground">
+          Mahnbasis: offener Betrag {formatEuroAmount(eligibility.outstandingAmount)} € (Stand: {formatIsoDateDe(eligibility.berlinDate)})
+        </p>
+      )}
+
       {/* Create dunning form */}
       {canCreate && !showForm && (
         <button
@@ -106,11 +147,11 @@ export function DunningPanel({
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
           </svg>
-          {nextLevel === 1 ? 'Zahlungserinnerung erstellen' : `${DUNNING_LEVELS[nextLevel]?.label} erstellen`}
+          {nextLevel === 1 ? 'Zahlungserinnerung erstellen' : `${nextLevel ? DUNNING_LEVELS[nextLevel].label : ''} erstellen`}
         </button>
       )}
 
-      {canCreate && showForm && (
+      {canCreate && showForm && nextLevel !== null && (
         <form action={formAction}
           className="p-4 rounded-md border border-amber-200 bg-amber-50/30 space-y-3">
           <input type="hidden" name="invoiceId" value={invoiceId} />
@@ -122,13 +163,13 @@ export function DunningPanel({
               nextLevel === 2 ? 'bg-amber-50 text-amber-700 border-amber-200' :
               'bg-red-50 text-red-700 border-red-200'
             }`}>Stufe {nextLevel}</span>
-            <span className="text-sm font-600">{DUNNING_LEVELS[nextLevel]?.label}</span>
+            <span className="text-sm font-600">{DUNNING_LEVELS[nextLevel].label}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="field-label field-required">Neues Zahlungsziel</label>
-              <input type="date" name="dueDate" required defaultValue={defaultDue}
+              <input type="date" name="dueDate" required defaultValue={defaultDue} min={minDue}
                 className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
             </div>
             {nextLevel >= 2 && (
@@ -162,9 +203,25 @@ export function DunningPanel({
         </form>
       )}
 
-      {!canCreate && highestLevel >= 3 && (
+      {/* Gesperrt: Gründe aus der Policy verständlich anzeigen (nie eine leere Fläche ohne Hinweis) */}
+      {canManage && eligibility && !eligibility.ok && maxReached && (
         <div className="p-3 rounded bg-red-50 border border-red-200 text-xs text-red-700">
           Maximale Mahnstufe erreicht. Bitte rechtliche Schritte einleiten.
+        </div>
+      )}
+
+      {canManage && eligibility && !eligibility.ok && !maxReached && (
+        <div className="p-3 rounded bg-stone-50 border border-stone-200 text-xs text-stone-700 space-y-1">
+          <p className="font-500">Eine Mahnung kann derzeit nicht erstellt werden:</p>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {eligibility.messages.map((message) => <li key={message}>{message}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {canManage && eligibility === null && (
+        <div className="p-3 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          Die Mahnfähigkeit dieser Rechnung konnte nicht ermittelt werden. Bitte Seite neu laden oder den Administrator informieren.
         </div>
       )}
     </div>

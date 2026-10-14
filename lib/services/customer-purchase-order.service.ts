@@ -7,6 +7,7 @@ import { LocalFilesystemArchiveStorage } from '@/lib/documents/archive-storage'
 import { sanitizeFilename, validateUpload, validateUploadSignature } from '@/lib/security/upload-validator'
 import { acceptOfferInTransaction } from '@/lib/services/offer.service'
 import type { DocumentFormat } from '@prisma/client'
+import { calendarYear } from '@/lib/utils/berlin-date'
 
 const PURCHASE_ORDER_MIMES = new Set([
   'application/pdf',
@@ -87,7 +88,7 @@ export async function saveCustomerPurchaseOrder(input: {
       ? path.join(
           existingBusinessCaseArchiveDirectory(offer.documents.map(document => document.storagePath))
             ?? buildBusinessCaseArchiveDirectory({
-              year: offer.offerDate.getFullYear(), customerNumber: offer.customer.number,
+              year: calendarYear(offer.offerDate), customerNumber: offer.customer.number,
               customerName: offer.customer.name, areaName: offer.areaName ?? offer.title,
               businessCaseId: `offer-${offer.id}`, category: '02_Bestellung',
             }).split(path.sep).slice(0, -1).join(path.sep),

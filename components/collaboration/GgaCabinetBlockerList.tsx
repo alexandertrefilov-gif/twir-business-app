@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { Fragment, useState, useTransition } from 'react'
+import { formatBerlinDate } from '@/lib/utils/berlin-date'
 
 type Blocker = {
   id: string
@@ -65,7 +66,7 @@ export function GgaCabinetBlockerList({ blockers, canResolve }: { blockers: Bloc
             <td className="px-4 py-2">{blocker.status === 'OPEN' ? 'Offen' : 'Behoben'}</td>
             <td className="px-4 py-2 text-xs text-muted-foreground">{blocker.cause ?? '–'}</td>
             <td className="px-4 py-2 text-xs text-muted-foreground">
-              {blocker.status === 'RESOLVED' ? `${blocker.resolution ?? '–'}${blocker.resolvedAt ? ` (${new Date(blocker.resolvedAt).toLocaleDateString('de-DE')})` : ''}` : '–'}
+              {blocker.status === 'RESOLVED' ? `${blocker.resolution ?? '–'}${blocker.resolvedAt ? ` (${formatBerlinDate(blocker.resolvedAt)})` : ''}` : '–'}
             </td>
             {canResolve && <td className="px-4 py-2 text-right">
               {blocker.status === 'OPEN' && openFormId !== blocker.id && <button type="button" disabled={pending} onClick={() => startResolve(blocker.id)} className="text-xs text-emerald-700 hover:underline">Beheben</button>}

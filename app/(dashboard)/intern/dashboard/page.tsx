@@ -5,8 +5,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions }    from '@/lib/auth/options'
 import { UnauthorizedError } from '@/lib/auth/permissions'
 import { getDashboardStats } from '@/lib/services/dashboard.service'
-import { format }         from 'date-fns'
-import { de }             from 'date-fns/locale'
+import { formatBerlinBusinessDayLong, formatBerlinBusinessMonthName, formatBerlinDateTimeShortYear } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Dashboard' }
 
@@ -31,7 +30,7 @@ export default async function DashboardPage() {
           {greeting}, {session?.user.name.split(' ')[0]}
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          {format(new Date(), "EEEE, d. MMMM yyyy", { locale: de })}
+          {formatBerlinBusinessDayLong()}
         </p>
       </div>
 
@@ -71,7 +70,7 @@ export default async function DashboardPage() {
           <div className="space-y-4">
             <div className="card-base p-5">
               <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground mb-4">
-                Monat {format(new Date(), 'MMMM', { locale: de })}
+                Monat {formatBerlinBusinessMonthName()}
               </p>
               <div className="space-y-4">
                 <div>
@@ -124,7 +123,7 @@ export default async function DashboardPage() {
                       </span>
                     </p>
                     <p className="text-xs text-muted-foreground mono mt-0.5">
-                      {format(new Date(log.createdAt), "dd.MM.yy HH:mm", { locale: de })}
+                      {formatBerlinDateTimeShortYear(log.createdAt)}
                     </p>
                   </div>
                 </div>

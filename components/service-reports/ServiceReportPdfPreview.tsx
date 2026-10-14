@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ServiceReportItemInput } from '@/lib/validators/service-report.schema'
+import type { ServiceReportItemFormInput } from '@/lib/validators/service-report.schema'
 
 export interface ServiceReportPreviewDraft {
   reportId?: string
@@ -10,7 +10,7 @@ export interface ServiceReportPreviewDraft {
   title: string
   description: string
   reportDate: string
-  items: ServiceReportItemInput[]
+  items: ServiceReportItemFormInput[]
 }
 
 export function ServiceReportPdfPreview({ draft, className = '' }: { draft: ServiceReportPreviewDraft; className?: string }) {

@@ -12,6 +12,7 @@ import { prisma } from '@/lib/db/prisma'
 import { Prisma } from '@prisma/client'
 import { buildAuditLogCreate } from '@/lib/services/audit.service'
 import { nextNumber } from '@/lib/services/number-sequence.service'
+import { berlinDayStartUtc } from '@/lib/utils/berlin-date'
 import {
   InvoiceStatus,
   InvoiceType,
@@ -25,7 +26,14 @@ import {
   ConflictError,
   NotFoundError,
 } from '@/lib/auth/permissions'
+import { DISCOUNT_SPEC, validateDecimalField } from '@/lib/billing/decimal-input'
+import { MoneyDecimal } from '@/lib/billing/money'
 import { isServiceReportReadyForInvoice } from '@/lib/workflow/invoice-eligibility'
+import {
+  calculateInvoiceForPersistence,
+  findStaleCalculation,
+  STALE_CALCULATION_HINT,
+} from '@/lib/services/invoice-calculation.service'
 
 // ── Typen ────────────────────────────────────────────────────
 
@@ -51,6 +59,8 @@ export interface CreateInvoiceDraftInput {
   paymentTermDays?: number
   introText?:      string
   outroText?:      string
+  /** Käuferreferenz (BT-10); undefined/null = keine. */
+  buyerReference?: string | null
   items:           InvoiceItemInput[]
 }
 
@@ -60,7 +70,54 @@ export interface InvoiceItemInput {
   quantity:    number
   unit?:       string
   unitPrice:   number
+  /** Positionsrabatt in % (0–100, höchstens 2 Nachkommastellen; siehe normalizeInvoiceItemDiscount). */
+  discountRate?: string | number | null
   taxRate:     number
+  /** Nur beim Bearbeiten eines Entwurfs übernommen (wie bisher in der Server-Action). */
+  notes?:      string | null
+}
+
+/** Eingabe für das Bearbeiten eines Entwurfs: dieselben Felder wie beim Anlegen. */
+export type UpdateInvoiceDraftInput = CreateInvoiceDraftInput
+
+export const BUYER_REFERENCE_MAX_LENGTH = 255
+
+/**
+ * REQ-029 P4-B: Serverseitige Prüfung und Normalisierung des Positionsrabatts für ALLE Schreibwege auf
+ * Rechnungspositionen. Zulässig sind 0–100 % mit höchstens 2 Nachkommastellen (kein stilles Runden).
+ * Liefert den zu speichernden Wert als Dezimal-String mit genau zwei Nachkommastellen; fehlend → '0.00'
+ * (neue Positionen erhalten nie NULL). Ungültiges wirft einen BusinessRuleError mit Positionsnummer.
+ */
+export function normalizeInvoiceItemDiscount(value: unknown, position?: number): string {
+  const prefix = position === undefined ? '' : `Position ${position}: `
+  if (value === undefined || value === null || value === '') return '0.00'
+  const input =
+    typeof value === 'number' || typeof value === 'string' ? value
+    : typeof value === 'object' && typeof (value as { toFixed?: unknown }).toFixed === 'function' ? (value as { toFixed(): string }).toFixed()
+    : null
+  if (input === null) throw new BusinessRuleError(`${prefix}Rabatt ist ungültig.`)
+  const result = validateDecimalField(input, DISCOUNT_SPEC)
+  if (!result.ok) throw new BusinessRuleError(`${prefix}${result.message}`)
+  return new MoneyDecimal(result.value).toFixed(2)
+}
+
+/**
+ * Normalisiert die Käuferreferenz: undefined bleibt undefined (nicht übermittelt), leer → null,
+ * getrimmt, höchstens 255 Zeichen, keine Steuerzeichen. Keine automatische Ableitung (z. B. Leitweg-ID).
+ */
+export function normalizeBuyerReference(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined
+  if (value === null) return null
+  if (typeof value !== 'string') throw new BusinessRuleError('Die Käuferreferenz ist ungültig.')
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  if (trimmed.length > BUYER_REFERENCE_MAX_LENGTH) {
+    throw new BusinessRuleError(`Die Käuferreferenz darf höchstens ${BUYER_REFERENCE_MAX_LENGTH} Zeichen lang sein.`)
+  }
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
+    throw new BusinessRuleError('Die Käuferreferenz darf keine Steuer- oder Zeilenumbruchzeichen enthalten.')
+  }
+  return trimmed
 }
 
 export function assertServiceReportReadyForInvoice(report: {
@@ -92,7 +149,11 @@ export async function createInvoiceDraft(
     throw new NotFoundError('Kunde nicht gefunden')
   }
 
-  const totals = calculateTotals(input.items)
+  const discountRates = input.items.map((item, index) => normalizeInvoiceItemDiscount(item.discountRate, index + 1))
+  const buyerReference = normalizeBuyerReference(input.buyerReference) ?? null
+  const calc = calculateInvoiceForPersistence(input.items.map((item, index) => ({
+    quantity: item.quantity, unitPrice: item.unitPrice, taxRate: item.taxRate, discountRate: discountRates[index],
+  })))
   const invoice = await prisma.$transaction(async (tx) => {
     if (input.orderId) {
       // Serialisiert parallele Erstellungen für denselben Auftrag. So reicht die
@@ -154,21 +215,23 @@ export async function createInvoiceDraft(
         paymentTermDays: input.paymentTermDays,
         introText:       input.introText,
         outroText:       input.outroText,
-        totalNet:        totals.totalNet,
-        totalTax:        totals.totalTax,
-        totalGross:      totals.totalGross,
+        buyerReference,
+        totalNet:        calc.totalNet,
+        totalTax:        calc.totalTax,
+        totalGross:      calc.totalGross,
         createdById:     userId,
         items: {
-          create: input.items.map((item) => ({
+          create: input.items.map((item, index) => ({
             position:    item.position,
             description: item.description,
             quantity:    item.quantity,
             unit:        item.unit ?? 'Stk.',
             unitPrice:   item.unitPrice,
+            discountRate: discountRates[index],
             taxRate:     item.taxRate,
-            netAmount:   item.quantity * item.unitPrice,
-            taxAmount:   (item.quantity * item.unitPrice * item.taxRate) / 100,
-            grossAmount: (item.quantity * item.unitPrice * (1 + item.taxRate / 100)),
+            netAmount:   calc.lines[index].netAmount,
+            taxAmount:   calc.lines[index].taxAmount,
+            grossAmount: calc.lines[index].grossAmount,
           })),
         },
       },
@@ -179,13 +242,114 @@ export async function createInvoiceDraft(
       action:     AuditAction.CREATE,
       entityType: 'invoice',
       entityId:   inv.id,
-      newValue:   { status: InvoiceStatus.DRAFT, customerId: input.customerId },
+      newValue:   {
+        status: InvoiceStatus.DRAFT, customerId: input.customerId, ...(buyerReference ? { buyerReference } : {}),
+        totalNet: calc.totalNet, totalGross: calc.totalGross, calcVersion: calc.calcVersion,
+      },
     })
 
     return inv
   })
 
   return invoice.id
+}
+
+/**
+ * Bearbeitet einen Rechnungsentwurf (REQ-029 P4-A).
+ *
+ * Ersetzt die frühere Direktlogik der Server-Action:
+ *   - EINE Rechenquelle (`calculateInvoiceForPersistence`), serverseitig, Dezimalarithmetik.
+ *   - Zeilensperre (`FOR UPDATE`) und Statusprüfung INNERHALB der Transaktion; das Schreiben erfolgt
+ *     mit Statusbedingung (`status = DRAFT`). Wird die Rechnung gleichzeitig finalisiert, ändert diese
+ *     Funktion nichts (ConflictError) – Positionen und Summen einer finalisierten Rechnung bleiben unberührt.
+ *   - Die Käuferreferenz wird nur geändert, wenn sie übermittelt wurde (undefined = unverändert).
+ */
+export async function updateInvoiceDraft(
+  invoiceId: string,
+  input:     UpdateInvoiceDraftInput,
+  userId:    string,
+  userEmail: string,
+): Promise<void> {
+  const discountRates = input.items.map((item, index) => normalizeInvoiceItemDiscount(item.discountRate, index + 1))
+  const nextBuyerReference = normalizeBuyerReference(input.buyerReference)
+  const calc = calculateInvoiceForPersistence(input.items.map((item, index) => ({
+    quantity: item.quantity, unitPrice: item.unitPrice, taxRate: item.taxRate, discountRate: discountRates[index],
+  })))
+
+  await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
+    const existing = await tx.invoice.findUnique({
+      where:  { id: invoiceId },
+      select: { status: true, buyerReference: true },
+    })
+    if (!existing) throw new NotFoundError('Rechnung nicht gefunden')
+    if (existing.status !== InvoiceStatus.DRAFT) {
+      throw new BusinessRuleError('Nur Rechnungsentwürfe können bearbeitet werden.')
+    }
+    const buyerReferenceChanged = nextBuyerReference !== undefined && (existing.buyerReference ?? null) !== nextBuyerReference
+
+    const customer = await tx.customer.findFirst({ where: { id: input.customerId, deletedAt: null } })
+    if (!customer) throw new NotFoundError('Kunde nicht gefunden')
+    const customerSnapshot = await resolveInvoiceRecipientSnapshot(customer, input, tx)
+
+    const updated = await tx.invoice.updateMany({
+      where: { id: invoiceId, status: InvoiceStatus.DRAFT },
+      data: {
+        customerId:          input.customerId,
+        customerSnapshot:    customerSnapshot as Prisma.InputJsonValue,
+        orderId:             input.orderId             ?? null,
+        invoiceDate:         input.invoiceDate,
+        dueDate:             input.dueDate             ?? null,
+        deliveryDate:        input.deliveryDate        ?? null,
+        deliveryPeriodStart: input.deliveryPeriodStart ?? null,
+        deliveryPeriodEnd:   input.deliveryPeriodEnd   ?? null,
+        paymentTermDays:     input.paymentTermDays     ?? null,
+        introText:           input.introText           ?? null,
+        outroText:           input.outroText           ?? null,
+        ...(buyerReferenceChanged ? { buyerReference: nextBuyerReference } : {}),
+        totalNet:            calc.totalNet,
+        totalTax:            calc.totalTax,
+        totalGross:          calc.totalGross,
+      },
+    })
+    if (updated.count === 0) {
+      throw new ConflictError('Die Rechnung wurde zwischenzeitlich finalisiert; es wurde nichts geändert.')
+    }
+
+    await tx.invoiceItem.deleteMany({ where: { invoiceId } })
+    await tx.invoiceItem.createMany({
+      data: input.items.map((item, index) => ({
+        invoiceId,
+        position:     item.position,
+        description:  item.description,
+        quantity:     item.quantity,
+        unit:         item.unit ?? 'Stk.',
+        unitPrice:    item.unitPrice,
+        discountRate: discountRates[index],
+        taxRate:      item.taxRate,
+        netAmount:    calc.lines[index].netAmount,
+        taxAmount:    calc.lines[index].taxAmount,
+        grossAmount:  calc.lines[index].grossAmount,
+        notes:        item.notes ?? null,
+      })),
+    })
+
+    await buildAuditLogCreate(tx, {
+      userId, userEmail,
+      action:     AuditAction.UPDATE,
+      entityType: 'invoice',
+      entityId:   invoiceId,
+      ...(buyerReferenceChanged ? { oldValue: { buyerReference: existing.buyerReference } } : {}),
+      newValue:   {
+        totalNet: calc.totalNet, totalGross: calc.totalGross, itemCount: input.items.length, calcVersion: calc.calcVersion,
+        ...(buyerReferenceChanged ? { buyerReference: nextBuyerReference } : {}),
+      },
+    })
+  })
 }
 
 /**
@@ -208,8 +372,22 @@ export async function deleteInvoiceDraft(
   }
 
   await prisma.$transaction(async (tx) => {
+    // P4-A: Status unter Zeilensperre erneut prüfen und nur einen DRAFT löschen. Eine zwischenzeitlich
+    // finalisierte Rechnung wird weder gelöscht noch ihrer Positionen beraubt.
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+    const current = await tx.invoice.findUnique({ where: { id: invoiceId }, select: { status: true } })
+    if (!current) throw new NotFoundError('Rechnung nicht gefunden')
+    if (current.status !== InvoiceStatus.DRAFT) {
+      throw new ConflictError('Die Rechnung wurde zwischenzeitlich finalisiert und kann nicht mehr gelöscht werden.')
+    }
     await tx.invoiceItem.deleteMany({ where: { invoiceId } })
-    await tx.invoice.delete({ where: { id: invoiceId } })
+    const deleted = await tx.invoice.deleteMany({ where: { id: invoiceId, status: InvoiceStatus.DRAFT } })
+    if (deleted.count === 0) {
+      throw new ConflictError('Die Rechnung wurde zwischenzeitlich finalisiert und kann nicht mehr gelöscht werden.')
+    }
     await tx.auditLog.create({
       data: {
         userId,
@@ -219,6 +397,55 @@ export async function deleteInvoiceDraft(
         entityId: invoiceId,
         oldValue: { status: InvoiceStatus.DRAFT },
       },
+    })
+  })
+}
+
+/**
+ * Setzt oder löscht die Käuferreferenz eines Rechnungsentwurfs.
+ * Nur im Status DRAFT: Nach der Finalisierung ist die Referenz unveränderlich
+ * (Korrektur ausschließlich über Storno-/Korrekturrechnung). Änderung wird auditiert.
+ */
+export async function updateInvoiceBuyerReference(
+  invoiceId: string,
+  value:     string | null,
+  userId:    string,
+  userEmail: string,
+): Promise<void> {
+  const buyerReference = normalizeBuyerReference(value) ?? null
+  await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
+    const invoice = await tx.invoice.findUnique({
+      where:  { id: invoiceId },
+      select: { status: true, buyerReference: true },
+    })
+    if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
+    if (invoice.status !== InvoiceStatus.DRAFT) {
+      throw new BusinessRuleError(
+        'Die Käuferreferenz kann nach der Finalisierung nicht mehr geändert werden. Bitte eine Stornorechnung bzw. Korrekturrechnung erstellen.',
+      )
+    }
+    if ((invoice.buyerReference ?? null) === buyerReference) return
+
+    const updated = await tx.invoice.updateMany({
+      where: { id: invoiceId, status: InvoiceStatus.DRAFT },
+      data:  { buyerReference },
+    })
+    if (updated.count === 0) {
+      throw new ConflictError('Die Rechnung wurde zwischenzeitlich finalisiert; die Käuferreferenz wurde nicht geändert.')
+    }
+
+    await buildAuditLogCreate(tx, {
+      userId, userEmail,
+      action:     AuditAction.UPDATE,
+      entityType: 'invoice',
+      entityId:   invoiceId,
+      oldValue:   { buyerReference: invoice.buyerReference },
+      newValue:   { buyerReference },
     })
   })
 }
@@ -265,6 +492,13 @@ export async function finalizeInvoice(
 
     // 3. Pflichtfeld-Prüfung §14 UStG
     validateInvoiceForFinalization(invoice)
+
+    // 3b. P4-A (D5): Finalisiert wird nur ein Entwurf, dessen gespeicherte Beträge exakt der aktuellen
+    // Berechnung entsprechen. Es wird nie still neu gerechnet oder korrigiert – der Entwurf muss neu gespeichert werden.
+    const staleReason = findStaleCalculation(invoice)
+    if (staleReason) {
+      throw new BusinessRuleError(`Rechnung nicht finalisierbar: ${staleReason} ${STALE_CALCULATION_HINT}`)
+    }
 
     // 4. Snapshots erstellen
     const companySetting = await tx.companySetting.findFirst()
@@ -313,8 +547,14 @@ export async function finalizeInvoice(
 }
 
 /**
- * Storniert eine finalisierte Rechnung.
- * Erstellt automatisch eine Stornorechnung.
+ * Storniert eine finalisierte Rechnung und erzeugt die Stornorechnung (REQ-029 P4-C).
+ *
+ * Absicherung:
+ *   - Zeilensperre (`FOR UPDATE`) und erneutes Lesen innerhalb der Transaktion; das Markieren des Originals
+ *     erfolgt mit Statusbedingung. Zwei gleichzeitige Stornierungen erzeugen nie zwei Stornorechnungen.
+ *   - Eine Stornorechnung kann nicht erneut storniert werden; eine bereits stornierte Rechnung ebenso nicht.
+ *   - Rechnungen mit erfassten Zahlungen werden NICHT automatisch storniert (Zahlungen müssen zuerst
+ *     fachlich geklärt werden); es wird nichts geändert und keine Rechnungsnummer verbraucht.
  */
 export async function cancelInvoice(
   invoiceId: string,
@@ -323,12 +563,34 @@ export async function cancelInvoice(
   userEmail: string,
 ): Promise<{ cancellationInvoiceId: string }> {
   return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
     const original = await tx.invoice.findUnique({
       where:   { id: invoiceId },
       include: { items: true, customer: true },
     })
 
     if (!original) throw new NotFoundError('Rechnung nicht gefunden')
+
+    if (original.type === InvoiceType.CANCELLATION) {
+      throw new BusinessRuleError('Eine Stornorechnung kann nicht storniert werden.')
+    }
+    if (original.cancelledByInvoiceId || original.status === InvoiceStatus.CANCELLED) {
+      throw new BusinessRuleError('Die Rechnung wurde bereits storniert.')
+    }
+
+    // Zahlungen: nie automatisch stornieren (weder über paidAmount noch über aktive Zahlungsbuchungen).
+    // Bewusst VOR der Statusmatrix: Der fachliche Grund (erfasste Zahlungen) soll unabhängig vom aktuellen Status genannt werden.
+    const activePayments = await tx.payment.count({ where: { invoiceId, deletedAt: null } })
+    if (activePayments > 0 || original.paidAmount?.isZero() === false) {
+      throw new BusinessRuleError(
+        'Die Rechnung hat erfasste Zahlungen und wird nicht automatisch storniert. '
+        + 'Bitte zuerst die Zahlungen klären (z. B. Zahlung entfernen oder Rückzahlung/Gutschrift abstimmen) und danach erneut stornieren.',
+      )
+    }
 
     if (!isInvoiceTransitionAllowed(
       original.status as InvoiceStatus,
@@ -342,6 +604,10 @@ export async function cancelInvoice(
     // Stornorechnung anlegen (negative Beträge)
     const cancellationNumber = await nextNumber(NumberSequenceType.INVOICE, tx)
 
+    // Zwei verschiedene Semantiken (REQ-029 P5-6 B-1, Owner-Entscheidung D-4): `invoiceDate` ist ein Kalendertag
+    // (Berliner Tag der Stornierung, gespeichert als UTC-Mitternacht wie alle Rechnungsdaten); `finalizedAt` ist der echte Zeitpunkt.
+    const cancelledAt = new Date()
+
     const cancellation = await tx.invoice.create({
       data: {
         invoiceNumber:       cancellationNumber,
@@ -352,13 +618,15 @@ export async function cancelInvoice(
         originalInvoiceId:   original.id,
         customerSnapshot:    original.customerSnapshot as Prisma.InputJsonValue,
         companySnapshot:     original.companySnapshot  as Prisma.InputJsonValue,
-        invoiceDate:         new Date(),
+        invoiceDate:         berlinDayStartUtc(cancelledAt),
         totalNet:            original.totalNet.neg(),
         totalTax:            original.totalTax.neg(),
         totalGross:          original.totalGross.neg(),
-        finalizedAt:         new Date(),
+        finalizedAt:         cancelledAt,
         createdById:         userId,
         introText:           `Stornierung zu Rechnung ${original.invoiceNumber}`,
+        // Käuferreferenz des Originals unverändert übernehmen (BT-10 muss in der Storno konsistent sein)
+        buyerReference:      original.buyerReference,
         items: {
           create: original.items.map((item) => ({
             position:    item.position,
@@ -366,6 +634,8 @@ export async function cancelInvoice(
             quantity:    item.quantity,
             unit:        item.unit,
             unitPrice:   item.unitPrice,
+            // Rabattsatz unverändert (NULL bleibt NULL); die Beträge sind negiert
+            discountRate: item.discountRate,
             taxRate:     item.taxRate,
             netAmount:   item.netAmount.neg(),
             taxAmount:   item.taxAmount.neg(),
@@ -375,14 +645,17 @@ export async function cancelInvoice(
       },
     })
 
-    // Original als CANCELLED markieren, Referenz auf Storno setzen
-    await tx.invoice.update({
-      where: { id: original.id },
+    // Original als CANCELLED markieren – nur, wenn es noch im gelesenen Status und unstorniert ist.
+    const marked = await tx.invoice.updateMany({
+      where: { id: original.id, status: original.status, cancelledByInvoiceId: null },
       data: {
         status:              InvoiceStatus.CANCELLED,
         cancelledByInvoiceId: cancellation.id,
       },
     })
+    if (marked.count === 0) {
+      throw new ConflictError('Die Rechnung wurde zwischenzeitlich geändert oder storniert; es wurde nichts storniert.')
+    }
 
     await buildAuditLogCreate(tx, {
       userId, userEmail,
@@ -390,7 +663,7 @@ export async function cancelInvoice(
       entityType: 'invoice',
       entityId:   original.id,
       oldValue:   { status: original.status },
-      newValue:   { status: InvoiceStatus.CANCELLED, cancellationInvoiceId: cancellation.id },
+      newValue:   { status: InvoiceStatus.CANCELLED, cancellationInvoiceId: cancellation.id, cancellationNumber },
       metadata:   { reason },
     })
 
@@ -398,22 +671,70 @@ export async function cancelInvoice(
   })
 }
 
-// ── Hilfsfunktionen ──────────────────────────────────────────
-
-function calculateTotals(items: InvoiceItemInput[]) {
-  let totalNet   = 0
-  let totalTax   = 0
-  for (const item of items) {
-    const net = item.quantity * item.unitPrice
-    totalNet  += net
-    totalTax  += (net * item.taxRate) / 100
-  }
-  return {
-    totalNet:   Math.round(totalNet   * 100) / 100,
-    totalTax:   Math.round(totalTax   * 100) / 100,
-    totalGross: Math.round((totalNet + totalTax) * 100) / 100,
-  }
+/**
+ * Manuelle Statuswechsel (REQ-029 P4-C). Erlaubt sind ausschließlich:
+ *   FINALIZED → SENT   („als versendet markieren")
+ *   SENT      → OVERDUE („als überfällig markieren"; keine Stornorechnungen)
+ * PAID / PARTIALLY_PAID entstehen nur über erfasste Zahlungen, CANCELLED nur über `cancelInvoice`,
+ * FINALIZED nur über `finalizeInvoice`. Sperre + Statusbedingung + Audit in einer Transaktion.
+ */
+export const MANUAL_INVOICE_TRANSITIONS: Readonly<Partial<Record<InvoiceStatus, readonly InvoiceStatus[]>>> = {
+  [InvoiceStatus.FINALIZED]: [InvoiceStatus.SENT],
+  [InvoiceStatus.SENT]:      [InvoiceStatus.OVERDUE],
 }
+
+export async function changeInvoiceStatus(
+  invoiceId: string,
+  toStatus:  InvoiceStatus,
+  userId:    string,
+  userEmail: string,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
+    const invoice = await tx.invoice.findUnique({
+      where:  { id: invoiceId },
+      select: { status: true, type: true },
+    })
+    if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
+
+    const from = invoice.status as InvoiceStatus
+    const manual = MANUAL_INVOICE_TRANSITIONS[from] ?? []
+    if (!manual.includes(toStatus) || !isInvoiceTransitionAllowed(from, toStatus)) {
+      throw new BusinessRuleError(
+        `Der Statuswechsel von „${from}" nach „${toStatus}" ist manuell nicht erlaubt. `
+        + 'Bezahlt-Status entsteht nur durch erfasste Zahlungen, Stornierungen nur über „Stornieren".',
+      )
+    }
+    if (toStatus === InvoiceStatus.OVERDUE && invoice.type === InvoiceType.CANCELLATION) {
+      throw new BusinessRuleError('Eine Stornorechnung kann nicht überfällig werden.')
+    }
+
+    const updated = await tx.invoice.updateMany({
+      where: { id: invoiceId, status: from },
+      data: {
+        status: toStatus,
+        ...(toStatus === InvoiceStatus.SENT ? { sentAt: new Date() } : {}),
+      },
+    })
+    if (updated.count === 0) {
+      throw new ConflictError('Der Rechnungsstatus wurde zwischenzeitlich geändert.')
+    }
+    await buildAuditLogCreate(tx, {
+      userId, userEmail,
+      action:     AuditAction.STATUS_CHANGE,
+      entityType: 'invoice',
+      entityId:   invoiceId,
+      oldValue:   { status: from },
+      newValue:   { status: toStatus },
+    })
+  })
+}
+
+// ── Hilfsfunktionen ──────────────────────────────────────────
 
 function validateInvoiceForFinalization(invoice: {
   invoiceDate: Date | null

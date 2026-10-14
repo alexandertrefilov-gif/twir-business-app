@@ -3,8 +3,9 @@ import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/au
 import { listProjects } from '@/lib/services/project.service'
 import { PROJECT_STATUS_LABELS, type ProjectStatus } from '@/types/enums'
 import { ProjectRowDeleteAction } from '@/components/projects/ProjectRowDeleteAction'
+import { formatCalendarDateCompact } from '@/lib/utils/berlin-date'
 
-const fmt = (value: Date | null) => value ? new Intl.DateTimeFormat('de-DE').format(value) : '–'
+const fmt = (value: Date | null) => value ? formatCalendarDateCompact(value) : '–'
 
 export default async function ProjectsPage({ searchParams }: { searchParams: Promise<{ search?: string; status?: string }> }) {
   await requirePagePermission(Resource.PROJECT, Action.READ)

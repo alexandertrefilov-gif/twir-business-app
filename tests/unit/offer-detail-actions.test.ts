@@ -80,7 +80,8 @@ describe('aufgeräumte Angebotsdetailseite', () => {
 
   it('integriert Versand und Entscheidung in die Workflow-Zeitleiste', () => {
     expect(detail).toContain('offerLifecycle={{')
-    expect(detail).toContain("sentDate: offer.sentAt ? format(new Date(offer.sentAt), 'dd.MM.yyyy'")
+    // B-3: sentAt ist ein echter Zeitpunkt und wird über den Berlin-Instant-Formatter (nicht date-fns/lokale Zone) angezeigt.
+    expect(detail).toContain('sentDate: offer.sentAt ? formatBerlinDate(offer.sentAt)')
     expect(detail).toContain('<OfferStatusActions')
     expect(detail).toContain('compactDecision')
     expect(detail).not.toContain('id="document-status-actions"')

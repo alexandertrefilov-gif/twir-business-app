@@ -11,7 +11,7 @@ vi.mock('@/lib/db/prisma', () => ({
 import { resolveAccountingPeriod } from '@/lib/accounting/period'
 import { deriveOpenItems, getAccountingInvoices, getAccountingOverview, getOpenAccountingInvoices } from '@/lib/services/accounting.service'
 
-const decimal = (value: number) => ({ toNumber: () => value })
+const decimal = (value: number) => ({ toNumber: () => value, toFixed: () => String(value) })
 const period = resolveAccountingPeriod({ period: 'custom', from: '2026-09-01', to: '2026-09-30' }, new Date(2026, 8, 10))
 
 function invoice(overrides: Record<string, unknown> = {}) {
@@ -31,6 +31,26 @@ describe('read-only Buchhaltungsservice', () => {
     expect(row.paymentTotal).toBe(25)
     expect(row.openAmount).toBe(94)
     expect(row.reconciliationMismatch).toBe(true)
+  })
+
+  it('P4-D: Float-Falle – Zahlungen 0.10 + 0.20 auf Rechnung 0.30 ergeben exakt 0 offen und keine Abweichungswarnung', async () => {
+    db.invoiceFindMany.mockResolvedValue([invoice({
+      totalNet: decimal(0.25), totalTax: decimal(0.05), totalGross: decimal(0.3), paidAmount: decimal(0.3),
+      items: [{ taxAmount: decimal(0.05) }], payments: [{ amount: decimal(0.1) }, { amount: decimal(0.2) }],
+    })])
+    const [row] = await getAccountingInvoices(period)
+    expect(row.paymentTotal).toBe(0.3)
+    expect(row.openAmount).toBe(0)
+    expect(row.reconciliationMismatch).toBe(false)
+  })
+
+  it('P4-D: Summen über viele Cent-Beträge bleiben exakt (1000 × 0,01 = 10)', async () => {
+    db.invoiceFindMany.mockResolvedValue([])
+    db.paymentFindMany.mockResolvedValue(Array.from({ length: 1000 }, (_, index) => ({
+      id: `p${index}`, paymentDate: new Date(2026, 8, 3), amount: decimal(0.01), method: null, reference: null,
+      invoice: { id: 'i1', invoiceNumber: 'RE1', status: 'PARTIALLY_PAID', customer: { name: 'Kunde' } },
+    })))
+    expect((await getAccountingOverview(period)).paymentIncome).toBe(10)
   })
 
   it('bezieht Original und negative Stornorechnung genau einmal in den Umsatz ein', async () => {
@@ -65,9 +85,10 @@ describe('read-only Buchhaltungsservice', () => {
     expect(items[1].openAmount).toBe(100)
   })
 
-  it('verwendet lokale inklusive Tagesgrenzen als exklusive Obergrenze', () => {
-    expect(period.from).toEqual(new Date(2026, 8, 1))
-    expect(period.toExclusive).toEqual(new Date(2026, 9, 1))
+  it('verwendet Kalendertage (UTC-Mitternacht, wie gespeicherte Rechnungsdaten) mit exklusiver Obergrenze – unabhängig von process.env.TZ', () => {
+    // REQ-029 P5-6 B-1: bisher lokale Mitternacht (zonenabhängig); jetzt dieselbe Darstellung wie invoiceDate/paymentDate.
+    expect(period.from).toEqual(new Date(Date.UTC(2026, 8, 1)))
+    expect(period.toExclusive).toEqual(new Date(Date.UTC(2026, 9, 1)))
   })
 
   it('offene Posten sind stichtagsbezogen und nicht auf den Zeitraum-Filter beschränkt', async () => {

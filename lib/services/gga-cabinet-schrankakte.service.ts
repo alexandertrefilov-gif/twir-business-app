@@ -3,7 +3,6 @@
 // Datenhaltung, kein zweites PDF-Template. Reine Aggregation für den
 // PDF-Export, mit zielgruppenabhängiger Filterung (INTERNAL/OPERATOR).
 
-import { format } from 'date-fns'
 import { getGgaCabinetDetail, getGgaCabinetAuditHistory, loadGgaCabinetPruefnachweise } from '@/lib/services/gga-cabinet.service'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
 import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.service'
@@ -12,6 +11,7 @@ import {
   GGA_PRUEFART_LABELS, GGA_PRUEFERGEBNIS_LABELS, formatGgaBetriebsstatusLabel, type GgaPruefart,
 } from '@/lib/collaboration/cabinet-workflow'
 import type { GgaCabinetSchrankaktePdfData, SchrankakteSection } from '@/lib/pdf-templates/gga-cabinet-schrankakte.template'
+import { formatBerlinDate, formatBerlinDateTime, formatCalendarDate } from '@/lib/utils/berlin-date'
 
 const GGA_PRUEFARTEN: GgaPruefart[] = ['LUEFTUNG', 'ELEKTRO', 'VDE']
 
@@ -28,7 +28,7 @@ function decimalToStr(value: unknown, unit: string): string {
   return value === null || value === undefined ? '–' : `${value} ${unit}`
 }
 function fmtDate(date: Date | null): string {
-  return date ? format(date, 'dd.MM.yyyy') : '–'
+  return date ? formatCalendarDate(date) : '–'
 }
 function displayName(person: { firstName: string; lastName: string } | null | undefined, fallbackEmail: string | null): string {
   if (person) return `${person.firstName} ${person.lastName}`
@@ -157,13 +157,13 @@ export async function getGgaCabinetSchrankaktePdfData(cabinetId: string, audienc
     ] as SchrankakteSection[]),
     { key: 'M', title: 'M. Dokumente / Fotos', rows: cabinet.documents
       .filter((d) => !isOperator || d.visibility === 'EXTERNAL')
-      .map((d) => ({ label: d.originalName, value: `${d.documentKind} · hochgeladen von ${d.uploadedBy.firstName} ${d.uploadedBy.lastName} am ${format(d.createdAt, 'dd.MM.yyyy')}` })) },
+      .map((d) => ({ label: d.originalName, value: `${d.documentKind} · hochgeladen von ${d.uploadedBy.firstName} ${d.uploadedBy.lastName} am ${formatBerlinDate(d.createdAt)}` })) },
   ]
 
   // history ist bereits audience-gefiltert (getGgaCabinetAuditHistory).
   const historyRows = history
     .map((entry) => ({
-      at: format(entry.createdAt, 'dd.MM.yyyy HH:mm'),
+      at: formatBerlinDateTime(entry.createdAt),
       bereich: entityTypeLabels[entry.entityType] ?? entry.entityType,
       aktion: entry.action,
       // Anzeigename statt E-Mail — insbesondere für die externe Ansicht.
@@ -173,7 +173,7 @@ export async function getGgaCabinetSchrankaktePdfData(cabinetId: string, audienc
   return {
     cabinetLabel: `${cabinet.kennung} — ${cabinet.bezeichnung}`,
     projectName: cabinet.project.name,
-    generatedAt: format(new Date(), 'dd.MM.yyyy HH:mm'),
+    generatedAt: formatBerlinDateTime(new Date()),
     company: { companyName: company.companyName },
     logoDataUri: logo?.dataUri,
     logoScale: company.logoScale,

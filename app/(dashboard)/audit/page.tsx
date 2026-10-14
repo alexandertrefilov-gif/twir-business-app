@@ -10,8 +10,7 @@ import {
 } from '@/lib/services/audit-query.service'
 import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { AuditAction, type AuditAction as AuditActionType } from '@/types/enums'
-import { format }          from 'date-fns'
-import { de }              from 'date-fns/locale'
+import { formatBerlinDateTimeSecondsShortYear } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Audit-Log' }
 
@@ -159,7 +158,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
                 {result.entries.map((entry) => (
                   <tr key={entry.id}>
                     <td className="mono text-xs whitespace-nowrap">
-                      {format(new Date(entry.createdAt), 'dd.MM.yy HH:mm:ss', { locale: de })}
+                      {formatBerlinDateTimeSecondsShortYear(entry.createdAt)}
                     </td>
                     <td>
                       <div>

@@ -3,12 +3,11 @@
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useTransition } from 'react'
 import Link from 'next/link'
-import { format } from 'date-fns'
-import { de } from 'date-fns/locale'
 import { OrderStatusBadge } from '@/components/orders/OrderStatusBadge'
 import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
 import type { OrderListItem } from '@/lib/services/order.service'
 import { ORDER_STATUS_LABELS } from '@/types/enums'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 interface OrderTableProps {
   orders: OrderListItem[]
@@ -132,7 +131,7 @@ export function OrderTable({
                 </td>
                 <td className="whitespace-nowrap">
                   <span className="mono text-xs">
-                    {format(new Date(order.orderDate), 'dd.MM.yyyy', { locale: de })}
+                    {formatCalendarDate(order.orderDate)}
                   </span>
                 </td>
                 <td className="whitespace-nowrap">

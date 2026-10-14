@@ -1,10 +1,14 @@
 import { prisma } from '@/lib/db/prisma'
 import type { AccountingPeriod } from '@/lib/accounting/period'
+import { MoneyDecimal } from '@/lib/billing/money'
+import { toMoney, sumMoney } from '@/lib/billing/payment-math'
+import { sumCentNumbers, moneyToNumber } from '@/lib/services/money-output'
+import { berlinDayStartUtc } from '@/lib/utils/berlin-date'
 
 const REVENUE_STATUSES = ['FINALIZED', 'SENT', 'PARTIALLY_PAID', 'PAID', 'OVERDUE', 'CANCELLED', 'CORRECTED'] as const
 const OPEN_STATUSES = ['FINALIZED', 'SENT', 'PARTIALLY_PAID', 'OVERDUE'] as const
 
-const cents = (value: number) => Math.round(value * 100) / 100
+// REQ-029 P4-D: Summen und Differenzen werden mit Dezimalarithmetik gerechnet (lib/billing); `number` nur an der Ausgabegrenze.
 
 export interface AccountingInvoiceRow {
   id: string
@@ -64,8 +68,9 @@ const INVOICE_ROW_SELECT = {
 type InvoiceRowSource = Awaited<ReturnType<typeof prisma.invoice.findMany<{ select: typeof INVOICE_ROW_SELECT }>>>[number]
 
 function toAccountingInvoiceRow(invoice: InvoiceRowSource): AccountingInvoiceRow {
-  const paymentTotal = cents(invoice.payments.reduce((sum, payment) => sum + payment.amount.toNumber(), 0))
-  const storedPaidAmount = invoice.paidAmount.toNumber()
+  const paymentTotal = sumMoney(invoice.payments.map((payment) => payment.amount))
+  const storedPaid = toMoney(invoice.paidAmount)
+  const open = toMoney(invoice.totalGross).minus(paymentTotal)
   return {
     id: invoice.id,
     invoiceNumber: invoice.invoiceNumber!,
@@ -74,14 +79,14 @@ function toAccountingInvoiceRow(invoice: InvoiceRowSource): AccountingInvoiceRow
     status: invoice.status,
     type: invoice.type,
     dueDate: invoice.dueDate,
-    totalNet: invoice.totalNet.toNumber(),
-    totalTax: invoice.totalTax.toNumber(),
-    itemTaxAmount: cents(invoice.items.reduce((sum, item) => sum + item.taxAmount.toNumber(), 0)),
-    totalGross: invoice.totalGross.toNumber(),
-    paymentTotal,
-    openAmount: cents(Math.max(0, invoice.totalGross.toNumber() - paymentTotal)),
-    reconciliationMismatch: Math.abs(storedPaidAmount - paymentTotal) >= 0.01,
-    storedPaidAmount,
+    totalNet: moneyToNumber(toMoney(invoice.totalNet)),
+    totalTax: moneyToNumber(toMoney(invoice.totalTax)),
+    itemTaxAmount: moneyToNumber(sumMoney(invoice.items.map((item) => item.taxAmount))),
+    totalGross: moneyToNumber(toMoney(invoice.totalGross)),
+    paymentTotal: moneyToNumber(paymentTotal),
+    openAmount: moneyToNumber(open.lt(0) ? new MoneyDecimal(0) : open),
+    reconciliationMismatch: storedPaid.minus(paymentTotal).abs().gte('0.01'),
+    storedPaidAmount: moneyToNumber(storedPaid),
   }
 }
 
@@ -139,7 +144,7 @@ export async function getAccountingPayments(period: AccountingPeriod): Promise<A
   return payments.map((payment) => ({
     id: payment.id,
     paymentDate: payment.paymentDate,
-    amount: payment.amount.toNumber(),
+    amount: moneyToNumber(toMoney(payment.amount)),
     method: payment.method,
     reference: payment.reference,
     invoiceId: payment.invoice.id,
@@ -149,13 +154,37 @@ export async function getAccountingPayments(period: AccountingPeriod): Promise<A
   }))
 }
 
+const MS_PRO_TAG = 86_400_000
+
+/**
+ * Laufende Nummer des UTC-Kalendertags (Tage seit 1970-01-01). `Date.UTC(y, m, d)` ist immer ein ganzes Vielfaches
+ * von 86 400 000 ms (UTC kennt keine Sommerzeit); die Division ist daher exakt und ganzzahlig. Ein Wert mit Uhrzeit
+ * (Altbestand) wird auf seinen UTC-Kalendertag normiert – maßgeblich ist der Tag, nicht die Uhrzeit.
+ */
+function utcDayNumber(date: Date): number {
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / MS_PRO_TAG
+}
+
+/**
+ * „Fällig" im Sinne der Offenen-Posten-Liste: Fälligkeitstag ist heute (Europe/Berlin) oder früher.
+ * Anders als „überfällig" zählt der Fälligkeitstag selbst bereits als fällig.
+ */
+export function isOpenItemDue(dueDate: Date | null, now = new Date()): boolean {
+  return dueDate !== null && utcDayNumber(dueDate) <= utcDayNumber(berlinDayStartUtc(now))
+}
+
+/**
+ * Offene Posten mit Überfälligkeit – dieselbe Semantik wie `markOverdueInvoices` (P5-2): überfällig ab dem Berliner
+ * Kalendertag NACH der Fälligkeit; der Fälligkeitstag selbst ist nicht überfällig. Die Tage sind die Differenz ganzer
+ * Kalendertage (keine Millisekundenarithmetik lokaler Mitternachten → kein Sommerzeit-Fehler).
+ */
 export function deriveOpenItems(rows: AccountingInvoiceRow[], now = new Date()): AccountingOpenItem[] {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const today = utcDayNumber(berlinDayStartUtc(now))
   return rows
     .filter((row) => (OPEN_STATUSES as readonly string[]).includes(row.status) && row.openAmount > 0)
     .map((row) => {
-      const due = row.dueDate ? new Date(row.dueDate.getFullYear(), row.dueDate.getMonth(), row.dueDate.getDate()) : null
-      const daysOverdue = due && due < today ? Math.floor((today.getTime() - due.getTime()) / 86_400_000) : 0
+      const due = row.dueDate ? utcDayNumber(row.dueDate) : null
+      const daysOverdue = due !== null && due < today ? today - due : 0
       return { ...row, daysOverdue, overdue: daysOverdue > 0 }
     })
     .sort((a, b) => b.daysOverdue - a.daysOverdue || (a.dueDate?.getTime() ?? Infinity) - (b.dueDate?.getTime() ?? Infinity))
@@ -171,11 +200,11 @@ export async function getAccountingOverview(period: AccountingPeriod) {
   // Perioden hinweg — nicht auf den gewählten Zeitraum beschränkt.
   const openItems = deriveOpenItems(openInvoices)
   return {
-    invoicedRevenue: cents(invoices.reduce((sum, invoice) => sum + invoice.totalNet, 0)),
-    paymentIncome: cents(payments.reduce((sum, payment) => sum + payment.amount, 0)),
-    openReceivables: cents(openItems.reduce((sum, invoice) => sum + invoice.openAmount, 0)),
-    overdueReceivables: cents(openItems.filter((invoice) => invoice.overdue).reduce((sum, invoice) => sum + invoice.openAmount, 0)),
-    outputTax: cents(invoices.reduce((sum, invoice) => sum + invoice.itemTaxAmount, 0)),
+    invoicedRevenue: sumCentNumbers(invoices.map((invoice) => invoice.totalNet)),
+    paymentIncome: sumCentNumbers(payments.map((payment) => payment.amount)),
+    openReceivables: sumCentNumbers(openItems.map((invoice) => invoice.openAmount)),
+    overdueReceivables: sumCentNumbers(openItems.filter((invoice) => invoice.overdue).map((invoice) => invoice.openAmount)),
+    outputTax: sumCentNumbers(invoices.map((invoice) => invoice.itemTaxAmount)),
     reconciliationWarnings: invoices.filter((invoice) => invoice.reconciliationMismatch),
     recentInvoices: invoices.slice(0, 5),
     largestOpenItems: [...openItems].sort((a, b) => b.openAmount - a.openAmount).slice(0, 5),

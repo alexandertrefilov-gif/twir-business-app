@@ -9,11 +9,22 @@
 //   3 → Zweite Mahnung      (letzte Aufforderung, ggf. Mahngebühr 10 €)
 //
 // Nutzt: buildAuditLogCreate (Phase 2), AuditAction (Phase 2)
+// REQ-029 P5-3: Mahnbarkeit entscheidet die reine Policy (dunning-policy.ts); dieser Service ist die Sicherheitsgrenze.
 
+import type { Prisma }      from '@prisma/client'
 import { prisma }            from '@/lib/db/prisma'
 import { buildAuditLogCreate } from '@/lib/services/audit.service'
-import { AuditAction, InvoiceStatus } from '@/types/enums'
-import { NotFoundError, BusinessRuleError } from '@/lib/auth/permissions'
+import { AuditAction, InvoiceStatus, InvoiceType } from '@/types/enums'
+import { normalizeMoneyInput, toMoney, DUNNING_FEE_SPEC } from '@/lib/billing/payment-math'
+import { toCentString } from '@/lib/billing/money'
+import { NotFoundError, BusinessRuleError, ConflictError } from '@/lib/auth/permissions'
+import { berlinCalendarDate, berlinDayStartUtc, formatUtcCalendarDate } from '@/lib/utils/berlin-date'
+import {
+  DUNNABLE_INVOICE_STATUSES,
+  dunningBlockMessage,
+  evaluateDunningEligibility,
+} from '@/lib/services/dunning-policy'
+import type { DunningBlockReason, DunningLevelNumber } from '@/lib/services/dunning-policy'
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -43,7 +54,7 @@ export interface CreateDunningInput {
   invoiceId: string
   level:     DunningLevel
   dueDate:   Date
-  fee?:      number | null
+  fee?:      number | string | null
 }
 
 // ── GET ───────────────────────────────────────────────────────
@@ -69,64 +80,125 @@ export async function getDunningNoticesForInvoice(
   }))
 }
 
+// ── Gemeinsame Lesevorgänge (Anlage und Vorschau) ─────────────
+//
+// REQ-029 P5-3: Alle Entscheidungen über „darf gemahnt werden“ trifft die reine Policy (dunning-policy.ts).
+// Dieser Abschnitt lädt nur die Tatsachen: Rechnung, Σ aktive Zahlungszeilen (nicht der Cache paidAmount),
+// nicht gelöschte Mahnungen und die Status-Audits der Rechnung (Versandnachweis).
+
+type DunningFactsClient = Pick<Prisma.TransactionClient, 'invoice' | 'payment' | 'auditLog'>
+
+async function loadDunningFacts(tx: DunningFactsClient, invoiceId: string) {
+  const invoice = await tx.invoice.findUnique({
+    where:  { id: invoiceId },
+    select: {
+      id:            true,
+      status:        true,
+      type:          true,
+      invoiceNumber: true,
+      sentAt:        true,
+      dueDate:       true,
+      totalGross:    true,
+    },
+  })
+  if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
+
+  // Gleiche Quelle wie addPayment: aktive Zahlungszeilen (deletedAt IS NULL), exakt als Decimal summiert.
+  const paid = await tx.payment.aggregate({
+    where: { invoiceId, deletedAt: null },
+    _sum:  { amount: true },
+  })
+  const activePaymentsSum = toCentString(toMoney(paid._sum.amount ?? '0'))
+
+  const noticeRows: Array<{ id: string; level: number; sentAt: Date | null }> =
+    await (tx as any).dunningNotice.findMany({
+      where:   { invoiceId, deletedAt: null },
+      orderBy: { level: 'desc' },
+      select:  { id: true, level: true, sentAt: true },
+    })
+
+  // Alle Statuswechsel-Audits der Rechnung; welcher davon als Versandnachweis zählt, entscheidet die Policy.
+  const auditEntries = await tx.auditLog.findMany({
+    where:   { entityType: 'invoice', entityId: invoiceId, action: AuditAction.STATUS_CHANGE },
+    select:  {
+      id: true, entityType: true, entityId: true, action: true,
+      userId: true, oldValue: true, newValue: true, createdAt: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  return { invoice, activePaymentsSum, notices: noticeRows, auditEntries }
+}
+
 // ── CREATE ────────────────────────────────────────────────────
 
+/**
+ * Legt die nächste Mahnstufe an (REQ-029 P5-3).
+ *
+ * Alles geschieht in einer Transaktion unter der Zeilensperre der Rechnung (`SELECT … FOR UPDATE`); dieselbe Sperre
+ * nehmen Zahlung, Statuswechsel, Storno, Überfälligkeitslauf und „versendet“-Markierung. Die Policy
+ * (dunning-policy.ts) entscheidet; dieser Service ist die Sicherheitsgrenze, die UI nur eine Anzeige.
+ * Abgelehnte Anlagen schreiben nichts.
+ */
 export async function createDunningNotice(
   data:      CreateDunningInput,
   userId:    string,
   userEmail: string,
+  now:       Date = new Date(),
 ): Promise<string> {
   return prisma.$transaction(async (tx) => {
-    const invoice = await tx.invoice.findUnique({
-      where:  { id: data.invoiceId },
-      select: {
-        id:            true,
-        status:        true,
-        invoiceNumber: true,
-        paidAmount:    true,
-        totalGross:    true,
+    // P4-C: Rechnungszeile sperren, damit Mahnung, Zahlung und Statuswechsel nicht gleichzeitig laufen.
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${data.invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
+    // Alle Lesezugriffe liegen NACH der Sperre.
+    const facts = await loadDunningFacts(tx, data.invoiceId)
+    const { invoice } = facts
+
+    const decision = evaluateDunningEligibility({
+      purpose:           'create',
+      invoice: {
+        id:         invoice.id,
+        status:     invoice.status,
+        type:       invoice.type,
+        sentAt:     invoice.sentAt,
+        dueDate:    invoice.dueDate,
+        totalGross: invoice.totalGross,
       },
+      auditEntries:      facts.auditEntries,
+      activePaymentsSum: facts.activePaymentsSum,
+      notices:           facts.notices,
+      requestedLevel:    data.level,
+      dunningDueDate:    data.dueDate,
+      now,
     })
-    if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
-
-    // Only non-paid, non-cancelled invoices can receive dunning
-    if (
-      invoice.status === InvoiceStatus.PAID ||
-      invoice.status === InvoiceStatus.CANCELLED ||
-      invoice.status === InvoiceStatus.DRAFT
-    ) {
+    if (!decision.ok) {
+      const first = decision.reasons[0]
       throw new BusinessRuleError(
-        `Für Rechnungen im Status „${invoice.status}" kann keine Mahnung erstellt werden.`,
+        first
+          ? dunningBlockMessage(first, decision.details)
+          : 'Für diese Rechnung kann keine Mahnung erstellt werden.',
       )
     }
 
-    // Check existing dunning level
-    const existingNotices = await (tx as any).dunningNotice.findMany({
-      where:   { invoiceId: data.invoiceId, deletedAt: null },
-      orderBy: { level: 'desc' },
-      take:    1,
-    })
+    const level       = decision.nextLevel
+    const levelConfig = DUNNING_LEVELS[level]
 
-    const highestLevel   = existingNotices[0]?.level ?? 0
-    const expectedLevel  = highestLevel + 1
-
-    if (data.level !== expectedLevel) {
-      throw new BusinessRuleError(
-        `Die nächste Mahnstufe muss ${expectedLevel} sein (aktuell: ${highestLevel}).`,
-      )
+    // P4-D: Gebühr als Geldbetrag streng prüfen (0–9999, höchstens 2 Nachkommastellen, keine stille Rundung).
+    const rawFee = data.fee ?? levelConfig.defaultFee
+    let fee: string | null = null
+    if (rawFee !== null && rawFee !== undefined) {
+      const checkedFee = normalizeMoneyInput(rawFee, DUNNING_FEE_SPEC)
+      if (!checkedFee.ok) throw new BusinessRuleError(checkedFee.message)
+      fee = checkedFee.value
     }
-
-    if (data.level > 3) {
-      throw new BusinessRuleError('Maximale Mahnstufe 3 bereits erreicht. Rechtliche Schritte einleiten.')
-    }
-
-    const levelConfig = DUNNING_LEVELS[data.level]
-    const fee         = data.fee ?? levelConfig.defaultFee
 
     const notice = await (tx as any).dunningNotice.create({
       data: {
         invoiceId:   data.invoiceId,
-        level:       data.level,
+        level,
         levelLabel:  levelConfig.label,
         dueDate:     data.dueDate,
         fee:         fee,
@@ -134,14 +206,34 @@ export async function createDunningNotice(
       },
     })
 
-    // Mark invoice as OVERDUE if it wasn't already
-    if (invoice.status !== InvoiceStatus.OVERDUE && data.level >= 2) {
-      await tx.invoice.update({
-        where: { id: data.invoiceId },
+    // Ab Mahnstufe 2: SENT / PARTIALLY_PAID → OVERDUE (mit Statusbedingung und Audit); ein bereits überfälliger
+    // Status bleibt unverändert. Spätere Teilzahlungen setzen OVERDUE nicht zurück (derivePaymentStatus).
+    if (
+      level >= 2 &&
+      (invoice.status === InvoiceStatus.SENT || invoice.status === InvoiceStatus.PARTIALLY_PAID)
+    ) {
+      const marked = await tx.invoice.updateMany({
+        where: { id: data.invoiceId, status: invoice.status },
         data:  { status: InvoiceStatus.OVERDUE },
+      })
+      if (marked.count === 0) {
+        throw new ConflictError('Der Rechnungsstatus wurde zwischenzeitlich geändert; die Mahnung wurde nicht angelegt.')
+      }
+      await buildAuditLogCreate(tx, {
+        userId, userEmail,
+        action:     AuditAction.STATUS_CHANGE,
+        entityType: 'invoice',
+        entityId:   data.invoiceId,
+        oldValue:   { status: invoice.status },
+        newValue:   { status: InvoiceStatus.OVERDUE },
+        metadata:   {
+          source: 'dunning', level, dunningNoticeId: notice.id,
+          outstandingAmount: decision.outstandingAmount,
+        },
       })
     }
 
+    // D4: Berechnungsgrundlage unveränderlich im Audit festhalten (keine Migration; Beträge als Cent-Strings).
     await buildAuditLogCreate(tx, {
       userId, userEmail,
       action:     AuditAction.CREATE,
@@ -150,10 +242,11 @@ export async function createDunningNotice(
       newValue: {
         invoiceId:     data.invoiceId,
         invoiceNumber: invoice.invoiceNumber,
-        level:         data.level,
+        level,
         levelLabel:    levelConfig.label,
         dueDate:       data.dueDate,
         fee,
+        snapshot:      { ...decision.basis, feeAmount: fee },
       },
     })
 
@@ -163,23 +256,58 @@ export async function createDunningNotice(
 
 // ── MARK AS SENT ──────────────────────────────────────────────
 
+/**
+ * Markiert eine Mahnung als versendet (REQ-029 P5-3, D8).
+ *
+ * Transaktion unter derselben Rechnungssperre wie die Anlage; Mahnung und Rechnung werden unter der Sperre neu
+ * gelesen. Nur bei mahnbarem Rechnungsstatus (SENT / PARTIALLY_PAID / OVERDUE). Idempotent und race-sicher über
+ * `updateMany … WHERE sentAt IS NULL`: genau ein `sentAt`, genau ein Audit.
+ */
 export async function markDunningNoticeSent(
   noticeId:  string,
   pdfPath:   string | null,
   userId:    string,
   userEmail: string,
 ): Promise<void> {
-  const notice = await (prisma as any).dunningNotice.findUnique({
-    where: { id: noticeId },
+  // Nur um die Rechnung zu finden, auf die gesperrt werden muss; die Entscheidung fällt unter der Sperre.
+  const lookup = await (prisma as any).dunningNotice.findUnique({
+    where:  { id: noticeId },
+    select: { invoiceId: true },
   })
-  if (!notice) throw new NotFoundError('Mahnung nicht gefunden')
-  if (notice.sentAt) throw new BusinessRuleError('Mahnung wurde bereits als versendet markiert.')
+  if (!lookup) throw new NotFoundError('Mahnung nicht gefunden')
 
   await prisma.$transaction(async (tx) => {
-    await (tx as any).dunningNotice.update({
-      where: { id: noticeId },
-      data:  { sentAt: new Date(), pdfPath: pdfPath ?? null },
+    const locked = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM invoices WHERE id = ${lookup.invoiceId} FOR UPDATE
+    `
+    if (locked.length === 0) throw new NotFoundError('Rechnung nicht gefunden')
+
+    const notice = await (tx as any).dunningNotice.findUnique({
+      where:  { id: noticeId },
+      select: { id: true, invoiceId: true, level: true, sentAt: true, deletedAt: true },
     })
+    if (!notice || notice.deletedAt || notice.invoiceId !== lookup.invoiceId) {
+      throw new NotFoundError('Mahnung nicht gefunden')
+    }
+    if (notice.sentAt) throw new BusinessRuleError('Mahnung wurde bereits als versendet markiert.')
+
+    const invoice = await tx.invoice.findUnique({
+      where:  { id: lookup.invoiceId },
+      select: { status: true },
+    })
+    if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
+    if (!DUNNABLE_INVOICE_STATUSES.includes(invoice.status)) {
+      throw new BusinessRuleError(
+        'Eine Mahnung kann nur bei Rechnungen im Status „Versendet“, „Teilweise bezahlt“ oder „Überfällig“ als versendet markiert werden.',
+      )
+    }
+
+    const sentAt = new Date()
+    const updated = await (tx as any).dunningNotice.updateMany({
+      where: { id: noticeId, sentAt: null, deletedAt: null },
+      data:  { sentAt, pdfPath: pdfPath ?? null },
+    })
+    if (updated.count === 0) throw new BusinessRuleError('Mahnung wurde bereits als versendet markiert.')
 
     await buildAuditLogCreate(tx, {
       userId, userEmail,
@@ -187,8 +315,72 @@ export async function markDunningNoticeSent(
       entityType: 'dunning_notice',
       entityId:   noticeId,
       oldValue:   { sentAt: null },
-      newValue:   { sentAt: new Date() },
+      newValue:   { sentAt },
+      metadata:   { invoiceId: lookup.invoiceId, level: notice.level },
     })
+  })
+}
+
+// ── ELIGIBILITY (nur Anzeige) ─────────────────────────────────
+
+/**
+ * Serialisierbares Ergebnis der Policy für die Oberfläche. Reine Anzeige: lesend, ohne Sperre, ohne Schreibzugriff.
+ * Verbindlich bleibt ausschließlich `createDunningNotice`.
+ */
+export interface DunningEligibilityDto {
+  ok:                boolean
+  nextLevel:         DunningLevelNumber | null
+  /** Offener Betrag als Cent-String ("64.26"), nur bei ok. */
+  outstandingAmount: string | null
+  /** Berliner Kalendertag der Berechnung (JJJJ-MM-TT). */
+  berlinDate:        string
+  calculatedAt:      string
+  reasons:           DunningBlockReason[]
+  messages:          string[]
+}
+
+export async function getDunningEligibility(
+  invoiceId: string,
+  now:       Date = new Date(),
+): Promise<DunningEligibilityDto> {
+  return prisma.$transaction(async (tx) => {
+    const facts = await loadDunningFacts(tx, invoiceId)
+    const decision = evaluateDunningEligibility({
+      purpose: 'preview',
+      invoice: {
+        id:         facts.invoice.id,
+        status:     facts.invoice.status,
+        type:       facts.invoice.type,
+        sentAt:     facts.invoice.sentAt,
+        dueDate:    facts.invoice.dueDate,
+        totalGross: facts.invoice.totalGross,
+      },
+      auditEntries:      facts.auditEntries,
+      activePaymentsSum: facts.activePaymentsSum,
+      notices:           facts.notices,
+      now,
+    })
+
+    if (decision.ok) {
+      return {
+        ok:                true,
+        nextLevel:         decision.nextLevel,
+        outstandingAmount: decision.outstandingAmount,
+        berlinDate:        decision.basis.berlinDate,
+        calculatedAt:      decision.basis.calculatedAt,
+        reasons:           [],
+        messages:          [],
+      }
+    }
+    return {
+      ok:                false,
+      nextLevel:         decision.details.nextLevel,
+      outstandingAmount: null,
+      berlinDate:        berlinCalendarDate(now),
+      calculatedAt:      now.toISOString(),
+      reasons:           decision.reasons,
+      messages:          decision.reasons.map((reason) => dunningBlockMessage(reason, decision.details)),
+    }
   })
 }
 
@@ -220,21 +412,80 @@ export async function getOverdueInvoices() {
   })
 }
 
-/**
- * Markiert überfällige Rechnungen als OVERDUE.
- * Idempotent — sicher mehrfach ausführbar.
- */
-export async function markOverdueInvoices(): Promise<number> {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+/** Kennzeichnung der Systemaktion im Audit-Log (kein Benutzer). */
+export const OVERDUE_JOB_ACTOR = 'system:overdue-job'
 
-  const result = await prisma.invoice.updateMany({
+/**
+ * Markiert überfällige Rechnungen als OVERDUE (REQ-029 P4-C, Tagesgrenze P5-2).
+ *
+ * Regeln:
+ *   - Nur Rechnungen im Status SENT, Fälligkeit vor heute (Kalendertag in Europe/Berlin, unabhängig von der
+ *     Zeitzone des Servers; Fälligkeiten sind Kalendertage als UTC-Mitternacht), keine Stornorechnungen. Teilbezahlte Rechnungen
+ *     werden nicht automatisch markiert.
+ *   - Jede Rechnung in einer eigenen Transaktion mit Zeilensperre, erneuter Prüfung und Statusbedingung;
+ *     jede Änderung erhält einen Audit-Eintrag (Systemakteur, ohne Benutzer, mit Fälligkeitsdatum).
+ *   - Idempotent: bereits markierte oder zwischenzeitlich bezahlte/stornierte Rechnungen werden übersprungen.
+ *   - Einzelfehler stoppen den Lauf nicht; am Ende wird gesammelt ein Fehler geworfen (nichts bleibt unbemerkt).
+ * Rückgabe: Anzahl tatsächlich markierter Rechnungen.
+ */
+export async function markOverdueInvoices(now: Date = new Date()): Promise<number> {
+  // Beginn des Berliner Kalendertags als UTC-Mitternacht, direkt mit gespeicherten Fälligkeiten vergleichbar.
+  const today = berlinDayStartUtc(now)
+
+  const candidates = await prisma.invoice.findMany({
     where: {
-      dueDate:   { lt: today },
-      status:    { in: [InvoiceStatus.SENT, InvoiceStatus.PARTIALLY_PAID] },
+      dueDate: { lt: today },
+      status:  InvoiceStatus.SENT,
+      type:    { not: InvoiceType.CANCELLATION },
     },
-    data: { status: InvoiceStatus.OVERDUE },
+    select: { id: true },
+    orderBy: { dueDate: 'asc' },
   })
 
-  return result.count
+  let marked = 0
+  const failures: string[] = []
+  for (const { id } of candidates) {
+    try {
+      const done = await prisma.$transaction(async (tx) => {
+        const locked = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM invoices WHERE id = ${id} FOR UPDATE
+        `
+        if (locked.length === 0) return false
+        const current = await tx.invoice.findUnique({
+          where:  { id },
+          select: { status: true, type: true, dueDate: true },
+        })
+        if (
+          !current || current.status !== InvoiceStatus.SENT || current.type === InvoiceType.CANCELLATION ||
+          !current.dueDate || current.dueDate >= today
+        ) return false
+
+        const updated = await tx.invoice.updateMany({
+          where: { id, status: InvoiceStatus.SENT },
+          data:  { status: InvoiceStatus.OVERDUE },
+        })
+        if (updated.count === 0) return false
+
+        await buildAuditLogCreate(tx, {
+          userId:     null,
+          userEmail:  OVERDUE_JOB_ACTOR,
+          action:     AuditAction.STATUS_CHANGE,
+          entityType: 'invoice',
+          entityId:   id,
+          oldValue:   { status: InvoiceStatus.SENT },
+          newValue:   { status: InvoiceStatus.OVERDUE },
+          metadata:   { source: 'overdue-job', dueDate: formatUtcCalendarDate(current.dueDate) },
+        })
+        return true
+      })
+      if (done) marked += 1
+    } catch (error) {
+      failures.push(`${id}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Überfälligkeitslauf: ${marked} markiert, ${failures.length} Fehler (${failures.slice(0, 3).join('; ')})`)
+  }
+  return marked
 }

@@ -7,8 +7,6 @@ import { OfferRichText }      from '@/components/offers/OfferRichText'
 import { getOfferById }     from '@/lib/services/offer.service'
 import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { calcOfferTotals }  from '@/lib/validators/offer.schema'
-import { format }           from 'date-fns'
-import { de }               from 'date-fns/locale'
 import type { OfferStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { getSupplierNumber } from '@/lib/services/settings.service'
@@ -22,6 +20,7 @@ import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 import { CustomerPurchaseOrderDialog } from '@/components/offers/CustomerPurchaseOrderDialog'
 import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
 import { listProjectsForCustomer } from '@/lib/services/project.service'
+import { formatBerlinDate, formatBerlinDateTime, formatCalendarDateLong } from '@/lib/utils/berlin-date'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -109,22 +108,22 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
               </div>
 
               <MetaItem label="Angebotsdatum"
-                value={format(new Date(offer.offerDate), 'dd. MMMM yyyy', { locale: de })} />
+                value={formatCalendarDateLong(offer.offerDate)} />
               {offer.validUntil && <MetaItem label="Gültig bis"
-                value={format(new Date(offer.validUntil), 'dd. MMMM yyyy', { locale: de })} />}
+                value={formatCalendarDateLong(offer.validUntil)} />}
               {offer.sentAt && <MetaItem label="Versendet am"
-                value={format(new Date(offer.sentAt), 'dd.MM.yyyy HH:mm', { locale: de })} />}
+                value={formatBerlinDateTime(offer.sentAt)} />}
               {offer.acceptedAt && <div className="xl:col-start-4 xl:row-start-2">
                 <MetaItem label="Angenommen am"
-                  value={format(new Date(offer.acceptedAt), 'dd.MM.yyyy', { locale: de })} />
+                  value={formatBerlinDate(offer.acceptedAt)} />
               </div>}
               {offer.order && <div className="xl:col-start-2 xl:row-start-2">
                 <MetaItem label="Auftragsdatum"
-                  value={format(new Date(offer.order.orderDate), 'dd. MMMM yyyy', { locale: de })} />
+                  value={formatCalendarDateLong(offer.order.orderDate)} />
               </div>}
               {offer.order?.completedAt && <div className="xl:col-start-3 xl:row-start-2">
                 <MetaItem label="Abgeschlossen"
-                  value={format(new Date(offer.order.completedAt), 'dd.MM.yyyy', { locale: de })} />
+                  value={formatBerlinDate(offer.order.completedAt)} />
               </div>}
             </dl>
       </BusinessDocumentHeader>
@@ -228,7 +227,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
                 : undefined}
               offerLifecycle={{
                 status: offer.status,
-                sentDate: offer.sentAt ? format(new Date(offer.sentAt), 'dd.MM.yyyy', { locale: de }) : undefined,
+                sentDate: offer.sentAt ? formatBerlinDate(offer.sentAt) : undefined,
                 actions: (
                   <OfferStatusActions
                     offerId={offer.id}
@@ -254,9 +253,9 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
               <MetaItem label="Angelegt von"
                 value={`${offer.createdBy.firstName} ${offer.createdBy.lastName}`} />
               <MetaItem label="Angelegt am"
-                value={format(new Date(offer.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+                value={formatBerlinDateTime(offer.createdAt)} />
               <MetaItem label="Letzte Änderung"
-                value={format(new Date(offer.updatedAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+                value={formatBerlinDateTime(offer.updatedAt)} />
               {supplierNumber && <MetaItem label="Lieferantennummer" value={supplierNumber} mono />}
               {offer.status === 'DRAFT' && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">

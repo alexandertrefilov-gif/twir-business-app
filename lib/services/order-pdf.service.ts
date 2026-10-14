@@ -1,10 +1,10 @@
-import { format } from 'date-fns'
 import type { OrderPdfData } from '@/lib/pdf-templates/order.template'
 import { getOrderById } from '@/lib/services/order.service'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
 import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.service'
 import type { OrderPdfOptions } from '@/lib/validators/order-pdf.schema'
 import { orderDescriptionWithOfferFallback } from '@/lib/offers/rich-text'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 type CustomerSnapshot = {
   name?: string
@@ -28,7 +28,7 @@ export async function getOrderPdfData(
   return {
     options,
     ...(options.showOrderNumber && { orderNumber: order.orderNumber }),
-    ...(options.showOrderDate && { orderDate: format(order.orderDate, 'dd.MM.yyyy') }),
+    ...(options.showOrderDate && { orderDate: formatCalendarDate(order.orderDate) }),
     ...(options.showTitle && { title: order.title }),
     ...(options.showDescription && {
       description: orderDescriptionWithOfferFallback(
@@ -38,8 +38,8 @@ export async function getOrderPdfData(
       ),
     }),
     ...(options.showServicePeriod && {
-      startDate: order.startDate ? format(order.startDate, 'dd.MM.yyyy') : null,
-      endDate: order.endDate ? format(order.endDate, 'dd.MM.yyyy') : null,
+      startDate: order.startDate ? formatCalendarDate(order.startDate) : null,
+      endDate: order.endDate ? formatCalendarDate(order.endDate) : null,
     }),
     ...(options.showOfferReference && { offerNumber: order.offer?.offerNumber }),
     logoDataUri: logo?.dataUri,

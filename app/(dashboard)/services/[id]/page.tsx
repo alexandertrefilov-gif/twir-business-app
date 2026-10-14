@@ -4,8 +4,6 @@ import { notFound }       from 'next/navigation'
 import Link               from 'next/link'
 import { getServiceReportById } from '@/lib/services/service-report.service'
 import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
-import { format } from 'date-fns'
-import { de }     from 'date-fns/locale'
 import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
 import { getBusinessProcessForServiceReport } from '@/lib/services/business-process.service'
 import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
@@ -15,6 +13,7 @@ import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
 import { buildServiceReportDocumentSections } from '@/lib/documents/service-report-document'
 import { ServiceReportFinalizeButton } from '@/components/service-reports/ServiceReportFinalizeButton'
+import { formatBerlinDateTime, formatCalendarDateLong } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Leistungsnachweis' }
 
@@ -83,7 +82,7 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
               <Link href={`/orders/${report.order.id}`} className="text-sm text-blue-700 hover:underline mono">{report.order.orderNumber}</Link>
             </dd>
           </div>
-          <MetaItem label="Leistungsdatum" value={format(new Date(report.reportDate), 'dd. MMMM yyyy', { locale: de })} />
+          <MetaItem label="Leistungsdatum" value={formatCalendarDateLong(report.reportDate)} />
           <MetaItem label="Erfasst von" value={preparedBy} />
           {report.order.offer && processPermissions.readOffer && (
             <div>
@@ -142,7 +141,7 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
               </div>
               <div>
                 <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Angelegt am</p>
-                <p className="text-sm">{format(new Date(report.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })}</p>
+                <p className="text-sm">{formatBerlinDateTime(report.createdAt)}</p>
               </div>
             </div>
 

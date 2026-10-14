@@ -12,6 +12,7 @@ import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEdit
 import { OfferNumberEditor } from '@/components/offers/OfferNumberEditor'
 import type { ActionState } from '@/app/(dashboard)/offers/actions'
 import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
+import { berlinTodayIso, berlinTodayPlusDaysIso } from '@/lib/utils/berlin-date'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -68,11 +69,8 @@ function newRow(): ItemRow {
   }
 }
 
-const today30 = () => {
-  const d = new Date(); d.setDate(d.getDate() + 30)
-  return d.toISOString().slice(0, 10)
-}
-const todayStr = () => new Date().toISOString().slice(0, 10)
+const today30 = () => berlinTodayPlusDaysIso(30)
+const todayStr = () => berlinTodayIso()
 
 // ── Component ─────────────────────────────────────────────────
 

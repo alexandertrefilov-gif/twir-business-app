@@ -10,9 +10,8 @@ import { DeleteCustomerButton } from '@/components/customers/DeleteCustomerButto
 import { CustomerBillingAddressActions } from '@/components/customers/CustomerBillingAddressActions'
 import { CustomerDeliveryAddressActions } from '@/components/customers/CustomerDeliveryAddressActions'
 import { CustomerAddressPicker } from '@/components/customers/CustomerAddressPicker'
-import { format }         from 'date-fns'
-import { de }             from 'date-fns/locale'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
+import { formatBerlinDate } from '@/lib/utils/berlin-date'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -206,7 +205,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
                 <InfoItem label="Status" value={customer.isActive ? 'Aktiv' : 'Inaktiv'} />
                 <InfoItem
                   label="Angelegt"
-                  value={format(new Date(customer.createdAt), 'dd.MM.yyyy', { locale: de })}
+                  value={formatBerlinDate(customer.createdAt)}
                 />
                 <InfoItem label="Land" value={customer.country} />
               </InfoGrid>

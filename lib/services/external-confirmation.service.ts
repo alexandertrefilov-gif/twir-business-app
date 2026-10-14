@@ -6,6 +6,7 @@ import { buildBusinessCaseArchiveDirectory, existingBusinessCaseArchiveDirectory
 import { LocalFilesystemArchiveStorage } from '@/lib/documents/archive-storage'
 import { sanitizeFilename, validateUpload, validateUploadSignature } from '@/lib/security/upload-validator'
 import type { DocumentFormat, OrderConfirmationType } from '@prisma/client'
+import { calendarYear } from '@/lib/utils/berlin-date'
 
 export type ConfirmationOwner = 'order' | 'serviceReport'
 
@@ -51,7 +52,7 @@ async function loadContext(owner: ConfirmationOwner, id: string) {
     if (!row) throw new NotFoundError('Auftrag nicht gefunden')
     if (!row.sentAt) throw new BusinessRuleError('Der Auftrag muss vor der Kundenbestätigung als versendet markiert werden.')
     return {
-      customerId: row.customerId, year: (row.offer?.offerDate ?? row.orderDate).getFullYear(),
+      customerId: row.customerId, year: calendarYear(row.offer?.offerDate ?? row.orderDate),
       customerNumber: row.customer.number, customerName: row.customer.name,
       areaName: row.offer?.areaName ?? row.offer?.title ?? row.title,
       businessCaseId: row.offer ? `offer-${row.offer.id}` : `order-${row.id}`,
@@ -73,7 +74,7 @@ async function loadContext(owner: ConfirmationOwner, id: string) {
   if (!row) throw new NotFoundError('Leistungsnachweis nicht gefunden')
   if (!row.sentAt) throw new BusinessRuleError('Der Leistungsnachweis muss vor der Kundenbestätigung als versendet markiert werden.')
   return {
-    customerId: row.order.customerId, year: (row.order.offer?.offerDate ?? row.order.orderDate).getFullYear(),
+    customerId: row.order.customerId, year: calendarYear(row.order.offer?.offerDate ?? row.order.orderDate),
     customerNumber: row.order.customer.number, customerName: row.order.customer.name,
     areaName: row.order.offer?.areaName ?? row.order.offer?.title ?? row.order.title,
     businessCaseId: row.order.offer ? `offer-${row.order.offer.id}` : `order-${row.order.id}`,

@@ -33,7 +33,7 @@ export async function addPaymentAction(
 
   const raw = {
     invoiceId:   formData.get('invoiceId'),
-    amount:      parseFloat(formData.get('amount') as string),
+    amount:      formData.get('amount'),
     paymentDate: formData.get('paymentDate'),
     method:      formData.get('method')    || null,
     reference:   formData.get('reference') || null,

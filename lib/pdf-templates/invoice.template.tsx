@@ -27,7 +27,7 @@ export interface InvoicePdfData {
   }
   items: Array<{
     position: number; description: string; quantity: number; unit: string
-    unitPrice: number; taxRate: number; netAmount: number; grossAmount: number
+    unitPrice: number; discountRate?: number; taxRate: number; netAmount: number; grossAmount: number
   }>
   totalNet: number
   totalTax: number
@@ -50,7 +50,7 @@ const S = StyleSheet.create({
   th: { fontSize: PDF_TABLE_HEADER_TEXT_SIZE, fontFamily: PDF_DOCUMENT_FONT_BOLD, color: '#6b6b80', paddingHorizontal: 2 },
   td: { fontSize: PDF_TABLE_BODY_TEXT_SIZE, lineHeight: PDF_BODY_LINE_HEIGHT, paddingHorizontal: 2 },
   pos: { width: 30 }, description: { flex: 1, paddingRight: 5 }, quantity: { width: 42, textAlign: 'right' }, unit: { width: 42 },
-  price: { width: 65, textAlign: 'right' }, tax: { width: 42, textAlign: 'right' }, total: { width: 68, textAlign: 'right' },
+  price: { width: 65, textAlign: 'right' }, discount: { width: 42, textAlign: 'right' }, tax: { width: 42, textAlign: 'right' }, total: { width: 68, textAlign: 'right' },
   totals: { marginTop: 10, marginLeft: 'auto', width: 220 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 },
   totalStrong: { fontFamily: PDF_DOCUMENT_FONT_BOLD, borderTop: '0.5 solid #d8d6d0', paddingTop: 4, marginTop: 2 },
@@ -64,6 +64,8 @@ const companyName = (company: InvoicePdfData['company']) => [company.companyName
 
 export function InvoiceDocument({ data }: { data: InvoicePdfData }) {
   const logoDimensions = getCompanyLogoDimensions(data.logoScale, data.logoSourceWidth, data.logoSourceHeight)
+  // Rabattspalte nur, wenn mindestens eine Position einen Rabatt > 0 hat (Rechnungen ohne Rabatt bleiben unverändert).
+  const hasDiscount = data.items.some((item) => (item.discountRate ?? 0) > 0)
   const title = data.invoiceNumber ? `Rechnung ${data.invoiceNumber}` : 'Rechnungsentwurf'
   return (
     <Document title={title} author={companyName(data.company)}>
@@ -91,13 +93,13 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }) {
         <View style={S.tableHeader} wrap={false}>
           <Text style={[S.th, S.pos]}>Pos.</Text><Text style={[S.th, S.description]}>Beschreibung</Text>
           <Text style={[S.th, S.quantity]}>Menge</Text><Text style={[S.th, S.unit]}>Einheit</Text>
-          <Text style={[S.th, S.price]}>Einzelpreis</Text><Text style={[S.th, S.tax]}>MwSt.</Text><Text style={[S.th, S.total]}>Netto</Text>
+          <Text style={[S.th, S.price]}>Einzelpreis</Text>{hasDiscount && <Text style={[S.th, S.discount]}>Rabatt</Text>}<Text style={[S.th, S.tax]}>MwSt.</Text><Text style={[S.th, S.total]}>Netto</Text>
         </View>
         {data.items.map((item) => (
           <View key={item.position} style={S.tableRow} wrap={false}>
             <Text style={[S.td, S.pos]}>{item.position}</Text><Text style={[S.td, S.description]}>{item.description}</Text>
             <Text style={[S.td, S.quantity]}>{item.quantity.toLocaleString('de-DE')}</Text><Text style={[S.td, S.unit]}>{item.unit}</Text>
-            <Text style={[S.td, S.price]}>{money(item.unitPrice)}</Text><Text style={[S.td, S.tax]}>{item.taxRate} %</Text><Text style={[S.td, S.total]}>{money(item.netAmount)}</Text>
+            <Text style={[S.td, S.price]}>{money(item.unitPrice)}</Text>{hasDiscount && <Text style={[S.td, S.discount]}>{item.discountRate && item.discountRate > 0 ? `${item.discountRate.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %` : '–'}</Text>}<Text style={[S.td, S.tax]}>{item.taxRate} %</Text><Text style={[S.td, S.total]}>{money(item.netAmount)}</Text>
           </View>
         ))}
         <View style={S.totals} wrap={false}>

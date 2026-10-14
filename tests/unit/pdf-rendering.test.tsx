@@ -346,11 +346,12 @@ describe('PDF-Renderer', () => {
       invoice: {
         invoiceNumber: 'RE-2026-0001',
         invoiceDate: '01.01.2026',
-        totalGross: 119,
-        paidAmount: 0,
+        totalGross: '119.00',
+        paidAmount: '0.00',
         dueDate: '15.01.2026',
       },
-      feeTotal: 119,
+      outstandingAmount: '119.00',
+      feeTotal: '119.00',
     } satisfies DunningPdfData
 
     expectPdf(await renderDunningPdf(data))

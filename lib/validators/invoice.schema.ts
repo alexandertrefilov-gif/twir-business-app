@@ -3,7 +3,22 @@
 
 import { z } from 'zod'
 import { canonicalizeOfferTextValue, isValidOfferTextValue } from '@/lib/offers/rich-text'
+import { decimalInputSchema, DISCOUNT_SPEC, QUANTITY_SPEC, UNIT_PRICE_SPEC } from '@/lib/billing/decimal-input'
+import { MoneyDecimal } from '@/lib/billing/money'
 export { calcItemAmounts, calcOfferTotals as calcInvoiceTotals } from '@/lib/validators/offer.schema'
+
+// Menge/Einzelpreis werden als Dezimal-String serverseitig streng geprüft (kein stilles Runden).
+// Ausgabe bleibt bis P4 eine Zahl für die bestehenden Services; Rückführung String→Zahl ist für
+// ≤ 2 bzw. 3 Nachkommastellen verlustfrei (Test: invoice-service-report-precision).
+const toLegacyNumber = (value: string): number => Number(value)
+
+// REQ-029 P4-B: Positionsrabatt in % (Decimal(5,2), 0–100, höchstens 2 Nachkommastellen, keine stille Rundung).
+// Ausgabe ist der kanonische Dezimal-String mit genau zwei Nachkommastellen (z. B. '0.00', '12.50').
+const toDiscountString = (value: string): string => new MoneyDecimal(value).toFixed(2)
+
+// Käuferreferenz (XRechnung BT-10): optional, getrimmt, leer → null, höchstens 255 Zeichen.
+// undefined = Feld nicht übermittelt (bestehender Wert bleibt unverändert).
+export const BUYER_REFERENCE_MAX_LENGTH = 255
 
 export const InvoiceRecipientSourceSchema = z.enum(['CUSTOMER', 'BILLING', 'CUSTOM'])
 
@@ -35,12 +50,20 @@ export const InvoiceDraftSchema = z.object({
     (value) => typeof value === 'string' ? canonicalizeOfferTextValue(value) : value,
     z.string().max(500_000).refine(isValidOfferTextValue, 'Textformat ist ungültig'),
   ).optional().nullable(),
+  buyerReference:      z.preprocess(
+    (value) => typeof value === 'string' ? (value.trim() === '' ? null : value.trim()) : value,
+    z.string()
+      .max(BUYER_REFERENCE_MAX_LENGTH, `Die Käuferreferenz darf höchstens ${BUYER_REFERENCE_MAX_LENGTH} Zeichen lang sein.`)
+      .refine((v) => !/[\u0000-\u001f\u007f]/.test(v), 'Die Käuferreferenz darf keine Steuer- oder Zeilenumbruchzeichen enthalten.')
+      .nullable(),
+  ).optional(),
   items: z.array(z.object({
     position:    z.number().int().min(1),
     description: z.string().min(1, 'Beschreibung erforderlich').max(500),
-    quantity:    z.number().positive().max(999_999),
+    quantity:    decimalInputSchema(QUANTITY_SPEC).transform(toLegacyNumber),
     unit:        z.string().max(20).default('Stk.'),
-    unitPrice:   z.number().min(0).max(99_999_999),
+    unitPrice:   decimalInputSchema(UNIT_PRICE_SPEC).transform(toLegacyNumber),
+    discountRate: decimalInputSchema(DISCOUNT_SPEC).transform(toDiscountString).default('0.00'),
     taxRate:     z.number().min(0).max(100),
     notes:       z.string().max(500).optional().nullable(),
   })).min(1, 'Mindestens eine Position erforderlich').max(100),

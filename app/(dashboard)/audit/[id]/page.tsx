@@ -5,8 +5,7 @@ import Link                from 'next/link'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { getAuditLogById } from '@/lib/services/audit-query.service'
 import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
-import { format }          from 'date-fns'
-import { de }              from 'date-fns/locale'
+import { formatBerlinDateTimeLong } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Audit-Eintrag' }
 
@@ -35,7 +34,7 @@ export default async function AuditDetailPage({ params }: { params: Promise<{ id
           <div className="card-base p-5">
             <div className="grid grid-cols-2 gap-6">
               <MetaItem label="Zeitstempel"
-                value={format(new Date(entry.createdAt), 'dd. MMMM yyyy HH:mm:ss', { locale: de })} />
+                value={formatBerlinDateTimeLong(entry.createdAt)} />
               <MetaItem label="Aktion" value={entry.action} mono />
               <MetaItem label="Entität" value={entry.entityType} />
               <MetaItem label="Entität-ID" value={entry.entityId} mono />

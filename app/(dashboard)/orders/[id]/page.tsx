@@ -5,8 +5,6 @@ import Link                   from 'next/link'
 import { OrderStatusActions } from '@/components/orders/OrderStatusActions'
 import { getOrderById }       from '@/lib/services/order.service'
 import { hasPermission, Resource, Action } from '@/lib/auth/permissions'
-import { format } from 'date-fns'
-import { de }     from 'date-fns/locale'
 import type { OrderStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { OfferRichText } from '@/components/offers/OfferRichText'
@@ -21,6 +19,7 @@ import { orderDescriptionWithOfferFallback, splitOfferTextAtPositions } from '@/
 import { OrderContentCardActions } from '@/components/orders/OrderContentCardActions'
 import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
 import { listProjectsForCustomer } from '@/lib/services/project.service'
+import { formatBerlinDate, formatBerlinDateTime, formatCalendarDate, formatCalendarDateLong } from '@/lib/utils/berlin-date'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -88,7 +87,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             </dd>
           </div>
           <MetaItem label="Auftragsdatum"
-            value={format(new Date(order.orderDate), 'dd. MMMM yyyy', { locale: de })} />
+            value={formatCalendarDateLong(order.orderDate)} />
           {order.offer && (
             <div>
               <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Angebotsbezug</dt>
@@ -99,9 +98,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               </dd>
             </div>
           )}
-          {order.startDate && <MetaItem label="Geplanter Start" value={format(new Date(order.startDate), 'dd.MM.yyyy', { locale: de })} />}
-          {order.endDate && <MetaItem label="Geplantes Ende" value={format(new Date(order.endDate), 'dd.MM.yyyy', { locale: de })} />}
-          {order.completedAt && <MetaItem label="Abgeschlossen am" value={format(new Date(order.completedAt), 'dd.MM.yyyy', { locale: de })} />}
+          {order.startDate && <MetaItem label="Geplanter Start" value={formatCalendarDate(order.startDate)} />}
+          {order.endDate && <MetaItem label="Geplantes Ende" value={formatCalendarDate(order.endDate)} />}
+          {order.completedAt && <MetaItem label="Abgeschlossen am" value={formatBerlinDate(order.completedAt)} />}
         </dl>
       </BusinessDocumentHeader>
 
@@ -202,7 +201,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <MetaItem label="Angelegt von"
                 value={`${order.createdBy.firstName} ${order.createdBy.lastName}`} />
               <MetaItem label="Angelegt am"
-                value={format(new Date(order.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+                value={formatBerlinDateTime(order.createdAt)} />
             </div>
 
             {/* Business → Project → Collaboration Release (Abschnitt 9): vor

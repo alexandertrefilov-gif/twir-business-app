@@ -2,11 +2,14 @@
 //
 // Regeln:
 //   - Keine Zahlung zu DRAFT oder CANCELLED Rechnungen
-//   - Zahlungsbetrag darf Rechnungsbetrag nicht übersteigen
+//   - Zahlungsbetrag darf den Restbetrag nicht übersteigen (exakter Dezimalvergleich, keine Toleranz) – P4-D
 //   - Nach jeder Zahlung: paidAmount neu berechnen, Status ableiten
 //   - Löschung = Soft Delete + Status-Neuberechnung
 //   - Jede Aktion → Audit-Log (PAYMENT_ADDED / PAYMENT_REMOVED)
 //   - Keine Änderung der Rechnungs-Kerndaten (isInvoiceLocked bleibt)
+//   - P4-D: Alle Beträge werden mit Dezimalarithmetik (lib/billing) gerechnet und als String gespeichert;
+//     `number` entsteht nur an der Ausgabegrenze (PaymentSummary/InvoicePaymentState). Die Zahlungssumme
+//     stammt aus den nicht gelöschten Zahlungszeilen (unter Rechnungssperre), nicht aus dem Cache `paidAmount`.
 //
 // Nutzt: buildAuditLogCreate (Phase 2), AuditAction (Phase 2),
 //        InvoiceStatus/INVOICE_LOCKED_STATUSES (Phase 2),
@@ -22,6 +25,9 @@ import {
 } from '@/types/enums'
 import { NotFoundError, BusinessRuleError } from '@/lib/auth/permissions'
 import type { PaymentCreateInput } from '@/lib/validators/payment.schema'
+import { toMoney, remainingMoney, normalizeMoneyInput, derivePaymentStatus, PAYMENT_AMOUNT_SPEC } from '@/lib/billing/payment-math'
+import { toCentString } from '@/lib/billing/money'
+import { moneyToNumber } from '@/lib/services/money-output'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -43,26 +49,14 @@ export interface InvoicePaymentState {
   status:        string
 }
 
+/** Eingabe für addPayment: Betrag als Dezimal-String (ältere Aufrufer dürfen eine Zahl übergeben; sie wird streng geprüft). */
+export type PaymentAddInput = Omit<PaymentCreateInput, 'amount'> & { amount: string | number }
+
 // ── Helpers ───────────────────────────────────────────────────
 
-/**
- * Berechnet den neuen Rechnungsstatus nach Zahlung.
- * Regeln:
- *   paidAmount >= totalGross → PAID
- *   paidAmount > 0           → PARTIALLY_PAID
- *   paidAmount = 0 + overdue  → OVERDUE bleibt
- *   paidAmount = 0            → SENT (zurücksetzen)
- */
-function deriveInvoiceStatus(
-  totalGross:  number,
-  paidAmount:  number,
-  currentStatus: string,
-): InvoiceStatus {
-  if (paidAmount >= totalGross) return InvoiceStatus.PAID
-  if (paidAmount > 0)           return InvoiceStatus.PARTIALLY_PAID
-  // No payments left → revert to SENT or OVERDUE
-  if (currentStatus === InvoiceStatus.OVERDUE) return InvoiceStatus.OVERDUE
-  return InvoiceStatus.SENT
+/** Statusableitung nach Zahlungsänderung – exakte Dezimallogik in lib/billing (derivePaymentStatus). */
+function deriveInvoiceStatus(totalGross: string, paid: string, currentStatus: string): InvoiceStatus {
+  return derivePaymentStatus(totalGross, paid, currentStatus) as InvoiceStatus
 }
 
 // ── GET ───────────────────────────────────────────────────────
@@ -93,16 +87,13 @@ export async function getInvoicePaymentState(
   })
   if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
 
-  const totalGross  = invoice.totalGross.toNumber()
-  const paidAmount  = invoice.paidAmount.toNumber()
-
   return {
-    totalGross,
-    paidAmount,
-    remainingAmount: Math.round((totalGross - paidAmount) * 100) / 100,
+    totalGross:      moneyToNumber(toMoney(invoice.totalGross)),
+    paidAmount:      moneyToNumber(toMoney(invoice.paidAmount)),
+    remainingAmount: moneyToNumber(remainingMoney(invoice.totalGross, invoice.paidAmount)),
     payments: invoice.payments.map((p) => ({
       id:          p.id,
-      amount:      p.amount.toNumber(),
+      amount:      moneyToNumber(toMoney(p.amount)),
       paymentDate: p.paymentDate,
       method:      p.method,
       reference:   p.reference,
@@ -116,10 +107,16 @@ export async function getInvoicePaymentState(
 // ── ADD PAYMENT ───────────────────────────────────────────────
 
 export async function addPayment(
-  data:      PaymentCreateInput,
+  data:      PaymentAddInput,
   userId:    string,
   userEmail: string,
 ): Promise<string> {
+  // P4-D: Betrag serverseitig streng prüfen (Dezimal-String, höchstens 2 Nachkommastellen, > 0), nie runden.
+  const checkedAmount = normalizeMoneyInput(data.amount, PAYMENT_AMOUNT_SPEC)
+  if (!checkedAmount.ok) throw new BusinessRuleError(checkedAmount.message)
+  const amountText = checkedAmount.value
+  const amount     = toMoney(amountText)
+
   return prisma.$transaction(async (tx) => {
     // Rechnungszeile sperren — verhindert, dass zwei parallele Zahlungsbuchungen
     // sich gegenseitig beim Neuberechnen von paidAmount/Status überschreiben (lost update).
@@ -151,13 +148,17 @@ export async function addPayment(
       throw new BusinessRuleError('Diese Rechnung ist bereits vollständig bezahlt.')
     }
 
-    const totalGross      = invoice.totalGross.toNumber()
-    const currentPaid     = invoice.paidAmount.toNumber()
-    const remaining       = Math.round((totalGross - currentPaid) * 100) / 100
+    // Zahlungssumme aus den aktiven Zahlungszeilen (unter Rechnungssperre) – nicht aus dem Cache paidAmount.
+    const activeSum = await tx.payment.aggregate({
+      where: { invoiceId: data.invoiceId, deletedAt: null },
+      _sum:  { amount: true },
+    })
+    const currentPaid = toMoney(activeSum._sum.amount ?? '0')
+    const remaining   = remainingMoney(invoice.totalGross, currentPaid)
 
-    if (data.amount > remaining + 0.005) {
+    if (amount.gt(remaining)) {
       throw new BusinessRuleError(
-        `Zahlungsbetrag (${data.amount.toFixed(2)} €) übersteigt den Restbetrag (${remaining.toFixed(2)} €).`,
+        `Zahlungsbetrag (${amountText} €) übersteigt den Restbetrag (${toCentString(remaining)} €).`,
       )
     }
 
@@ -165,7 +166,7 @@ export async function addPayment(
     const payment = await tx.payment.create({
       data: {
         invoiceId:   data.invoiceId,
-        amount:      data.amount,
+        amount:      amountText,
         paymentDate: data.paymentDate,
         method:      data.method   ?? null,
         reference:   data.reference ?? null,
@@ -173,13 +174,9 @@ export async function addPayment(
       },
     })
 
-    // Recalculate paid total from all non-deleted payments
-    const aggResult = await tx.payment.aggregate({
-      where: { invoiceId: data.invoiceId, deletedAt: null },
-      _sum:  { amount: true },
-    })
-    const newPaidAmount = aggResult._sum.amount?.toNumber() ?? 0
-    const newStatus     = deriveInvoiceStatus(totalGross, newPaidAmount, invoice.status)
+    const newPaid       = currentPaid.plus(amount)
+    const newPaidAmount = toCentString(newPaid)
+    const newStatus     = deriveInvoiceStatus(invoice.totalGross.toFixed(), newPaidAmount, invoice.status)
 
     await tx.invoice.update({
       where: { id: data.invoiceId },
@@ -196,7 +193,7 @@ export async function addPayment(
       entityId:   data.invoiceId,
       newValue: {
         paymentId:    payment.id,
-        amount:       data.amount,
+        amount:       amountText,
         paymentDate:  data.paymentDate,
         newPaidAmount,
         newStatus,
@@ -253,15 +250,14 @@ export async function removePayment(
       data:  { deletedAt: new Date() },
     })
 
-    // Recalculate
+    // Recalculate (exakt, aus den verbleibenden aktiven Zahlungszeilen)
     const aggResult = await tx.payment.aggregate({
       where: { invoiceId: payment.invoiceId, deletedAt: null },
       _sum:  { amount: true },
     })
-    const newPaidAmount = aggResult._sum.amount?.toNumber() ?? 0
-    const totalGross    = payment.invoice.totalGross.toNumber()
+    const newPaidAmount = toCentString(toMoney(aggResult._sum.amount ?? '0'))
     const newStatus     = deriveInvoiceStatus(
-      totalGross,
+      payment.invoice.totalGross.toFixed(),
       newPaidAmount,
       payment.invoice.status,
     )
@@ -278,7 +274,7 @@ export async function removePayment(
       entityId:   payment.invoiceId,
       oldValue: {
         paymentId:    paymentId,
-        amount:       payment.amount.toNumber(),
+        amount:       toCentString(toMoney(payment.amount)),
         invoiceNumber: payment.invoice.invoiceNumber,
       },
       newValue:  { newPaidAmount, newStatus },
@@ -359,13 +355,13 @@ export async function getPaymentJournal(
       invoiceId:     p.invoice.id,
       invoiceNumber: p.invoice.invoiceNumber,
       customerName:  p.invoice.customer.name,
-      amount:        p.amount.toNumber(),
+      amount:        moneyToNumber(toMoney(p.amount)),
       paymentDate:   p.paymentDate,
       method:        p.method,
       reference:     p.reference,
       createdAt:     p.createdAt,
     })),
     total,
-    totalAmount: aggResult._sum.amount?.toNumber() ?? 0,
+    totalAmount: moneyToNumber(toMoney(aggResult._sum.amount ?? '0')),
   }
 }

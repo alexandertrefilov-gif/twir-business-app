@@ -1,4 +1,3 @@
-import { format } from 'date-fns'
 import type { RoleName } from '@/types/enums'
 import type { ServiceReportPdfData } from '@/lib/pdf-templates/service-report.template'
 import { getServiceReportById } from '@/lib/services/service-report.service'
@@ -8,6 +7,7 @@ import type { ServiceItemType } from '@/lib/validators/service-report.schema'
 import { calcReportItemNet, calcReportTotal, type ServiceReportCreateInput } from '@/lib/validators/service-report.schema'
 import { prisma } from '@/lib/db/prisma'
 import { NotFoundError } from '@/lib/auth/permissions'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 type CustomerSnapshot = {
   name?: string
@@ -47,7 +47,7 @@ export async function getServiceReportPdfData(
 
   return {
     reportNumber: report.reportNumber,
-    reportDate: format(report.reportDate, 'dd.MM.yyyy'),
+    reportDate: formatCalendarDate(report.reportDate),
     title: report.title,
     description: report.description,
     logoDataUri: logo?.dataUri,
@@ -117,7 +117,7 @@ export async function getServiceReportDraftPdfData(
 
   return {
     reportNumber: existing?.reportNumber ?? 'Vorschau',
-    reportDate: format(draft.reportDate, 'dd.MM.yyyy'),
+    reportDate: formatCalendarDate(draft.reportDate),
     title: draft.title,
     description: draft.description,
     logoDataUri: logo?.dataUri,
