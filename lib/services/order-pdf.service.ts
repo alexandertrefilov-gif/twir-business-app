@@ -5,6 +5,7 @@ import { getCompanySnapshot } from '@/lib/services/settings.service'
 import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.service'
 import type { OrderPdfOptions } from '@/lib/validators/order-pdf.schema'
 import { orderDescriptionWithOfferFallback } from '@/lib/offers/rich-text'
+import { prisma } from '@/lib/db/prisma'
 
 type CustomerSnapshot = {
   name?: string
@@ -24,6 +25,13 @@ export async function getOrderPdfData(
   const snapshot = order.customerSnapshot as CustomerSnapshot | null
   const customer = snapshot ?? order.customer
   const contact = order.customer.contacts[0]
+  // WF-1A: Kundenbestellung getrennt lesen (Order-Modell und order.service bleiben unverändert).
+  const purchaseOrder = options.showCustomerOrder
+    ? await prisma.customerPurchaseOrder.findFirst({
+        where: { OR: [{ orderId }, ...(order.offerId ? [{ offerId: order.offerId }] : [])] },
+        select: { orderNumber: true, orderDate: true },
+      })
+    : null
 
   return {
     options,
@@ -42,6 +50,8 @@ export async function getOrderPdfData(
       endDate: order.endDate ? format(order.endDate, 'dd.MM.yyyy') : null,
     }),
     ...(options.showOfferReference && { offerNumber: order.offer?.offerNumber }),
+    ...(purchaseOrder?.orderNumber?.trim() && { customerOrderNumber: purchaseOrder.orderNumber.trim() }),
+    ...(purchaseOrder?.orderDate && { customerOrderDate: format(purchaseOrder.orderDate, 'dd.MM.yyyy') }),
     logoDataUri: logo?.dataUri,
     logoScale: company.logoScale,
     logoSourceWidth: logo?.width ?? company.logoWidth ?? undefined,

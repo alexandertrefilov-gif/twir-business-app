@@ -6,6 +6,7 @@ import { EMPLOYEE_ORDER_PDF_OPTIONS, FULL_ORDER_PDF_OPTIONS } from '@/lib/valida
 vi.mock('@/lib/services/order.service', () => ({ getOrderById: vi.fn() }))
 vi.mock('@/lib/services/settings.service', () => ({ getCompanySnapshot: vi.fn() }))
 vi.mock('@/lib/services/company-logo-rendering.service', () => ({ loadCompanyLogoForPdf: vi.fn() }))
+vi.mock('@/lib/db/prisma', () => ({ prisma: { customerPurchaseOrder: { findFirst: vi.fn().mockResolvedValue(null) } } }))
 
 import { getOrderById } from '@/lib/services/order.service'
 import { getCompanySnapshot } from '@/lib/services/settings.service'

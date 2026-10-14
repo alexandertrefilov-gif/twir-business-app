@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { ORDER_CONFIRMATION_LABEL } from '@/lib/workflow/document-labels'
 import path from 'node:path'
 import { prisma } from '@/lib/db/prisma'
 import { writeAuditLog } from '@/lib/services/audit.service'
@@ -77,7 +78,7 @@ async function loadContext(kind: ArchivableDocumentKind, id: string): Promise<Ar
 
 async function render(kind: ArchivableDocumentKind, id: string, actor: Actor) {
   if (kind === 'offer') { const data = await getOfferPdfData(id); return { data, pdf: await renderOfferPdf(data), label: 'Angebot' } }
-  if (kind === 'order') { const data = await getOrderPdfData(id, FULL_ORDER_PDF_OPTIONS); return { data, pdf: await renderOrderPdf(data), label: 'Auftrag' } }
+  if (kind === 'order') { const data = await getOrderPdfData(id, FULL_ORDER_PDF_OPTIONS); return { data, pdf: await renderOrderPdf(data), label: ORDER_CONFIRMATION_LABEL } }
   if (kind === 'serviceReport') { const data = await getServiceReportPdfData(id, actor.userId, actor.role); return { data, pdf: await renderServiceReportPdf(data), label: 'Leistungsnachweis' } }
   const data = await getInvoicePdfData(id); return { data, pdf: await renderInvoicePdf(data), label: 'Rechnung' }
 }

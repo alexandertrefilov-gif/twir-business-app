@@ -28,6 +28,7 @@ export const OrderPdfOptionsSchema = z.object({
   showInternalNotes: option,
   showServicePeriod: option,
   showOfferReference: option,
+  showCustomerOrder: option,
 })
 
 export type OrderPdfOptions = z.infer<typeof OrderPdfOptionsSchema>
@@ -49,6 +50,8 @@ export const EMPLOYEE_ORDER_PDF_OPTIONS: OrderPdfOptions = {
   showInternalNotes: false,
   showServicePeriod: true,
   showOfferReference: true,
+  // WF-1A (O-3): Kundenbestellung ist auch im Mitarbeiter-PDF standardmäßig sichtbar.
+  showCustomerOrder: true,
 }
 
 export const FULL_ORDER_PDF_OPTIONS: OrderPdfOptions = Object.fromEntries(

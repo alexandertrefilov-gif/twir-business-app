@@ -29,14 +29,15 @@ describe('einheitliche Auftragsdetailseite', () => {
     }
   })
 
-  it('zeigt vorhandene Kunden- und Auftragsdaten responsiv im Kopf', () => {
-    for (const value of ['order.customer.name', 'Auftragsdatum', 'Angebotsbezug', 'Geplanter Start', 'Geplantes Ende', 'Abgeschlossen am']) {
-      expect(header).toContain(value)
+  it('zeigt vorhandene Kunden- und Auftragsdaten responsiv im Kopf (WF-1A: gemeinsame Kopfkomponente)', () => {
+    const meta = source('components/documents/BusinessDocumentMeta.tsx')
+    expect(header).toContain('<BusinessDocumentMeta model={headerModel} />')
+    for (const value of ['Auftragsdatum', 'Geplanter Start', 'Geplantes Ende', 'Abgeschlossen am']) {
+      expect(order).toContain(`label: '${value}'`)
     }
-    expect(header).toContain('sm:grid-cols-2 xl:grid-cols-4')
-    expect(header).toContain('order.startDate &&')
-    expect(header).toContain('order.endDate &&')
-    expect(header).toContain('order.completedAt &&')
+    expect(meta).toContain('customer.name')
+    expect(meta).toContain('sm:grid-cols-2 xl:grid-cols-4')
+    expect(source('lib/workflow/document-header.ts')).toContain("label: 'Angebotsbezug'")
   })
 
   it('entfernt die doppelte Metadatenkarte aus dem Dokumentbereich', () => {

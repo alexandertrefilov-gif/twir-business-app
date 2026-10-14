@@ -20,7 +20,7 @@ export function OrderPdfDialog({ orderId }: { orderId: string }) {
           aria-describedby={undefined}
         >
           <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
-            <Dialog.Title className="text-sm font-600 text-foreground">Auftragsvorschau</Dialog.Title>
+            <Dialog.Title className="text-sm font-600 text-foreground">Vorschau Auftragsbestätigung</Dialog.Title>
             <Dialog.Close asChild>
               <button
                 type="button"
@@ -34,7 +34,7 @@ export function OrderPdfDialog({ orderId }: { orderId: string }) {
           </div>
           <iframe
             src={`/api/orders/${orderId}/pdf`}
-            title="PDF-Vorschau des Auftrags"
+            title="PDF-Vorschau der Auftragsbestätigung"
             className="min-h-0 w-full flex-1 bg-stone-100"
           />
         </Dialog.Content>

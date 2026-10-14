@@ -17,6 +17,9 @@ import { requirePagePermission } from '@/lib/auth/permissions'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
+import { BusinessDocumentMeta } from '@/components/documents/BusinessDocumentMeta'
+import { buildBusinessDocumentHeader } from '@/lib/workflow/document-header'
+import { getHeaderPermissions } from '@/lib/workflow/document-header-permissions'
 import { orderDescriptionWithOfferFallback, splitOfferTextAtPositions } from '@/lib/offers/rich-text'
 import { OrderContentCardActions } from '@/components/orders/OrderContentCardActions'
 import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
@@ -45,6 +48,19 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   ])
   const availableProjects = canManageProject && !process.project ? await listProjectsForCustomer(order.customerId) : []
 
+  const headerModel = buildBusinessDocumentHeader({
+    current: 'order',
+    customer: order.customer,
+    process,
+    permissions: await getHeaderPermissions(processPermissions),
+    dates: [
+      { label: 'Auftragsdatum', value: order.orderDate, pattern: 'dd. MMMM yyyy' },
+      { label: 'Geplanter Start', value: order.startDate },
+      { label: 'Geplantes Ende', value: order.endDate },
+      { label: 'Abgeschlossen am', value: order.completedAt },
+    ],
+  })
+
   const items = order.items.map((i) => ({
     ...i,
     quantity:    i.quantity.toNumber(),
@@ -72,37 +88,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         titleId="order-detail-title"
         detailsLabel="Kunden- und Auftragsdaten"
       >
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
-            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
-            <dd className="mt-0.5">
-              <Link href={`/customers/${order.customerId}`} className="text-sm font-600 text-blue-700 hover:underline">
-                {order.customer.name}
-              </Link>
-              {(order.customer.street || order.customer.city) && (
-                <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
-                  {order.customer.street} {order.customer.houseNumber}<br />
-                  {order.customer.postalCode} {order.customer.city}
-                </address>
-              )}
-            </dd>
-          </div>
-          <MetaItem label="Auftragsdatum"
-            value={format(new Date(order.orderDate), 'dd. MMMM yyyy', { locale: de })} />
-          {order.offer && (
-            <div>
-              <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Angebotsbezug</dt>
-              <dd className="mt-0.5">
-                <Link href={`/offers/${order.offer.id}`} className="text-sm text-blue-700 hover:underline mono">
-                  {order.offer.offerNumber}
-                </Link>
-              </dd>
-            </div>
-          )}
-          {order.startDate && <MetaItem label="Geplanter Start" value={format(new Date(order.startDate), 'dd.MM.yyyy', { locale: de })} />}
-          {order.endDate && <MetaItem label="Geplantes Ende" value={format(new Date(order.endDate), 'dd.MM.yyyy', { locale: de })} />}
-          {order.completedAt && <MetaItem label="Abgeschlossen am" value={format(new Date(order.completedAt), 'dd.MM.yyyy', { locale: de })} />}
-        </dl>
+        <BusinessDocumentMeta model={headerModel} />
       </BusinessDocumentHeader>
 
       <div className="p-4 sm:p-6">

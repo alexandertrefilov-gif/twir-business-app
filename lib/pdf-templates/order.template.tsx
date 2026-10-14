@@ -29,6 +29,7 @@ import {
   OFFER_RICH_SECTION_TITLE_STYLE,
 } from '@/lib/pdf-templates/offer.template'
 import { splitOfferTextAtPositions } from '@/lib/offers/rich-text'
+import { formatCustomerOrderReference, ORDER_CONFIRMATION_LABEL } from '@/lib/workflow/document-labels'
 
 export interface OrderPdfData {
   orderNumber?: string
@@ -38,6 +39,8 @@ export interface OrderPdfData {
   startDate?: string | null
   endDate?: string | null
   offerNumber?: string | null
+  customerOrderNumber?: string | null
+  customerOrderDate?: string | null
   logoDataUri?: string
   logoScale?: number
   logoSourceWidth?: number
@@ -165,8 +168,9 @@ export function OrderDocument({ data }: { data: OrderPdfData }) {
     data.logoSourceHeight,
   )
   const content = splitOfferTextAtPositions(data.description)
+  const customerOrderReference = formatCustomerOrderReference(data.customerOrderNumber, data.customerOrderDate)
   return (
-    <Document title={`Auftrag ${data.orderNumber ?? ''}`} author={c.companyName}>
+    <Document title={`${ORDER_CONFIRMATION_LABEL} ${data.orderNumber ?? ''}`} author={c.companyName}>
       <Page size="A4" style={S.page}>
         {data.logoDataUri && (
           <View style={S.logoRow}>
@@ -194,14 +198,15 @@ export function OrderDocument({ data }: { data: OrderPdfData }) {
           </View>
           <View style={S.meta}>
             <Text style={S.metaHeading}>
-              Auftrag{data.orderNumber ? ` ${data.orderNumber}` : ''}
+              {ORDER_CONFIRMATION_LABEL}{data.orderNumber ? ` ${data.orderNumber}` : ''}
             </Text>
             {data.orderDate && <Text style={S.metaText}>Datum: {data.orderDate}</Text>}
             {data.offerNumber && <Text style={S.metaText}>Aus Angebot: {data.offerNumber}</Text>}
           </View>
         </View>
 
-        <Text style={S.documentType}>Auftrag</Text>
+        <Text style={S.documentType}>{ORDER_CONFIRMATION_LABEL}</Text>
+        {customerOrderReference && <Text style={S.period}>{customerOrderReference}</Text>}
         {data.title && <Text style={S.title} minPresenceAhead={28}>{data.title}</Text>}
         {content.before && (
           <View style={S.descriptionBlock}>

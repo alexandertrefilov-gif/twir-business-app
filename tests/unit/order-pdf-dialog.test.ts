@@ -11,7 +11,7 @@ describe('Auftragsvorschau im Workflow', () => {
   it('zeigt die Vorschau im selben Dialog statt in einem neuen Browserfenster', () => {
     expect(source).toContain('<Dialog.Root>')
     expect(source).toContain('<iframe')
-    expect(source).toContain('title="PDF-Vorschau des Auftrags"')
+    expect(source).toContain('title="PDF-Vorschau der Auftragsbestätigung"')
     expect(source).not.toContain('target="_blank"')
   })
 

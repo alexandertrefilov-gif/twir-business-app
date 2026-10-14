@@ -13,6 +13,9 @@ import { OfferRichText } from '@/components/offers/OfferRichText'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
+import { BusinessDocumentMeta } from '@/components/documents/BusinessDocumentMeta'
+import { buildBusinessDocumentHeader } from '@/lib/workflow/document-header'
+import { getHeaderPermissions } from '@/lib/workflow/document-header-permissions'
 import { buildServiceReportDocumentSections } from '@/lib/documents/service-report-document'
 import { ServiceReportFinalizeButton } from '@/components/service-reports/ServiceReportFinalizeButton'
 
@@ -32,6 +35,14 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
   ])
 
   const preparedBy = `${report.createdBy.firstName} ${report.createdBy.lastName}`
+  const headerModel = buildBusinessDocumentHeader({
+    current: 'serviceReport',
+    customer: report.order.customer,
+    process,
+    permissions: await getHeaderPermissions(processPermissions),
+    dates: [{ label: 'Leistungsdatum', value: report.reportDate, pattern: 'dd. MMMM yyyy' }],
+    extraFields: [{ label: 'Erfasst von', value: preparedBy }],
+  })
   // The surrounding split layout is a Client Component. Convert Prisma
   // class instances before they can become part of its React payload.
   const serializableItems = report.items.map((item) => ({
@@ -62,38 +73,7 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
         titleId="service-report-detail-title"
         detailsLabel="Kunden- und Auftragsdaten"
       >
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
-            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
-            <dd className="mt-0.5">
-              <Link href={`/customers/${report.order.customer.id}`} className="text-sm font-600 text-blue-700 hover:underline">
-                {report.order.customer.name}
-              </Link>
-              {(report.order.customer.street || report.order.customer.city) && (
-                <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
-                  {report.order.customer.street} {report.order.customer.houseNumber}<br />
-                  {report.order.customer.postalCode} {report.order.customer.city}
-                </address>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Auftrag</dt>
-            <dd className="mt-0.5">
-              <Link href={`/orders/${report.order.id}`} className="text-sm text-blue-700 hover:underline mono">{report.order.orderNumber}</Link>
-            </dd>
-          </div>
-          <MetaItem label="Leistungsdatum" value={format(new Date(report.reportDate), 'dd. MMMM yyyy', { locale: de })} />
-          <MetaItem label="Erfasst von" value={preparedBy} />
-          {report.order.offer && processPermissions.readOffer && (
-            <div>
-              <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Angebotsbezug</dt>
-              <dd className="mt-0.5">
-                <Link href={`/offers/${report.order.offer.id}`} className="text-sm text-blue-700 hover:underline mono">{report.order.offer.offerNumber}</Link>
-              </dd>
-            </div>
-          )}
-        </dl>
+        <BusinessDocumentMeta model={headerModel} />
       </BusinessDocumentHeader>
 
       <div className="p-6">
@@ -150,15 +130,6 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
 
         </BusinessDocumentLayout>
       </div>
-    </div>
-  )
-}
-
-function MetaItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 text-sm text-foreground">{value}</dd>
     </div>
   )
 }

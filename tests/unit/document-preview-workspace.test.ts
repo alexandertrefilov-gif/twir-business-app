@@ -58,7 +58,7 @@ describe('A4-Dokumentvorschau', () => {
   })
 
   it('bewahrt fachliche Dokumentdaten und unveränderte Workflow-Aufrufe', () => {
-    for (const value of ['Kunde', 'Auftragsdatum', 'Abgeschlossen', 'Angebotsbezug', 'Thema und Beschreibung', 'Positionen']) {
+    for (const value of ['Kunde', 'Auftragsdatum', 'Abgeschlossen', 'Thema und Beschreibung', 'Positionen']) {
       expect(orderPageSource).toContain(value)
     }
     expect(orderPageSource).toContain("currentDocument={{ type: 'order', id: order.id }}")

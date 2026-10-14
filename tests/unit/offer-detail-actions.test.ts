@@ -22,15 +22,17 @@ describe('aufgeräumte Angebotsdetailseite', () => {
     expect(header).not.toContain('Angebote')
   })
 
-  it('zeigt Kunden- und vorhandene Auftragsdaten in der rechten Karte', () => {
+  it('zeigt Kunden- und vorhandene Auftragsdaten in der rechten Karte (WF-1A: gemeinsame Kopfkomponente)', () => {
+    const meta = source('components/documents/BusinessDocumentMeta.tsx')
     expect(header).toContain('detailsLabel="Kunden- und Auftragsdaten"')
-    expect(header).toContain('offer.customer.name')
-    expect(header).toContain('Angebotsdatum')
-    expect(header).toContain('offer.order &&')
-    expect(header).toContain('Auftragsdatum')
-    expect(header).toContain('offer.order?.completedAt')
-    expect(header).toContain('sm:grid-cols-2 xl:grid-cols-4')
-    expect(header).toContain('<dl className=')
+    expect(header).toContain('<BusinessDocumentMeta model={headerModel} />')
+    for (const label of ['Angebotsdatum', 'Auftragsdatum', 'Abgeschlossen', 'Angenommen am', 'Versendet am', 'Gültig bis']) {
+      expect(detail).toContain(label)
+    }
+    expect(detail).toContain('offer.order?.completedAt')
+    expect(meta).toContain('customer.name')
+    expect(meta).toContain('sm:grid-cols-2 xl:grid-cols-4')
+    expect(meta).toContain('<dl className=')
   })
 
   it('stellt beide Karten auf Desktop nebeneinander und kompakt dar', () => {
@@ -41,10 +43,11 @@ describe('aufgeräumte Angebotsdetailseite', () => {
     expect(sharedHeader).not.toContain('min-h-')
   })
 
-  it('ordnet Versand und Annahme sowie Auftragsdaten wie vorgegeben an', () => {
-    expect(header).toContain('xl:col-start-2 xl:row-start-2')
-    expect(header).toContain('xl:col-start-3 xl:row-start-2')
-    expect(header).toContain('xl:col-start-4 xl:row-start-2')
+  it('ordnet Versand, Annahme und Auftragsdaten in fester Reihenfolge an', () => {
+    const order = ['Angebotsdatum', 'Gültig bis', 'Versendet am', 'Angenommen am', 'Auftragsdatum', 'Abgeschlossen']
+    const positions = order.map((label) => detail.indexOf(`label: '${label}'`))
+    expect(positions.every((p) => p > 0)).toBe(true)
+    expect([...positions].sort((x, y) => x - y)).toEqual(positions)
   })
 
   it('verwendet die vorhandenen Vorschauwege innerhalb des Workflows', () => {

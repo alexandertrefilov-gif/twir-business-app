@@ -18,6 +18,9 @@ import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-p
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
+import { BusinessDocumentMeta } from '@/components/documents/BusinessDocumentMeta'
+import { buildBusinessDocumentHeader } from '@/lib/workflow/document-header'
+import { getHeaderPermissions } from '@/lib/workflow/document-header-permissions'
 import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 import { CustomerPurchaseOrderDialog } from '@/components/offers/CustomerPurchaseOrderDialog'
 import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
@@ -56,6 +59,20 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
     getBusinessProcessPermissions(),
   ])
   const availableProjects = canManageProject && !process.project ? await listProjectsForCustomer(offer.customerId) : []
+  const headerModel = buildBusinessDocumentHeader({
+    current: 'offer',
+    customer: offer.customer,
+    process,
+    permissions: await getHeaderPermissions(processPermissions),
+    dates: [
+      { label: 'Angebotsdatum', value: offer.offerDate, pattern: 'dd. MMMM yyyy' },
+      { label: 'Gültig bis', value: offer.validUntil, pattern: 'dd. MMMM yyyy' },
+      { label: 'Versendet am', value: offer.sentAt, pattern: 'dd.MM.yyyy HH:mm' },
+      { label: 'Angenommen am', value: offer.acceptedAt },
+      { label: 'Auftragsdatum', value: offer.order?.orderDate, pattern: 'dd. MMMM yyyy' },
+      { label: 'Abgeschlossen', value: offer.order?.completedAt },
+    ],
+  })
 
   // Compute per-item amts and totals from stored values
   const items = offer.items.map((item) => ({
@@ -91,42 +108,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
         titleId="offer-detail-title"
         detailsLabel="Kunden- und Auftragsdaten"
       >
-            <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
-                <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
-                <dd className="mt-0.5">
-                  <Link href={`/customers/${offer.customerId}`} className="text-sm font-600 text-blue-700 hover:underline">
-                    {offer.customer.name}
-                  </Link>
-                  {(offer.customer.street || offer.customer.city) && (
-                    <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
-                      {offer.customer.street} {offer.customer.houseNumber}<br />
-                      {offer.customer.postalCode} {offer.customer.city}
-                    </address>
-                  )}
-                  {offer.customer.vatId && <p className="mt-1 text-xs text-muted-foreground mono">{offer.customer.vatId}</p>}
-                </dd>
-              </div>
-
-              <MetaItem label="Angebotsdatum"
-                value={format(new Date(offer.offerDate), 'dd. MMMM yyyy', { locale: de })} />
-              {offer.validUntil && <MetaItem label="Gültig bis"
-                value={format(new Date(offer.validUntil), 'dd. MMMM yyyy', { locale: de })} />}
-              {offer.sentAt && <MetaItem label="Versendet am"
-                value={format(new Date(offer.sentAt), 'dd.MM.yyyy HH:mm', { locale: de })} />}
-              {offer.acceptedAt && <div className="xl:col-start-4 xl:row-start-2">
-                <MetaItem label="Angenommen am"
-                  value={format(new Date(offer.acceptedAt), 'dd.MM.yyyy', { locale: de })} />
-              </div>}
-              {offer.order && <div className="xl:col-start-2 xl:row-start-2">
-                <MetaItem label="Auftragsdatum"
-                  value={format(new Date(offer.order.orderDate), 'dd. MMMM yyyy', { locale: de })} />
-              </div>}
-              {offer.order?.completedAt && <div className="xl:col-start-3 xl:row-start-2">
-                <MetaItem label="Abgeschlossen"
-                  value={format(new Date(offer.order.completedAt), 'dd.MM.yyyy', { locale: de })} />
-              </div>}
-            </dl>
+            <BusinessDocumentMeta model={headerModel} />
       </BusinessDocumentHeader>
 
       <div className="offer-standard-font p-6">

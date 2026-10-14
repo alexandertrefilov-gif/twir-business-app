@@ -27,7 +27,7 @@ const MIME_ICONS: Record<string, string> = {
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   OFFER_PDF:          'Angebot-PDF',
-  ORDER_PDF:          'Auftrags-PDF',
+  ORDER_PDF:          'Auftragsbestätigung (PDF)',
   INVOICE_PDF:        'Rechnungs-PDF',
   SERVICE_REPORT_PDF: 'Leistungsnachweis',
   ORDER_CONFIRMATION: 'Kundenbestätigung Auftrag',
