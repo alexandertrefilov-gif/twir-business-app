@@ -1,0 +1,84 @@
+// REQ-029 P5-3 Phase C – Identitätsprüfung (NUR LESEND). Wird in Schritt 1 ausschließlich ERSTELLT, nicht ausgeführt.
+// Aufruf (erst nach Freigabe von Schritt 2), Node ≥ 20, im Repo-Worktree:
+//   P53_REPO=<worktree> P53_CONFIRM_DB=twir_g6_test DATABASE_URL='<URL auf localhost:5432/twir_g6_test>' node identity-check.mjs
+// Alle URL-Guards laufen VOR dem Import des Prisma-Clients, also vor jeder Verbindung.
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
+
+const EXPECT_DB = 'twir_g6_test'
+const FORBIDDEN_DB = /business_webapp/i
+const FORBIDDEN_QUERY_PARAMS = ['host', 'hostaddr', 'port', 'dbname', 'service', 'options']
+const fail = (m) => { console.error(m); process.exit(2) }
+
+const raw = process.env.DATABASE_URL
+const repo = process.env.P53_REPO
+if (!repo) fail('ABBRUCH: P53_REPO nicht gesetzt.')
+if (!raw) fail('ABBRUCH: DATABASE_URL nicht gesetzt.')
+if (FORBIDDEN_DB.test(raw)) fail('ABBRUCH: DATABASE_URL verweist auf business_webapp (ausdrücklich verboten).')
+if (FORBIDDEN_DB.test(process.env.P53_CONFIRM_DB ?? '')) fail('ABBRUCH: P53_CONFIRM_DB verweist auf business_webapp.')
+if (process.env.P53_CONFIRM_DB !== EXPECT_DB) fail(`ABBRUCH: P53_CONFIRM_DB muss '${EXPECT_DB}' sein.`)
+let u
+try { u = new URL(raw) } catch { fail('ABBRUCH: DATABASE_URL ist keine gültige URL.') }
+if (u.protocol !== 'postgresql:' && u.protocol !== 'postgres:') fail(`ABBRUCH: Protokoll '${u.protocol}' nicht erlaubt.`)
+if (!['localhost', '127.0.0.1'].includes(u.hostname)) fail(`ABBRUCH: Host '${u.hostname}' nicht erlaubt.`)
+if ((u.port || '5432') !== '5432') fail(`ABBRUCH: Port '${u.port}' nicht erwartet (5432).`)
+const db = decodeURIComponent(u.pathname.replace(/^\//, ''))
+if (db !== EXPECT_DB) fail(`ABBRUCH: Datenbank '${db}' ist nicht '${EXPECT_DB}'.`)
+for (const k of u.searchParams.keys()) if (FORBIDDEN_QUERY_PARAMS.includes(k.toLowerCase())) fail(`ABBRUCH: URL-Parameter '${k}' nicht erlaubt.`)
+
+const require = createRequire(resolve(repo, 'package.json'))
+const { PrismaClient } = require('@prisma/client')
+const prisma = new PrismaClient({ datasources: { db: { url: raw } } })
+const problems = []
+const out = (k, v) => console.log(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+
+try {
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY')
+    const who = (await tx.$queryRawUnsafe('SELECT current_database() AS db, inet_server_port()::int AS port, current_setting(\'transaction_read_only\') AS ro, current_setting(\'TimeZone\') AS tz, version() AS v'))[0]
+    out('Verbindung', who)
+    if (who.db !== EXPECT_DB) problems.push(`current_database() = ${who.db}`)
+    if (who.port !== 5432) problems.push(`inet_server_port() = ${who.port}`)
+    if (who.ro !== 'on') problems.push('Transaktion nicht READ ONLY')
+
+    const cols = await tx.$queryRawUnsafe(`SELECT table_name, column_name, data_type FROM information_schema.columns
+      WHERE (table_name='dunning_notices') OR (table_name='invoices' AND column_name IN ('sent_at','due_date','total_gross','paid_amount','type','status','original_invoice_id'))
+      ORDER BY table_name, ordinal_position`)
+    out('Spalten dunning_notices/invoices', cols.map((c) => `${c.table_name}.${c.column_name}:${c.data_type}`))
+    const need = ['dunning_notices.invoice_id', 'dunning_notices.level', 'dunning_notices.sent_at', 'dunning_notices.due_date', 'dunning_notices.fee', 'dunning_notices.deleted_at', 'invoices.sent_at', 'invoices.due_date']
+    for (const n of need) if (!cols.some((c) => `${c.table_name}.${c.column_name}` === n)) problems.push(`Spalte fehlt: ${n}`)
+
+    const enums = await tx.$queryRawUnsafe(`SELECT t.typname, e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname IN ('InvoiceType','InvoiceStatus') ORDER BY t.typname, e.enumsortorder`)
+    out('Enums', enums.map((e) => `${e.typname}.${e.enumlabel}`))
+    for (const n of ['InvoiceType.STANDARD', 'InvoiceType.CORRECTION', 'InvoiceType.CANCELLATION', 'InvoiceStatus.OVERDUE']) {
+      if (!enums.some((e) => `${e.typname}.${e.enumlabel}` === n)) problems.push(`Enum-Wert fehlt: ${n}`)
+    }
+
+    const cnt = (await tx.$queryRawUnsafe(`SELECT
+      (SELECT count(*)::int FROM invoices) AS invoices, (SELECT count(*)::int FROM dunning_notices) AS dunning_notices,
+      (SELECT count(*)::int FROM payments) AS payments, (SELECT count(*)::int FROM audit_logs) AS audit_logs,
+      (SELECT count(*)::int FROM users) AS users, (SELECT count(*)::int FROM customers) AS customers,
+      (SELECT count(*)::int FROM company_settings) AS company_settings`))[0]
+    out('Zähler', cnt)
+    if (cnt.users < 1) problems.push('kein Benutzer')
+    if (cnt.customers < 1) problems.push('kein Kunde')
+    if (cnt.company_settings < 1) problems.push('keine Firmeneinstellungen')
+
+    const residues = (await tx.$queryRawUnsafe(`SELECT count(*)::int AS n FROM invoices WHERE intro_text LIKE 'P53-DB%'`))[0].n
+    out('Vorhandene P53-DB-Reste', residues)
+
+    const waiters = (await tx.$queryRawUnsafe(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`))[0].n
+    out('Sitzungen mit Lock-Wartezustand', waiters)
+    if (waiters !== 0) problems.push('fremde Sitzungen warten auf Sperren')
+
+    const seq = await tx.$queryRawUnsafe(`SELECT type::text AS type, last_number FROM number_sequences ORDER BY type`)
+    out('Nummernkreise', seq)
+
+    const mig = await tx.$queryRawUnsafe(`SELECT count(*)::int AS n, max(migration_name) AS letzte FROM _prisma_migrations WHERE finished_at IS NOT NULL`)
+    out('Migrationen', mig[0])
+  })
+} finally {
+  await prisma.$disconnect()
+}
+if (problems.length) { console.error('IDENTITÄTSPRÜFUNG FEHLGESCHLAGEN:\n- ' + problems.join('\n- ')); process.exit(3) }
+console.log('IDENTITÄTSPRÜFUNG OK (nur lesend).')

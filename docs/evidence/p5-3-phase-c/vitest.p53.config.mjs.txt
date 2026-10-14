@@ -1,0 +1,20 @@
+// REQ-029 P5-3 Phase C – Vitest-Konfiguration AUSSERHALB des Git-Repos (Muster wie P5-2, bewusst ohne Importe,
+// da dieses Verzeichnis kein node_modules hat). Bewusst OHNE setupFiles: der echte Prisma-Singleton darf nicht
+// durch tests/setup.ts gemockt werden.
+//   P53_DIR  = Verzeichnis dieser Datei und des Tests (~/Downloads/p5-3-db)
+//   P53_REPO = isolierter Worktree (Alias '@')
+if (!process.env.P53_DIR || !process.env.P53_REPO) throw new Error('ABBRUCH: P53_DIR und P53_REPO müssen gesetzt sein.')
+export default {
+  root: process.env.P53_DIR,
+  test: {
+    environment: 'node',
+    globals: true,
+    include: ['p5-3-dunning-db.test.ts'],
+    testTimeout: 240000,
+    hookTimeout: 60000,
+    fileParallelism: false,
+    bail: 1,
+  },
+  resolve: { alias: { '@': process.env.P53_REPO } },
+  server: { fs: { strict: false } },
+}

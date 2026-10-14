@@ -1,0 +1,897 @@
+/* eslint-disable */
+// REQ-029 P5-3 Phase C – PostgreSQL-Integrationstest für Mahnwesen (createDunningNotice / markDunningNoticeSent /
+// getDunningEligibility) gegen die ISOLIERTE Datenbank twir_g6_test. Liegt AUSSERHALB des Git-Repos.
+//
+// STATUS: nur ENTWURF (Schritt 1). NICHT ausführen, bevor Alexander den schreibenden Lauf (Schritt 2) im Chat freigibt.
+//
+// Schreibt nur eigene Testzeilen mit Präfix "P53-DB <Lauf-ID>" (Rechnungen, Zahlungen, Stornos, Mahnungen, Audit-Einträge).
+// Kein Löschen, keine Migration, keine Schemaänderung, kein Zugriff auf andere Datenbanken, keine Wiederverwendung der
+// geparkten P5-2-Daten.
+//
+// Zeitmodell: Alle fachlichen Stichtage (`now` der Policy) und Fälligkeiten liegen in den Jahren 1995/1996, damit sie
+// unabhängig von der Echtzeit sind; `createDunningNotice(…, now)` bekommt den Stichtag injiziert. Versandnachweise
+// (sentAt und Audit-Zeitstempel) entstehen dagegen über die echten Services in Echtzeit (C9 misst genau das).
+// Jede Testrechnung wird nach ihrem Test "geparkt" (Fälligkeit 2099-01-01).
+//
+// Deterministische Verschränkung (wie P5-2 T5d): Der Test hält per eigener Transaktion eine Zeilensperre
+// (SELECT … FOR UPDATE) auf der Testrechnung, startet Aktion A, weist über pg_stat_activity / pg_blocking_pids nach,
+// dass genau eine fremde Sitzung auf diese Sperre wartet (= A, Halter = Test), startet erst DANN Aktion B, weist nach, dass
+// jetzt zwei Sitzungen warten, und gibt die Sperre frei. Keine Schlafzeit dient als Beweis der Reihenfolge.
+//
+// vi, describe, test, expect, beforeAll, afterAll, afterEach sind Vitest-Globals (globals:true in vitest.p53.config.mjs);
+// kein Import, da dieses Verzeichnis kein node_modules hat. Alle Repo-Module kommen über den Alias '@' (P53_REPO).
+
+const EXPECT_DB = 'twir_g6_test'
+const TAG = 'P53-DB'
+const RUN = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)
+const PARK = new Date('2099-01-01T00:00:00.000Z')
+const NOW_ISO = '1995-01-20T12:00:00.000Z'            // Stichtag der meisten Tests (Berlin: 20.01.1995)
+const DUE_ISO = '1995-01-10'                           // Fälligkeit der Rechnung
+const NEW_DUE = new Date('1995-02-10T00:00:00.000Z')   // neues Zahlungsziel der Mahnung
+const TOLERANCE_MS = 60_000                            // feste Policy-Konstante (wird NICHT kalibriert)
+const C9_DIAG_MS = TOLERANCE_MS / 10                   // NUR diagnostischer Erwartungswert (geloggt), KEIN Gate; fachlicher Assert ist ausschließlich ≤ TOLERANCE_MS (D9)
+const LEVEL_LABEL = ['', 'Zahlungserinnerung', 'Erste Mahnung', 'Zweite Mahnung']
+const LOCK_QUERY = /FROM invoices WHERE id = .* FOR UPDATE/i
+const utc = (s: string) => new Date(s)
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+let prisma: any, svc: any, pay: any, dun: any, policy: any
+let toMoney: any, remainingMoney: any, toCentString: any
+let userId = '', userEmail = '', customerId = ''
+let stammBefore = '', fremdBefore = '', seqBefore = 0
+const created: string[] = []         // eigene Rechnungen (inkl. Stornorechnungen)
+const createdNotices: string[] = []  // eigene Mahnungen
+const log: string[] = []
+
+// ── Guards ───────────────────────────────────────────────────────────────────────────────────────────────────────
+// 1. DATABASE_URL: Host localhost/127.0.0.1, Port 5432, Datenbank genau twir_g6_test; keine Verbindungs-Overrides per Query.
+// 2. P53_CONFIRM_DB muss genau 'twir_g6_test' sein.   3. 'business_webapp' wird überall ausdrücklich ausgeschlossen.
+// 4. Nach der Verbindung: current_database() und inet_server_port() müssen nochmals passen (in beforeAll).
+// Alle Prüfungen laufen VOR dem ersten Import des Prisma-Clients, also vor jeder Verbindung.
+const FORBIDDEN_DB = /business_webapp/i
+const FORBIDDEN_QUERY_PARAMS = ['host', 'hostaddr', 'port', 'dbname', 'service', 'options']
+function guardEnv() {
+  const raw = process.env.DATABASE_URL
+  if (!raw) throw new Error('ABBRUCH: DATABASE_URL ist nicht gesetzt.')
+  if (FORBIDDEN_DB.test(raw)) throw new Error('ABBRUCH: DATABASE_URL verweist auf business_webapp (ausdrücklich verboten).')
+  if (FORBIDDEN_DB.test(process.env.P53_CONFIRM_DB ?? '')) throw new Error('ABBRUCH: P53_CONFIRM_DB verweist auf business_webapp.')
+  if (process.env.P53_CONFIRM_DB !== EXPECT_DB) throw new Error(`ABBRUCH: P53_CONFIRM_DB muss '${EXPECT_DB}' sein.`)
+  let u: URL
+  try { u = new URL(raw) } catch { throw new Error('ABBRUCH: DATABASE_URL ist keine gültige URL.') }
+  if (u.protocol !== 'postgresql:' && u.protocol !== 'postgres:') throw new Error(`ABBRUCH: Protokoll '${u.protocol}' nicht erlaubt.`)
+  const db = decodeURIComponent(u.pathname.replace(/^\//, ''))
+  if (!['localhost', '127.0.0.1'].includes(u.hostname)) throw new Error(`ABBRUCH: Host '${u.hostname}' nicht erlaubt.`)
+  if ((u.port || '5432') !== '5432') throw new Error(`ABBRUCH: Port '${u.port}' nicht erwartet (5432).`)
+  if (db !== EXPECT_DB) throw new Error(`ABBRUCH: Datenbank '${db}' ist nicht '${EXPECT_DB}'.`)
+  for (const key of u.searchParams.keys()) {
+    if (FORBIDDEN_QUERY_PARAMS.includes(key.toLowerCase())) throw new Error(`ABBRUCH: URL-Parameter '${key}' ist nicht erlaubt (könnte Host/Datenbank überschreiben).`)
+  }
+}
+
+// ── SQL-Helfer ───────────────────────────────────────────────────────────────────────────────────────────────────
+async function seqValue() {
+  const r = await prisma.$queryRaw`SELECT (SELECT coalesce(max(last_number),0) FROM number_sequences WHERE type = 'INVOICE'::"NumberSequenceType")::int AS seq`
+  return r[0].seq as number
+}
+async function stamm() {
+  const r = await prisma.$queryRaw`SELECT
+    (SELECT md5(coalesce(string_agg(to_jsonb(t)::text, '|' ORDER BY id), '')) FROM customers t) AS c,
+    (SELECT md5(coalesce(string_agg(to_jsonb(t)::text, '|' ORDER BY id), '')) FROM users t) AS u,
+    (SELECT md5(coalesce(string_agg(to_jsonb(t)::text, '|' ORDER BY id), '')) FROM company_settings t) AS s`
+  return JSON.stringify(r[0])
+}
+// Fremdbestand = alles, was nicht zu diesem Lauf gehört. Audit-Einträge sind unveränderlich; Fremdbestand = alle, die
+// bereits beim Start existierten (created_at <= Obergrenze, als Text gemerkt, ohne Zeitzonen-Umrechnung).
+// v2 (Phase-C-Lauf 14.10.2026): Audits dieses und früherer P53-DB-Läufe (Rechnung/Mahnung/Zahlung mit Präfix P53-DB) zählen nicht
+// zum Fremdbestand und nicht zur Obergrenze. Grund: Frühere Läufe schreiben über sent_at = now() (DB-Sitzungszone Europe/Berlin)
+// Audit-Zeitstempel, die in UTC-Lesart bis zu 2 h in der Zukunft liegen und die Obergrenze des Folgelaufs verfälschten.
+let auditCutoff = ''
+async function fremd() {
+  const ids = created.length ? created : ['-']
+  const nids = createdNotices.length ? createdNotices : ['-']
+  const r = await prisma.$queryRaw`SELECT
+    (SELECT md5(coalesce(string_agg(to_jsonb(t)::text, '|' ORDER BY id), '')) FROM invoices t WHERE id <> ALL(${ids}::text[])) AS inv,
+    (SELECT count(*)::int FROM invoices t WHERE id <> ALL(${ids}::text[])) AS inv_n,
+    (SELECT md5(coalesce(string_agg(to_jsonb(t)::text, '|' ORDER BY id), '')) FROM dunning_notices t WHERE id <> ALL(${nids}::text[])) AS dun,
+    (SELECT count(*)::int FROM dunning_notices t WHERE id <> ALL(${nids}::text[])) AS dun_n,
+    (SELECT md5(coalesce(string_agg(to_jsonb(t)::text, '|' ORDER BY id), '')) FROM payments t WHERE invoice_id <> ALL(${ids}::text[])) AS pay,
+    (SELECT count(*)::int FROM payments t WHERE invoice_id <> ALL(${ids}::text[])) AS pay_n,
+    (SELECT md5(coalesce(string_agg(id, '|' ORDER BY id), '')) FROM audit_logs WHERE created_at <= ${auditCutoff}::timestamp AND NOT (
+      entity_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%'))
+      OR entity_id IN (SELECT id FROM dunning_notices WHERE invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%')))
+      OR entity_id IN (SELECT id FROM payments WHERE invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%'))))) AS aud,
+    (SELECT count(*)::int FROM audit_logs WHERE created_at <= ${auditCutoff}::timestamp AND NOT (
+      entity_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%'))
+      OR entity_id IN (SELECT id FROM dunning_notices WHERE invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%')))
+      OR entity_id IN (SELECT id FROM payments WHERE invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%'))))) AS aud_n`
+  return JSON.stringify(r[0])
+}
+async function inv(id: string) {
+  const r = await prisma.$queryRaw`SELECT status::text AS status, type::text AS type, invoice_number, total_gross::text AS gross,
+    paid_amount::text AS paid, due_date, sent_at FROM invoices WHERE id = ${id}`
+  return r[0] ?? null
+}
+async function notices(id: string) {
+  return prisma.$queryRaw`SELECT id, level, level_label, sent_at, due_date, fee::text AS fee, created_by_id, deleted_at
+    FROM dunning_notices WHERE invoice_id = ${id} ORDER BY level ASC, created_at ASC, id ASC`
+}
+async function createAudits(noticeId: string) {
+  return prisma.$queryRaw`SELECT id, user_id, user_email, old_value, new_value, created_at FROM audit_logs
+    WHERE entity_id = ${noticeId} AND entity_type = 'dunning_notice' AND action = 'CREATE'::"AuditAction" ORDER BY created_at ASC`
+}
+async function sentAudits(noticeId: string) {
+  return prisma.$queryRaw`SELECT id, user_id, old_value, new_value, metadata FROM audit_logs
+    WHERE entity_id = ${noticeId} AND entity_type = 'dunning_notice' AND action = 'STATUS_CHANGE'::"AuditAction" ORDER BY created_at ASC`
+}
+async function dunStatusAudits(id: string) {
+  return prisma.$queryRaw`SELECT user_id, old_value, new_value, metadata FROM audit_logs
+    WHERE entity_id = ${id} AND entity_type = 'invoice' AND action = 'STATUS_CHANGE'::"AuditAction"
+      AND metadata->>'source' = 'dunning' ORDER BY created_at ASC`
+}
+async function paymentAudits(id: string) {
+  return prisma.$queryRaw`SELECT new_value FROM audit_logs WHERE entity_type = 'invoice' AND entity_id = ${id}
+    AND action = 'PAYMENT_ADDED'::"AuditAction" ORDER BY created_at ASC`
+}
+async function auditCountFor(id: string) {
+  const r = await prisma.$queryRaw`SELECT count(*)::int AS n FROM audit_logs WHERE entity_id = ${id}
+    OR entity_id IN (SELECT dn.id FROM dunning_notices dn WHERE dn.invoice_id = ${id})`
+  return r[0].n as number
+}
+async function activePayments(id: string) {
+  const r = await prisma.$queryRaw`SELECT count(*)::int AS c, coalesce(sum(amount),0)::text AS s FROM payments WHERE invoice_id = ${id} AND deleted_at IS NULL`
+  return r[0] as { c: number; s: string }
+}
+async function stornosOf(id: string) {
+  return prisma.$queryRaw`SELECT id FROM invoices WHERE original_invoice_id = ${id}`
+}
+async function dispatchEvidence(id: string) {
+  const r = await prisma.$queryRaw`SELECT a.id AS audit_id, a.created_at AS audit_created_at, i.sent_at AS sent_at
+    FROM audit_logs a JOIN invoices i ON i.id = a.entity_id
+    WHERE a.entity_id = ${id} AND a.entity_type = 'invoice' AND a.action = 'STATUS_CHANGE'::"AuditAction"
+      AND a.user_id IS NOT NULL AND a.old_value->>'status' = 'FINALIZED' AND a.new_value->>'status' = 'SENT'
+    ORDER BY a.created_at ASC`
+  return r as Array<{ audit_id: string; audit_created_at: Date; sent_at: Date }>
+}
+// <<OWN-WRITE-BEGIN  (einzige Stelle mit schreibendem SQL/ORM-Zugriff des Tests; S0 prüft das am Quelltext)
+// Eigentum: Die Rechnung muss in `created` stehen UND in der DB als P5-3-Testrechnung dieses Laufs verifiziert sein:
+//   intro_text beginnt mit "P53-DB <Lauf-ID>"  ODER  (Stornorechnung) original_invoice_id zeigt auf eine solche eigene Rechnung.
+// Der Eigentumsnachweis steckt zusätzlich IM SQL-Statement (WHERE-Prädikat) – es werden genau 1 Zeile erwartet, sonst Abbruch.
+const OWN_LIKE = `${TAG} ${RUN}%`
+async function assertOwn(id: string, what: string) {
+  if (typeof id !== 'string' || !id) throw new Error(`OWN-GUARD: ${what}: ungültige ID`)
+  if (!created.includes(id)) throw new Error(`OWN-GUARD: ${what}: ${id} ist nicht in der Own-ID-Menge`)
+  const r = await prisma.$queryRaw`SELECT i.id FROM invoices i WHERE i.id = ${id} AND (
+      i.intro_text LIKE ${OWN_LIKE}
+      OR (i.original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = i.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`
+  if (r.length !== 1) throw new Error(`OWN-GUARD: ${what}: ${id} trägt nicht das P5-3-Präfix dieses Laufs – KEIN Schreibzugriff`)
+}
+type OwnPatch =
+  | { op: 'dueDate'; value: Date | null }
+  | { op: 'sentNow' }                                   // status = SENT, sent_at = now()
+  | { op: 'sentAt'; value: Date | null }
+  | { op: 'sentAtFromAudit'; auditId: string; deltaMs: number }   // sent_at = Audit.created_at − deltaMs, komplett in PostgreSQL (keine JS-Date-/Zeitzonenumrechnung)
+  | { op: 'type'; value: 'CORRECTION' }
+  | { op: 'status'; value: 'OVERDUE' }
+  | { op: 'paidAmount'; value: string }
+async function ownSet(id: string, patch: OwnPatch) {
+  await assertOwn(id, `ownSet(${patch.op})`)
+  let n = -1
+  switch (patch.op) {
+    case 'dueDate':    n = await prisma.$executeRaw`UPDATE invoices SET due_date = ${patch.value} WHERE id = ${id} AND id = ANY(${created}::text[]) AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`; break
+    case 'sentNow':    n = await prisma.$executeRaw`UPDATE invoices SET status = 'SENT'::"InvoiceStatus", sent_at = now() WHERE id = ${id} AND id = ANY(${created}::text[]) AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`; break
+    case 'sentAt':     n = await prisma.$executeRaw`UPDATE invoices SET sent_at = ${patch.value} WHERE id = ${id} AND id = ANY(${created}::text[]) AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`; break
+    case 'sentAtFromAudit': {
+      // Nur der konkrete Versand-Audit DIESER eigenen Rechnung (FINALIZED → SENT, Benutzer-Akteur) darf die Zeitbasis liefern.
+      // Das Audit-Prädikat steht zusätzlich als EXISTS im WHERE: Passt Audit und Rechnung nicht zusammen, wird KEINE Zeile
+      // geändert (n = 0 → Abbruch) – sent_at wird also nie versehentlich auf NULL gesetzt.
+      if (typeof patch.auditId !== 'string' || !patch.auditId) throw new Error('OWN-GUARD: sentAtFromAudit ohne auditId')
+      if (!Number.isInteger(patch.deltaMs) || Math.abs(patch.deltaMs) > 3_600_000) throw new Error('OWN-GUARD: sentAtFromAudit: deltaMs ungültig')
+      n = await prisma.$executeRaw`UPDATE invoices SET sent_at = (
+          SELECT a.created_at - (${patch.deltaMs}::float8 * interval '1 millisecond') FROM audit_logs a
+          WHERE a.id = ${patch.auditId} AND a.entity_id = ${id} AND a.entity_type = 'invoice' AND a.action = 'STATUS_CHANGE'::"AuditAction"
+            AND a.user_id IS NOT NULL AND a.old_value->>'status' = 'FINALIZED' AND a.new_value->>'status' = 'SENT')
+        WHERE id = ${id} AND id = ANY(${created}::text[]) AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))
+          AND EXISTS (SELECT 1 FROM audit_logs a2 WHERE a2.id = ${patch.auditId} AND a2.entity_id = ${id} AND a2.entity_type = 'invoice'
+            AND a2.action = 'STATUS_CHANGE'::"AuditAction" AND a2.user_id IS NOT NULL
+            AND a2.old_value->>'status' = 'FINALIZED' AND a2.new_value->>'status' = 'SENT')`
+      break
+    }
+    case 'type':       n = await prisma.$executeRaw`UPDATE invoices SET type = ${patch.value}::"InvoiceType" WHERE id = ${id} AND id = ANY(${created}::text[]) AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`; break
+    case 'status':     n = await prisma.$executeRaw`UPDATE invoices SET status = ${patch.value}::"InvoiceStatus" WHERE id = ${id} AND id = ANY(${created}::text[]) AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`; break
+    case 'paidAmount': n = await prisma.$executeRaw`UPDATE invoices SET paid_amount = ${patch.value}::numeric WHERE id = ${id} AND id = ANY(${created}::text[]) AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`; break
+    default: throw new Error('OWN-GUARD: unbekannte Operation')
+  }
+  if (n !== 1) throw new Error(`OWN-GUARD: ownSet(${(patch as any).op}) betraf ${n} Zeilen statt 1`)
+}
+const setDue = (id: string, d: Date | null) => ownSet(id, { op: 'dueDate', value: d })
+// Synthetischer Versand-/Statusnachweis: Audit-Eintrag NUR zu einer eigenen Testrechnung.
+async function ownAudit(id: string, data: Record<string, any>) {
+  await assertOwn(id, 'ownAudit')
+  if (data.entityId !== id || data.entityType !== 'invoice') throw new Error('OWN-GUARD: ownAudit nur für entityType invoice mit entityId = eigener ID')
+  await prisma.auditLog.create({ data })
+}
+// Nimmt Stornorechnungen (original_invoice_id = eigene Rechnung) in die Own-ID-Menge auf – nur wenn das Original eigen ist.
+async function adoptStornos(id: string) {
+  if (!created.includes(id)) return
+  for (const r of await stornosOf(id)) if (!created.includes(r.id)) created.push(r.id)
+}
+// Storno über den echten Service; Folgerechnungen werden SOFORT registriert, auch wenn der Service oder ein späterer Schritt scheitert.
+async function cancelOwn(id: string, reason: string): Promise<string[]> {
+  await assertOwn(id, 'cancelOwn')
+  try { await svc.cancelInvoice(id, reason, userId, userEmail) }
+  finally { await adoptStornos(id) }
+  return (await stornosOf(id)).map((r: any) => r.id as string)
+}
+// Parken: nur Rechnungen, die den Eigentumsnachweis erfüllen; Abweichung = Fehler (nach dem Versuch, alles Eigene zu parken).
+async function park() {
+  if (!created.length) return
+  for (const id of [...created]) await adoptStornos(id)
+  const n = await prisma.$executeRaw`UPDATE invoices SET due_date = ${PARK} WHERE id = ANY(${created}::text[])
+    AND (intro_text LIKE ${OWN_LIKE} OR (original_invoice_id = ANY(${created}::text[]) AND EXISTS (SELECT 1 FROM invoices o WHERE o.id = invoices.original_invoice_id AND o.intro_text LIKE ${OWN_LIKE})))`
+  if (n !== created.length) throw new Error(`OWN-GUARD/PARK: ${n} von ${created.length} Own-IDs geparkt – Abweichung, Befund prüfen`)
+}
+// OWN-WRITE-END>>
+// Vollständiger beobachtbarer Zustand einer Rechnung samt Mahnungen und Audit-Anzahl (für „abgelehnt = nichts geschrieben“).
+async function stateOf(id: string) {
+  return JSON.stringify({ invoice: await inv(id), notices: await notices(id), audits: await auditCountFor(id), pay: await activePayments(id) })
+}
+const cents = (v: string | number) => toCentString(toMoney(String(v)))
+
+// ── Anlage-Helfer über echte Services ───────────────────────────────────────────────────────────────────────────
+const input = (qty = 2) => ({
+  customerId, invoiceRecipientSource: 'CUSTOMER', invoiceDate: new Date(), paymentTermDays: 14,
+  introText: `${TAG} ${RUN}`,
+  items: [{ position: 1, description: `${TAG} Position`, quantity: qty, unitPrice: 50, taxRate: 19, discountRate: '10' }],
+})
+async function mkDraft() { const id = await svc.createInvoiceDraft(input(), userId, userEmail) as string; created.push(id); return id }
+async function mkFinal() { const id = await mkDraft(); await svc.finalizeInvoice(id, userId, userEmail); return id }
+async function mkSent(due = DUE_ISO) { const id = await mkFinal(); await svc.changeInvoiceStatus(id, 'SENT', userId, userEmail); await setDue(id, utc(`${due}T00:00:00.000Z`)); return id }
+const payInput = (invoiceId: string, amount: number) => ({ invoiceId, amount, paymentDate: new Date(), method: 'bank_transfer', reference: `${TAG} ${RUN}` })
+const grossOf = async (id: string) => String((await inv(id)).gross)
+const partOf = async (id: string) => (Math.round(Number(await grossOf(id)) * 40) / 100).toFixed(2)  // 40 % in Cent
+const payFull = async (id: string) => pay.addPayment(payInput(id, Number(await grossOf(id))), userId, userEmail)
+const payPart = async (id: string) => pay.addPayment(payInput(id, Number(await partOf(id))), userId, userEmail)
+
+// Mahnung anlegen (merkt sich die ID für Z). `over` kann dueDate/fee überschreiben.
+async function mkDun(id: string, level: number, over: any = {}, nowIso = NOW_ISO): Promise<string> {
+  const nid = await dun.createDunningNotice({ invoiceId: id, level, dueDate: NEW_DUE, ...over }, userId, userEmail, new Date(nowIso)) as string
+  createdNotices.push(nid)
+  return nid
+}
+const markSent = (nid: string) => dun.markDunningNoticeSent(nid, null, userId, userEmail) as Promise<void>
+const elig = (id: string, nowIso = NOW_ISO) => dun.getDunningEligibility(id, new Date(nowIso)) as Promise<any>
+async function rejection(p: Promise<unknown>): Promise<any> {
+  try { await p } catch (e) { return e }
+  throw new Error('erwartet: Ablehnung, erhalten: Erfolg')
+}
+// Merkt Mahnungs-IDs auch dann, wenn die Anlage in einer Verschränkung stattfindet.
+async function adoptNotices(id: string) { for (const n of await notices(id)) if (!createdNotices.includes(n.id)) createdNotices.push(n.id) }
+
+// Erwarteter CREATE-Audit-newValue (Snapshot dunning-basis-v1) – Nachweise (Audit, sentAt) werden aus der DB gelesen.
+async function expectedCreateValue(id: string, nid: string, o: {
+  level: number; paid: string; statusBefore: string; fee: string | null; nowIso?: string; dueIso?: string; dunDue?: Date
+  prev: { id: string; level: number } | null
+}) {
+  const i = await inv(id)
+  const ev = await dispatchEvidence(id)
+  expect(ev.length).toBe(1)
+  const gross = cents(i.gross)
+  const prevRow = o.prev ? (await notices(id)).find((n: any) => n.id === o.prev!.id) : null
+  const nowIso = o.nowIso ?? NOW_ISO
+  return {
+    invoiceId: id,
+    invoiceNumber: i.invoice_number,
+    level: o.level,
+    levelLabel: LEVEL_LABEL[o.level],
+    dueDate: (o.dunDue ?? NEW_DUE).toISOString(),
+    fee: o.fee,
+    snapshot: {
+      schema: 'dunning-basis-v1',
+      grossAmount: gross,
+      activePaymentsSum: cents(o.paid),
+      outstandingAmount: cents(remainingMoney(gross, o.paid).toFixed()),
+      feeAmount: o.fee,
+      calculatedAt: nowIso,
+      berlinDate: nowIso.slice(0, 10),
+      invoiceDueDate: o.dueIso ?? DUE_ISO,
+      invoiceStatusBefore: o.statusBefore,
+      source: 'active-payments',
+      sendEvidence: {
+        auditId: ev[0].audit_id,
+        sentAt: new Date(ev[0].sent_at).toISOString(),
+        auditCreatedAt: new Date(ev[0].audit_created_at).toISOString(),
+      },
+      previousNotice: o.prev && prevRow
+        ? { id: o.prev.id, level: o.prev.level, sentAt: new Date(prevRow.sent_at).toISOString() }
+        : null,
+    },
+  }
+}
+async function expectSnapshot(id: string, nid: string, o: Parameters<typeof expectedCreateValue>[2]) {
+  const a = await createAudits(nid)
+  expect(a.length).toBe(1)
+  expect(a[0].user_id).toBe(userId)
+  expect(a[0].new_value).toEqual(await expectedCreateValue(id, nid, o))
+  return a[0]
+}
+
+// ── Verschränkung (Row-Lock + pg_stat_activity) ────────────────────────────────────────────────────────────────
+function holdLock(ids: string[]) {
+  let release!: () => void
+  const latch = new Promise<void>((r) => { release = r })
+  let ready!: () => void, fail!: (e: any) => void
+  let holderPid = 0
+  const locked = new Promise<void>((res, rej) => { ready = res; fail = rej })
+  const done = prisma.$transaction(async (tx: any) => {
+    try {
+      await tx.$queryRaw`SELECT id FROM invoices WHERE id = ANY(${ids}::text[]) ORDER BY id FOR UPDATE`
+      holderPid = (await tx.$queryRaw`SELECT pg_backend_pid()::int AS pid`)[0].pid
+      ready()
+    } catch (e) { fail(e); throw e }
+    await latch
+  }, { timeout: 60000, maxWait: 10000 })
+  return { locked, release, done, pid: () => holderPid }
+}
+async function lockWaiters(): Promise<Array<{ pid: number; query: string; blockers: number[] }>> {
+  return prisma.$queryRaw`SELECT pid::int AS pid, query, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+    WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid() ORDER BY pid`
+}
+// Poll (kein festes Schlafen als Beweis): wartet, bis genau n Sitzungen auf eine Sperre warten; sonst Abbruch mit Diagnose.
+async function waitForLockWaiters(n: number) {
+  const t0 = Date.now()
+  for (;;) {
+    const rows = await lockWaiters()
+    if (rows.length === n) return rows
+    if (rows.length > n || Date.now() - t0 > 15000) {
+      throw new Error(`erwartet ${n} auf Sperre wartende Sitzung(en), beobachtet ${rows.length}: ${JSON.stringify(rows)}`)
+    }
+    await sleep(25)
+  }
+}
+type Settled = { ok: true; value: any } | { ok: false; error: any }
+function settle(p: Promise<any>) {
+  const st = { finished: false }
+  const res: Promise<Settled> = p.then(
+    (value) => { st.finished = true; return { ok: true, value } as Settled },
+    (error) => { st.finished = true; return { ok: false, error } as Settled },
+  )
+  return { st, res }
+}
+// Aktion A wird nachweislich zuerst in die Sperrwarteschlange gestellt, danach erst B; erst dann wird freigegeben.
+async function orchestrate(id: string, a: () => Promise<any>, b: () => Promise<any>) {
+  const lock = holdLock([id]); await lock.locked
+  const holder = lock.pid()
+  expect(holder).toBeGreaterThan(0)
+  let A: ReturnType<typeof settle> | undefined, B: ReturnType<typeof settle> | undefined
+  try {
+    A = settle(a())
+    const w1 = await waitForLockWaiters(1)
+    const pidA = w1[0].pid
+    expect(w1[0].blockers).toContain(holder)               // A wartet auf den gehaltenen Row-Lock
+    expect(w1[0].query).toMatch(LOCK_QUERY)
+    expect(A.st.finished).toBe(false)
+    B = settle(b())                                         // erst jetzt B
+    const w2 = await waitForLockWaiters(2)
+    const rowB = w2.find((r) => r.pid !== pidA)!
+    expect(rowB).toBeTruthy()
+    expect(rowB.blockers.some((x) => x === holder || x === pidA)).toBe(true)   // B steht hinter Halter bzw. A
+    expect(rowB.query).toMatch(LOCK_QUERY)
+    expect(A.st.finished).toBe(false); expect(B.st.finished).toBe(false)
+    lock.release(); await lock.done
+    const [ra, rb] = await Promise.all([A.res, B.res])
+    return { ra, rb, holder, pidA, pidB: rowB.pid }
+  } finally {
+    lock.release(); await lock.done.catch(() => {})
+    await Promise.allSettled([A?.res, B?.res].filter(Boolean) as Promise<unknown>[])
+  }
+}
+const pids = (o: { holder: number; pidA: number; pidB: number }) =>
+  `Halter-PID ${o.holder}, A-PID ${o.pidA}, B-PID ${o.pidB} (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)`
+
+describe('REQ-029 P5-3 Phase C – Mahnwesen auf twir_g6_test', () => {
+  beforeAll(async () => {
+    guardEnv()
+    ;({ prisma } = await import('@/lib/db/prisma'))
+    svc = await import('@/lib/services/invoice.service')
+    pay = await import('@/lib/services/payment.service')
+    dun = await import('@/lib/services/dunning.service')
+    policy = await import('@/lib/services/dunning-policy')
+    ;({ toMoney, remainingMoney } = await import('@/lib/billing/payment-math'))
+    ;({ toCentString } = await import('@/lib/billing/money'))
+    const who = await prisma.$queryRaw`SELECT current_database() AS db, inet_server_port()::int AS port`
+    if (who[0].db !== EXPECT_DB || who[0].port !== 5432) throw new Error(`ABBRUCH: verbunden mit ${who[0].db}:${who[0].port}`)
+    if (policy.DUNNING_SEND_AUDIT_TOLERANCE_MS !== TOLERANCE_MS) throw new Error('ABBRUCH: Toleranzkonstante der Policy weicht von 60000 ab (Test geht von der festgelegten Konstante aus).')
+    const u = await prisma.$queryRaw`SELECT id, email FROM users ORDER BY created_at ASC LIMIT 1`
+    if (!u.length) throw new Error('ABBRUCH: Kein Benutzer im Klon.')
+    userId = u[0].id; userEmail = u[0].email
+    const c = await prisma.$queryRaw`SELECT id FROM customers WHERE deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`
+    if (!c.length) throw new Error('ABBRUCH: Kein aktiver Kunde im Klon.')
+    customerId = c[0].id
+    const s = await prisma.$queryRaw`SELECT (SELECT count(*) FROM company_settings)::int AS s`
+    if (s[0].s < 1) throw new Error('ABBRUCH: Keine Firmeneinstellungen im Klon.')
+    // Keine fremden Sitzungen, die gerade auf Sperren warten (würden die Orchestrierung verfälschen).
+    const waiting = await lockWaiters()
+    if (waiting.length !== 0) throw new Error(`ABBRUCH: ${waiting.length} fremde Sitzung(en) warten bereits auf Sperren.`)
+    auditCutoff = (await prisma.$queryRaw`SELECT coalesce(max(created_at), '1970-01-01'::timestamp)::text AS m FROM audit_logs WHERE NOT (
+      entity_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%'))
+      OR entity_id IN (SELECT id FROM dunning_notices WHERE invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%')))
+      OR entity_id IN (SELECT id FROM payments WHERE invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%' OR original_invoice_id IN (SELECT id FROM invoices WHERE intro_text LIKE 'P53-DB%'))))`)[0].m
+    stammBefore = await stamm(); fremdBefore = await fremd(); seqBefore = await seqValue()
+    log.push(`Verbindung ok: ${who[0].db}:${who[0].port}, Lauf ${RUN}, Nummernkreis vorher ${seqBefore}, Audit-Obergrenze ${auditCutoff}`)
+  })
+  afterEach(async () => { for (const id of [...created]) await adoptNotices(id); await park() })
+  afterAll(async () => {
+    try {
+      if (prisma && created.length) { try { await park() } catch (e) { console.error('afterAll: Parken fehlgeschlagen:', e) } }
+    } finally {
+      console.log('\n=== P5-3 DB-Protokoll ===\n' + log.join('\n'))
+      if (prisma) await prisma.$disconnect()
+    }
+  })
+
+  // <<S0-BEGIN  (Quelltext-Guard: schreibende SQL-/ORM-Operationen nur im Block OWN-WRITE; dieser Block wird beim Scan ausgenommen)
+  test('S0 Quelltext: keine schreibende SQL-/ORM-Operation außerhalb des Own-Guard-Blocks', async () => {
+    const fs = await import('node:fs')
+    const src = fs.readFileSync(process.env.P53_DIR + '/p5-3-dunning-db.test.ts', 'utf8')
+    const cut = (text: string, from: string, to: string) => {
+      const i = text.indexOf(from), j = text.indexOf(to)
+      expect(i).toBeGreaterThan(0); expect(j).toBeGreaterThan(i)
+      return text.slice(0, i) + text.slice(j + to.length)
+    }
+    let rest = cut(src, '// <<OWN-' + 'WRITE-BEGIN', '// OWN-' + 'WRITE-END>>')
+    rest = cut(rest, '// <<S0-' + 'BEGIN', '// S0-' + 'END>>')
+    const lines = rest.split('\n').filter((l) => !/^\s*\/\//.test(l))
+    const bad = lines.filter((l) =>
+      /\$executeRaw|\$queryRawUnsafe|\$executeRawUnsafe|\.(create|createMany|update|updateMany|delete|deleteMany|upsert)\(|\b(INSERT INTO|DELETE FROM|TRUNCATE|ALTER TABLE|DROP TABLE)\b/.test(l)
+      || (/\bUPDATE\b/.test(l) && !/FOR UPDATE/.test(l)))
+    expect(bad).toEqual([])
+  })
+  // S0-END>>
+
+  // ── C1 Stufen 1 → 2 → 3 mit jeweils „versendet“; Snapshot-Audit; Statusverhalten ─────────────────────────────
+  test('C1 Stufen 1→2→3: Snapshot-Audit exakt, Stufe 1 ohne Statuswechsel, ab Stufe 2 OVERDUE (genau ein Dunning-Statusaudit), Stufe 4 gesperrt', async () => {
+    const id = await mkSent()
+    const g = cents(await grossOf(id))
+    // Stufe 1
+    const n1 = await mkDun(id, 1)
+    expect((await inv(id)).status).toBe('SENT')
+    expect((await dunStatusAudits(id)).length).toBe(0)
+    const r1 = (await notices(id))[0]
+    expect(r1).toMatchObject({ id: n1, level: 1, level_label: 'Zahlungserinnerung', fee: null, created_by_id: userId, sent_at: null, deleted_at: null })
+    expect(new Date(r1.due_date).toISOString()).toBe(NEW_DUE.toISOString())
+    await expectSnapshot(id, n1, { level: 1, paid: '0', statusBefore: 'SENT', fee: null, prev: null })
+    // Stufe 2 vor „versendet“ von Stufe 1 → abgelehnt, nichts geschrieben
+    const before = await stateOf(id)
+    const e2 = await rejection(mkDun(id, 2))
+    expect(e2.name).toBe('BusinessRuleError'); expect(e2.message).toMatch(/Mahnstufe 1 ist noch nicht als versendet markiert/)
+    expect(await stateOf(id)).toBe(before)
+    // Stufe 1 versenden, Stufe 2 anlegen
+    await markSent(n1)
+    expect((await sentAudits(n1)).length).toBe(1)
+    const n2 = await mkDun(id, 2)
+    expect((await inv(id)).status).toBe('OVERDUE')
+    const sa = await dunStatusAudits(id)
+    expect(sa.length).toBe(1)
+    expect(sa[0].user_id).toBe(userId); expect(sa[0].old_value).toEqual({ status: 'SENT' }); expect(sa[0].new_value).toEqual({ status: 'OVERDUE' })
+    expect(sa[0].metadata).toMatchObject({ source: 'dunning', level: 2, dunningNoticeId: n2, outstandingAmount: g })
+    expect((await notices(id))[1]).toMatchObject({ id: n2, level: 2, level_label: 'Erste Mahnung', fee: '5.00' })
+    await expectSnapshot(id, n2, { level: 2, paid: '0', statusBefore: 'SENT', fee: '5.00', prev: { id: n1, level: 1 } })
+    // Stufe 3
+    await markSent(n2)
+    const n3 = await mkDun(id, 3)
+    expect((await inv(id)).status).toBe('OVERDUE')
+    expect((await dunStatusAudits(id)).length).toBe(1)                         // kein weiterer Statuswechsel
+    expect((await notices(id))[2]).toMatchObject({ id: n3, level: 3, level_label: 'Zweite Mahnung', fee: '10.00' })
+    await expectSnapshot(id, n3, { level: 3, paid: '0', statusBefore: 'OVERDUE', fee: '10.00', prev: { id: n2, level: 2 } })
+    // Stufe 4 gesperrt
+    await markSent(n3)
+    const before4 = await stateOf(id)
+    const e4 = await rejection(mkDun(id, 4 as any))
+    expect(e4.name).toBe('BusinessRuleError'); expect(e4.message).toMatch(/Maximale Mahnstufe 3 bereits erreicht/)
+    expect(await stateOf(id)).toBe(before4)
+    expect((await notices(id)).length).toBe(3)
+    log.push(`C1 ok: SENT →(L1) SENT →(L2) OVERDUE →(L3) OVERDUE; 3 Mahnungen mit je 1 CREATE-Audit (Snapshot exakt), 1 Dunning-Statusaudit, L4 abgelehnt`)
+  })
+
+  // ── C2 Negativmatrix gegen die echte DB ───────────────────────────────────────────────────────────────────
+  // Jeder Fall: Anlage wird mit BusinessRuleError und passender Meldung abgelehnt, und es ändert sich NICHTS
+  // (Rechnungszeile, Mahnungen, Audit-Anzahl, Zahlungen). `previewBlocked`: auch die Anzeige (getDunningEligibility) sperrt.
+  const sysAudit = async (id: string, over: any) => {
+    const i = await inv(id)
+    await ownAudit(id, {
+      userId, userEmail, action: 'STATUS_CHANGE', entityType: 'invoice', entityId: id,
+      oldValue: { status: 'FINALIZED' }, newValue: { status: 'SENT' }, createdAt: new Date(i.sent_at), ...over,
+    })
+  }
+  // Rechnung per SQL „versendet“ ohne Audit (nur eigene Testzeile)
+  const sentWithoutAudit = async () => {
+    const id = await mkFinal()
+    await ownSet(id, { op: 'sentNow' })
+    await setDue(id, utc(`${DUE_ISO}T00:00:00.000Z`))
+    return id
+  }
+  type Neg = { name: string; make: () => Promise<string>; level?: number; over?: any; nowIso?: string; msg: RegExp; previewBlocked: boolean }
+  const NEG: Neg[] = [
+    { name: 'FINALIZED (nicht versendet)', previewBlocked: true, msg: /Status „Finalisiert“ kann keine Mahnung/,
+      make: async () => { const id = await mkFinal(); await setDue(id, utc(`${DUE_ISO}T00:00:00.000Z`)); return id } },
+    { name: 'DRAFT', previewBlocked: true, msg: /Status „Entwurf“ kann keine Mahnung/,
+      make: async () => { const id = await mkDraft(); await setDue(id, utc(`${DUE_ISO}T00:00:00.000Z`)); return id } },
+    { name: 'sentAt fehlt (Altdaten: Status SENT ohne Versanddatum)', previewBlocked: true, msg: /nicht als versendet dokumentiert/,
+      make: async () => { const id = await mkSent(); await ownSet(id, { op: 'sentAt', value: null }); return id } },
+    { name: 'Versand-Audit fehlt (Altdaten: SENT + sentAt ohne Audit)', previewBlocked: true, msg: /nicht nachvollziehbar dokumentiert/,
+      make: sentWithoutAudit },
+    { name: 'Versand-Audit nur vom Systemakteur (userId null)', previewBlocked: true, msg: /nicht nachvollziehbar dokumentiert/,
+      make: async () => { const id = await sentWithoutAudit(); await sysAudit(id, { userId: null, userEmail: 'system:p53-test' }); return id } },
+    { name: 'Versand-Audit in falscher Richtung (SENT → OVERDUE)', previewBlocked: true, msg: /nicht nachvollziehbar dokumentiert/,
+      make: async () => { const id = await sentWithoutAudit(); await sysAudit(id, { oldValue: { status: 'SENT' }, newValue: { status: 'OVERDUE' } }); return id } },
+    { name: 'Versand-Audit außerhalb der Toleranz (+61 s)', previewBlocked: true, msg: /nicht nachvollziehbar dokumentiert/,
+      make: async () => { const id = await sentWithoutAudit(); const i = await inv(id); await sysAudit(id, { createdAt: new Date(new Date(i.sent_at).getTime() + 61_000) }); return id } },
+    { name: 'Stornorechnung (CANCELLATION)', previewBlocked: true, msg: /^Für Stornorechnungen kann keine Mahnung erstellt werden\.$/,
+      make: async () => {
+        const orig = await mkFinal(); const [stId] = await cancelOwn(orig, `${TAG} C2`)
+        const st = { id: stId }
+        await ownSet(st.id, { op: 'sentNow' })
+        await setDue(st.id, utc(`${DUE_ISO}T00:00:00.000Z`)); await setDue(orig, utc(`${DUE_ISO}T00:00:00.000Z`))
+        return st.id
+      } },
+    { name: 'Korrekturrechnung (CORRECTION)', previewBlocked: true, msg: /^Für Korrekturrechnungen kann keine Mahnung erstellt werden\.$/,
+      make: async () => { const id = await mkSent(); await ownSet(id, { op: 'type', value: 'CORRECTION' }); return id } },
+    { name: 'Status PAID (Vollzahlung über den Zahlungsservice)', previewBlocked: true, msg: /Status „Bezahlt“ kann keine Mahnung/,
+      make: async () => { const id = await mkSent(); await payFull(id); await setDue(id, utc(`${DUE_ISO}T00:00:00.000Z`)); return id } },
+    { name: 'Status CANCELLED (Original einer Stornierung)', previewBlocked: true, msg: /Status „Storniert“ kann keine Mahnung/,
+      make: async () => {
+        const id = await mkSent(); await cancelOwn(id, `${TAG} C2b`)
+        await setDue(id, utc(`${DUE_ISO}T00:00:00.000Z`)); return id
+      } },
+    { name: 'Restbetrag 0 trotz Status OVERDUE (aktive Zahlungen = Brutto)', previewBlocked: true, msg: /kein offener Betrag/,
+      make: async () => { const id = await mkSent(); await payFull(id); await ownSet(id, { op: 'status', value: 'OVERDUE' }); return id } },
+    { name: 'Rechnung ohne Zahlungsziel', previewBlocked: true, msg: /kein Zahlungsziel/,
+      make: async () => { const id = await mkSent(); await setDue(id, null); return id } },
+    { name: 'Zahlungsziel noch nicht überschritten (Fälligkeitstag selbst)', previewBlocked: true, msg: /\(20\.01\.1995\) ist noch nicht überschritten/,
+      make: () => mkSent('1995-01-20') },
+    { name: 'Stufe 2 ohne vorhandene Stufe 1', previewBlocked: false, level: 2, msg: /nächste Mahnstufe muss 1 sein \(aktuell: 0\)/, make: () => mkSent() },
+    { name: 'neues Zahlungsziel = heutiger Berliner Tag', previewBlocked: false, over: { dueDate: utc('1995-01-20T00:00:00.000Z') },
+      msg: /Zahlungsziel der Mahnung muss nach dem heutigen Tag liegen/, make: () => mkSent() },
+    { name: 'neues Zahlungsziel in der Vergangenheit', previewBlocked: false, over: { dueDate: utc('1995-01-01T00:00:00.000Z') },
+      msg: /Zahlungsziel der Mahnung muss nach dem heutigen Tag liegen/, make: () => mkSent() },
+    { name: 'ungültige Mahngebühr (3 Nachkommastellen, keine stille Rundung)', previewBlocked: false, over: { fee: '1.234' },
+      msg: /Mahngebühr/, make: () => mkSent() },
+  ]
+  for (const n of NEG) {
+    test(`C2 ${n.name}: abgelehnt, es wird nichts geschrieben`, async () => {
+      const id = await n.make()
+      const before = await stateOf(id)
+      const e = await rejection(mkDun(id, n.level ?? 1, n.over ?? {}, n.nowIso ?? NOW_ISO))
+      expect(e.name).toBe('BusinessRuleError')
+      expect(e.message).toMatch(n.msg)
+      expect(await stateOf(id)).toBe(before)                                  // Rechnung, Mahnungen, Audit-Anzahl, Zahlungen unverändert
+      expect((await notices(id)).length).toBe(0)
+      if (n.previewBlocked) expect((await elig(id)).ok).toBe(false)           // Anzeige und Service stimmen überein
+      else expect((await elig(id)).ok).toBe(true)
+      log.push(`C2 ok: ${n.name} → "${e.message}"`)
+    })
+  }
+
+  // C2 – Berliner Tagesgrenze gegen die echte DB (Winter, Sommer, beide Umstellungstage), danach jeweils Anlage erlaubt
+  const BOUNDS: Array<[string, string, string, string]> = [
+    ['Winter (CET)', '1995-01-15', '1995-01-15T22:59:59.999Z', '1995-01-15T23:00:00.000Z'],
+    ['Sommer (CEST)', '1995-07-15', '1995-07-15T21:59:59.999Z', '1995-07-15T22:00:00.000Z'],
+    ['Umstellung Frühjahr (23-h-Tag)', '1995-03-26', '1995-03-26T21:59:59.999Z', '1995-03-26T22:00:00.000Z'],
+    ['Umstellung Herbst (25-h-Tag)', '1995-09-24', '1995-09-24T22:59:59.999Z', '1995-09-24T23:00:00.000Z'],
+  ]
+  for (const [label, due, before, at] of BOUNDS) {
+    test(`C2 Berliner Grenze ${label}: am Fälligkeitstag gesperrt, ab 00:00 Europe/Berlin am Folgetag mahnbar`, async () => {
+      const id = await mkSent(due)
+      const over = { dueDate: utc('1996-01-01T00:00:00.000Z') }
+      for (const early of [`${due}T00:00:00.000Z`, `${due}T12:00:00.000Z`, before]) {
+        const s0 = await stateOf(id)
+        const e = await rejection(mkDun(id, 1, over, early))
+        expect(e.name).toBe('BusinessRuleError'); expect(e.message).toMatch(/noch nicht überschritten/)
+        expect(await stateOf(id)).toBe(s0)
+        expect((await elig(id, early)).ok).toBe(false)
+      }
+      expect((await elig(id, at)).ok).toBe(true)
+      const nid = await mkDun(id, 1, over, at)
+      expect((await notices(id)).length).toBe(1)
+      const a = await createAudits(nid)
+      expect(a[0].new_value.snapshot).toMatchObject({ calculatedAt: at, invoiceDueDate: due })
+      log.push(`C2 ok Berlin ${label}: gesperrt bis ${before}, mahnbar ab ${at}`)
+    })
+  }
+
+  // ── C3 PARTIALLY_PAID: Basis = tatsächlicher Rest; paidAmount-Cache ist nicht die Quelle ────────────────────────
+  test('C3 PARTIALLY_PAID: Basis = Brutto − Σ aktive Zahlungen, auch bei absichtlich verfälschtem paidAmount-Cache; OVERDUE bleibt nach weiterer Teilzahlung', async () => {
+    const id = await mkSent()
+    const g = cents(await grossOf(id)); const p1 = await partOf(id)
+    await payPart(id)
+    expect((await inv(id)).status).toBe('PARTIALLY_PAID')
+    // Nur diese Testzeile: Cache verfälschen – die Policy darf ihn nicht lesen.
+    await ownSet(id, { op: 'paidAmount', value: '0.01' })
+    const dto = await elig(id)
+    expect(dto).toMatchObject({ ok: true, nextLevel: 1, outstandingAmount: cents(remainingMoney(g, p1).toFixed()) })
+    const n1 = await mkDun(id, 1)
+    expect((await inv(id)).status).toBe('PARTIALLY_PAID')
+    await expectSnapshot(id, n1, { level: 1, paid: p1, statusBefore: 'PARTIALLY_PAID', fee: null, prev: null })
+    await markSent(n1)
+    const n2 = await mkDun(id, 2)
+    expect((await inv(id)).status).toBe('OVERDUE')
+    const sa = await dunStatusAudits(id)
+    expect(sa.length).toBe(1); expect(sa[0].old_value).toEqual({ status: 'PARTIALLY_PAID' }); expect(sa[0].new_value).toEqual({ status: 'OVERDUE' })
+    expect(sa[0].metadata).toMatchObject({ outstandingAmount: cents(remainingMoney(g, p1).toFixed()) })
+    await expectSnapshot(id, n2, { level: 2, paid: p1, statusBefore: 'PARTIALLY_PAID', fee: '5.00', prev: { id: n1, level: 1 } })
+    // weitere Teilzahlung: Status bleibt OVERDUE, Rest sinkt; Stufe 3 nutzt die neue Summe
+    const rest = remainingMoney(g, p1)
+    const p2 = (Math.round(Number(rest.toFixed()) * 50) / 100).toFixed(2)
+    await pay.addPayment(payInput(id, Number(p2)), userId, userEmail)
+    expect((await inv(id)).status).toBe('OVERDUE')
+    await markSent(n2)
+    const n3 = await mkDun(id, 3)
+    const paid2 = cents(toMoney(p1).plus(toMoney(p2)).toFixed())
+    await expectSnapshot(id, n3, { level: 3, paid: paid2, statusBefore: 'OVERDUE', fee: '10.00', prev: { id: n2, level: 2 } })
+    log.push(`C3 ok: Brutto ${g}, Zahlungen ${p1}+${p2}=${paid2}, Cache absichtlich 0.01 → Basis aus Zahlungszeilen; PARTIALLY_PAID → OVERDUE (L2), bleibt OVERDUE`)
+  })
+
+  // ── C4 Zahlung ↔ Mahnungsanlage in beiden Richtungen (erzwungene Reihenfolge) ──────────────────────────────────
+  test('C4a Mahnung zuerst (L1), danach Vollzahlung: Snapshot zeigt den alten Rest, Mahnung bleibt unverändert, Status PAID', async () => {
+    const id = await mkSent(); const g = cents(await grossOf(id))
+    const o = await orchestrate(id, () => mkDun(id, 1), () => payFull(id))
+    expect(o.ra.ok).toBe(true); expect(o.rb.ok).toBe(true)                   // wäre die Zahlung zuerst gewesen, wäre die Mahnung abgelehnt worden (PAID)
+    await adoptNotices(id)
+    const nid = (o.ra as any).value as string
+    await expectSnapshot(id, nid, { level: 1, paid: '0', statusBefore: 'SENT', fee: null, prev: null })
+    const s = await inv(id), ap = await activePayments(id)
+    expect(s.status).toBe('PAID'); expect(ap.c).toBe(1); expect(cents(ap.s)).toBe(g)
+    expect((await notices(id)).length).toBe(1)
+    log.push(`C4a ok: ${pids(o)}`)
+  })
+  test('C4b Vollzahlung zuerst, danach Mahnung: Mahnung abgelehnt („Bezahlt“), nichts angelegt', async () => {
+    const id = await mkSent()
+    const o = await orchestrate(id, () => payFull(id), () => mkDun(id, 1))
+    expect(o.ra.ok).toBe(true)
+    expect(o.rb.ok).toBe(false); expect((o.rb as any).error.name).toBe('BusinessRuleError'); expect((o.rb as any).error.message).toMatch(/Status „Bezahlt“/)
+    expect((await inv(id)).status).toBe('PAID')
+    expect((await notices(id)).length).toBe(0)
+    expect((await activePayments(id)).c).toBe(1)
+    log.push(`C4b ok: ${pids(o)}`)
+  })
+  test('C4c Teilzahlung zuerst, danach Mahnung (L1): Snapshot mit reduziertem Rest, Status PARTIALLY_PAID', async () => {
+    const id = await mkSent(); const p1 = await partOf(id)
+    const o = await orchestrate(id, () => payPart(id), () => mkDun(id, 1))
+    expect(o.ra.ok).toBe(true); expect(o.rb.ok).toBe(true)
+    await adoptNotices(id)
+    await expectSnapshot(id, (o.rb as any).value, { level: 1, paid: p1, statusBefore: 'PARTIALLY_PAID', fee: null, prev: null })
+    expect((await inv(id)).status).toBe('PARTIALLY_PAID')
+    log.push(`C4c ok: ${pids(o)}; Snapshot activePaymentsSum ${cents(p1)}`)
+  })
+  test('C4d Mahnung L2 zuerst, danach Teilzahlung: Snapshot ohne die Zahlung, Status bleibt OVERDUE (Zahlung setzt OVERDUE nicht zurück)', async () => {
+    const id = await mkSent()
+    const n1 = await mkDun(id, 1); await markSent(n1)
+    const o = await orchestrate(id, () => mkDun(id, 2), () => payPart(id))
+    expect(o.ra.ok).toBe(true); expect(o.rb.ok).toBe(true)
+    await adoptNotices(id)
+    await expectSnapshot(id, (o.ra as any).value, { level: 2, paid: '0', statusBefore: 'SENT', fee: '5.00', prev: { id: n1, level: 1 } })
+    expect((await inv(id)).status).toBe('OVERDUE')
+    const sa = await dunStatusAudits(id); expect(sa.length).toBe(1); expect(sa[0].old_value).toEqual({ status: 'SENT' })
+    const pa = await paymentAudits(id); expect(pa.length).toBe(1); expect(pa[0].new_value).toMatchObject({ newStatus: 'OVERDUE' })
+    log.push(`C4d ok: ${pids(o)}`)
+  })
+  test('C4e Mahnung L2 zuerst, danach Vollzahlung: Mahnung bleibt, Status PAID, Zahlung vollständig erhalten', async () => {
+    const id = await mkSent(); const g = cents(await grossOf(id))
+    const n1 = await mkDun(id, 1); await markSent(n1)
+    const o = await orchestrate(id, () => mkDun(id, 2), () => payFull(id))
+    expect(o.ra.ok).toBe(true); expect(o.rb.ok).toBe(true)
+    await adoptNotices(id)
+    await expectSnapshot(id, (o.ra as any).value, { level: 2, paid: '0', statusBefore: 'SENT', fee: '5.00', prev: { id: n1, level: 1 } })
+    expect((await inv(id)).status).toBe('PAID')
+    expect(cents((await activePayments(id)).s)).toBe(g)
+    expect((await notices(id)).length).toBe(2)
+    log.push(`C4e ok: ${pids(o)}`)
+  })
+  test('C4f Teilzahlung zuerst, danach Mahnung L2: Snapshot mit reduziertem Rest, PARTIALLY_PAID → OVERDUE', async () => {
+    const id = await mkSent(); const p1 = await partOf(id)
+    const n1 = await mkDun(id, 1); await markSent(n1)
+    const o = await orchestrate(id, () => payPart(id), () => mkDun(id, 2))
+    expect(o.ra.ok).toBe(true); expect(o.rb.ok).toBe(true)
+    await adoptNotices(id)
+    await expectSnapshot(id, (o.rb as any).value, { level: 2, paid: p1, statusBefore: 'PARTIALLY_PAID', fee: '5.00', prev: { id: n1, level: 1 } })
+    expect((await inv(id)).status).toBe('OVERDUE')
+    const sa = await dunStatusAudits(id); expect(sa.length).toBe(1); expect(sa[0].old_value).toEqual({ status: 'PARTIALLY_PAID' })
+    log.push(`C4f ok: ${pids(o)}`)
+  })
+
+  // ── C5 Zwei parallele Anlagen derselben nächsten Stufe ────────────────────────────────────────────────────────
+  test('C5a zwei Anlagen von Stufe 1, beide nachweislich an der Sperre wartend: genau eine Mahnung, ein CREATE-Audit, die zweite LEVEL_MISMATCH', async () => {
+    const id = await mkSent()
+    const o = await orchestrate(id, () => mkDun(id, 1), () => mkDun(id, 1))
+    await adoptNotices(id)
+    const oks = [o.ra, o.rb].filter((r) => r.ok), bad = [o.ra, o.rb].filter((r) => !r.ok)
+    expect(oks.length).toBe(1); expect(bad.length).toBe(1)
+    const err = (bad[0] as any).error
+    expect(err.name).toBe('BusinessRuleError'); expect(err.message).toMatch(/nächste Mahnstufe muss 2 sein \(aktuell: 1\)/)
+    expect((await notices(id)).length).toBe(1)
+    const nid = (oks[0] as any).value
+    expect((await createAudits(nid)).length).toBe(1)
+    const allCreates = await prisma.$queryRaw`SELECT count(*)::int AS n FROM audit_logs WHERE entity_type = 'dunning_notice' AND action = 'CREATE' AND entity_id IN (SELECT id FROM dunning_notices WHERE invoice_id = ${id})`
+    expect(allCreates[0].n).toBe(1)                                                    // der Verlierer hat kein Audit hinterlassen
+    log.push(`C5a ok: Gewinner ${o.ra.ok ? 'A (zuerst wartend)' : 'B'}; ${pids(o)}; Verlierer: "${err.message}"`)
+  })
+  test('C5b zwei Anlagen von Stufe 2 (Stufe 1 versendet): genau eine Stufe-2-Mahnung, genau ein Dunning-Statusaudit', async () => {
+    const id = await mkSent()
+    const n1 = await mkDun(id, 1); await markSent(n1)
+    const o = await orchestrate(id, () => mkDun(id, 2), () => mkDun(id, 2))
+    await adoptNotices(id)
+    const oks = [o.ra, o.rb].filter((r) => r.ok), bad = [o.ra, o.rb].filter((r) => !r.ok)
+    expect(oks.length).toBe(1); expect(bad.length).toBe(1)
+    expect((bad[0] as any).error.message).toMatch(/nächste Mahnstufe muss 3 sein \(aktuell: 2\)/)
+    expect((await notices(id)).map((n: any) => n.level)).toEqual([1, 2])
+    expect((await dunStatusAudits(id)).length).toBe(1)
+    expect((await inv(id)).status).toBe('OVERDUE')
+    log.push(`C5b ok: ${pids(o)}`)
+  })
+  test('C5c freie Parallelität: 4 gleichzeitige Anlagen von Stufe 1, 3 Runden – je Runde genau eine Mahnung und ein CREATE-Audit', async () => {
+    const wins: number[] = []
+    for (let r = 0; r < 3; r++) {
+      const id = await mkSent()
+      const rs = await Promise.allSettled(Array.from({ length: 4 }, () => mkDun(id, 1)))
+      await adoptNotices(id)
+      expect(rs.filter((x) => x.status === 'fulfilled').length).toBe(1)
+      for (const x of rs.filter((x) => x.status === 'rejected') as PromiseRejectedResult[]) {
+        expect(x.reason.name).toBe('BusinessRuleError'); expect(x.reason.message).toMatch(/nächste Mahnstufe muss 2 sein/)
+      }
+      const ns = await notices(id); expect(ns.length).toBe(1)
+      expect((await createAudits(ns[0].id)).length).toBe(1)
+      wins.push(ns.length); await park()
+    }
+    log.push(`C5c ok: ${wins.join(',')} Mahnung(en) je Runde`)
+  })
+
+  // ── C6 Anlage Stufe 2 ↔ „versendet“ von Stufe 1, beide Reihenfolgen ───────────────────────────────────────────
+  test('C6a Anlage L2 zuerst, danach „versendet“ von L1: L2 abgelehnt (PREVIOUS_NOT_SENT), Markierung gelingt', async () => {
+    const id = await mkSent()
+    const n1 = await mkDun(id, 1)
+    const o = await orchestrate(id, () => mkDun(id, 2), () => markSent(n1))
+    expect(o.ra.ok).toBe(false)
+    expect((o.ra as any).error.name).toBe('BusinessRuleError'); expect((o.ra as any).error.message).toMatch(/Mahnstufe 1 ist noch nicht als versendet markiert/)
+    expect(o.rb.ok).toBe(true)
+    const ns = await notices(id); expect(ns.length).toBe(1); expect(ns[0].sent_at).not.toBeNull()
+    expect((await inv(id)).status).toBe('SENT')
+    expect((await sentAudits(n1)).length).toBe(1)
+    log.push(`C6a ok: ${pids(o)}`)
+  })
+  test('C6b „versendet“ von L1 zuerst, danach Anlage L2: beides gelingt; Snapshot trägt den Versandzeitpunkt der Vorstufe', async () => {
+    const id = await mkSent()
+    const n1 = await mkDun(id, 1)
+    const o = await orchestrate(id, () => markSent(n1), () => mkDun(id, 2))
+    expect(o.ra.ok).toBe(true); expect(o.rb.ok).toBe(true)
+    await adoptNotices(id)
+    await expectSnapshot(id, (o.rb as any).value, { level: 2, paid: '0', statusBefore: 'SENT', fee: '5.00', prev: { id: n1, level: 1 } })
+    expect((await inv(id)).status).toBe('OVERDUE')
+    log.push(`C6b ok: ${pids(o)}`)
+  })
+
+  // ── C7 Doppelte „versendet“-Markierung ────────────────────────────────────────────────────────────────────────
+  test('C7a zwei Markierungen derselben Mahnung, beide an der Sperre wartend: genau ein sentAt, genau ein Audit', async () => {
+    const id = await mkSent(); const n1 = await mkDun(id, 1)
+    const o = await orchestrate(id, () => markSent(n1), () => markSent(n1))
+    const oks = [o.ra, o.rb].filter((r) => r.ok), bad = [o.ra, o.rb].filter((r) => !r.ok)
+    expect(oks.length).toBe(1); expect(bad.length).toBe(1)
+    expect((bad[0] as any).error.name).toBe('BusinessRuleError'); expect((bad[0] as any).error.message).toMatch(/bereits als versendet markiert/)
+    const sa = await sentAudits(n1); expect(sa.length).toBe(1)
+    const row = (await notices(id))[0]
+    expect(row.sent_at).not.toBeNull()
+    expect(sa[0].new_value.sentAt).toBe(new Date(row.sent_at).toISOString())             // Audit und Datensatz tragen denselben Zeitpunkt
+    expect(sa[0].metadata).toMatchObject({ invoiceId: id, level: 1 })
+    log.push(`C7a ok: Gewinner ${o.ra.ok ? 'A' : 'B'}; ${pids(o)}`)
+  })
+  test('C7b freie Parallelität: 4 gleichzeitige Markierungen, 3 Runden – je Runde genau ein Erfolg und ein Audit', async () => {
+    for (let r = 0; r < 3; r++) {
+      const id = await mkSent(); const n1 = await mkDun(id, 1)
+      const rs = await Promise.allSettled(Array.from({ length: 4 }, () => markSent(n1)))
+      expect(rs.filter((x) => x.status === 'fulfilled').length).toBe(1)
+      for (const x of rs.filter((x) => x.status === 'rejected') as PromiseRejectedResult[]) expect(x.reason.message).toMatch(/bereits als versendet markiert/)
+      expect((await sentAudits(n1)).length).toBe(1)
+      await park()
+    }
+    log.push('C7b ok: 3 Runden je 1 Erfolg')
+  })
+  test('C7c „versendet“ nur bei mahnbarem Rechnungsstatus (D8): bei PAID/CANCELLED verweigert, nichts geschrieben', async () => {
+    const id = await mkSent(); const n1 = await mkDun(id, 1)
+    await payFull(id)                                                   // Rechnung PAID
+    const s0 = await stateOf(id)
+    const e = await rejection(markSent(n1))
+    expect(e.name).toBe('BusinessRuleError'); expect(e.message).toMatch(/Status „Versendet“, „Teilweise bezahlt“ oder „Überfällig“/)
+    expect(await stateOf(id)).toBe(s0)
+    expect((await sentAudits(n1)).length).toBe(0)
+    log.push('C7c ok: PAID → Markierung verweigert')
+  })
+
+  // ── C8 Snapshot-Unveränderlichkeit ───────────────────────────────────────────────────────────────────────────
+  test('C8 spätere Zahlung verändert weder Mahnung noch Snapshot-Audit; neue Mahnung bekommt eigenen, neueren Stand', async () => {
+    const id = await mkSent(); const g = cents(await grossOf(id)); const p1 = await partOf(id)
+    const n1 = await mkDun(id, 1)
+    const row1 = JSON.stringify((await notices(id))[0]); const aud1 = JSON.stringify(await createAudits(n1))
+    expect((await createAudits(n1))[0].new_value.snapshot).toMatchObject({ activePaymentsSum: '0.00', outstandingAmount: g })
+    await payPart(id)
+    expect(JSON.stringify((await notices(id))[0])).toBe(row1)            // Mahnung unverändert
+    expect(JSON.stringify(await createAudits(n1))).toBe(aud1)            // Audit unverändert (Zahlung ändert den alten Snapshot nie)
+    await markSent(n1)
+    const n2 = await mkDun(id, 2, {}, '1995-01-25T12:00:00.000Z')
+    const a2 = (await createAudits(n2))[0].new_value.snapshot
+    expect(a2).toMatchObject({ activePaymentsSum: cents(p1), calculatedAt: '1995-01-25T12:00:00.000Z', berlinDate: '1995-01-25' })
+    expect(JSON.stringify(await createAudits(n1))).toBe(aud1)            // alter Snapshot weiterhin unverändert
+    log.push(`C8 ok: Snapshot L1 (0.00 gezahlt) unverändert nach Zahlung ${p1}; L2 trägt neuen Stand`)
+  })
+
+  // ── C9 Toleranz des Versand-Audits: reale Differenz messen, Grenzprüfung ──────────────────────────────────────
+  // Gemessen wird NUR; die festgelegte Konstante (60 000 ms) wird nicht kalibriert oder verändert.
+  test('C9a reale Statuswechsel FINALIZED → SENT: Differenz sentAt ↔ Audit.createdAt liegt weit innerhalb der festen Toleranz', async () => {
+    const ids: string[] = []
+    for (let i = 0; i < 8; i++) ids.push(await mkSent())
+    const rows = await prisma.$queryRaw`SELECT i.id AS id, (EXTRACT(EPOCH FROM (a.created_at - i.sent_at)) * 1000)::float8 AS delta_ms
+      FROM invoices i JOIN audit_logs a ON a.entity_id = i.id AND a.entity_type = 'invoice' AND a.action = 'STATUS_CHANGE'::"AuditAction"
+        AND a.old_value->>'status' = 'FINALIZED' AND a.new_value->>'status' = 'SENT' AND a.user_id IS NOT NULL
+      WHERE i.id = ANY(${ids}::text[])`
+    expect(rows.length).toBe(ids.length)                                      // genau ein Nachweis je Rechnung
+    const deltas = rows.map((r: any) => Number(r.delta_ms))
+    for (const d of deltas) {
+      expect(Math.abs(d)).toBeLessThanOrEqual(TOLERANCE_MS)                    // innerhalb der Toleranz
+    }
+    // Und die echte Policy akzeptiert diese regulären Nachweise tatsächlich.
+    for (const id of ids.slice(0, 2)) { expect((await elig(id)).ok).toBe(true) }
+    log.push(`C9a ok: ${deltas.length} reale Wechsel, Differenz Audit−sentAt: min ${Math.min(...deltas)} ms, max ${Math.max(...deltas)} ms (fachlicher Assert: ≤ ${TOLERANCE_MS} ms; diagnostischer Richtwert ${C9_DIAG_MS} ms ${Math.max(...deltas.map(Math.abs)) > C9_DIAG_MS ? 'ÜBERSCHRITTEN (nur Hinweis, kein Fehler)' : 'eingehalten'}) – Konstante unverändert`)
+  })
+  const EDGES: Array<[string, number, boolean]> = [
+    ['+60000 ms (Grenze, inklusive)', 60_000, true],
+    ['−60000 ms (Grenze, inklusive)', -60_000, true],
+    ['+60001 ms', 60_001, false],
+    ['−60001 ms', -60_001, false],
+  ]
+  for (const [label, delta, allowed] of EDGES) {
+    test(`C9b Grenzprüfung gegen die echte DB: sentAt = Audit.createdAt ${label} → ${allowed ? 'mahnbar' : 'NO_SEND_AUDIT'}`, async () => {
+      const id = await mkSent()
+      const ev = await dispatchEvidence(id); expect(ev.length).toBe(1)
+      // Differenz Audit − sentAt = delta; sent_at wird direkt in PostgreSQL aus dem konkreten Audit-Zeitstempel berechnet (nur eigene Testzeile)
+      await ownSet(id, { op: 'sentAtFromAudit', auditId: ev[0].audit_id, deltaMs: delta })
+      const d = (await prisma.$queryRaw`SELECT (EXTRACT(EPOCH FROM (a.created_at - i.sent_at)) * 1000)::float8 AS d FROM invoices i
+        JOIN audit_logs a ON a.id = ${ev[0].audit_id} WHERE i.id = ${id}`)[0].d
+      expect(Number(d)).toBe(delta)
+      if (allowed) {
+        const nid = await mkDun(id, 1)
+        expect((await createAudits(nid)).length).toBe(1)
+        expect((await elig(id)).ok).toBe(false)                                       // nach Anlage: nächste Stufe wartet auf „versendet“
+      } else {
+        const s0 = await stateOf(id)
+        const e = await rejection(mkDun(id, 1))
+        expect(e.name).toBe('BusinessRuleError'); expect(e.message).toMatch(/nicht nachvollziehbar dokumentiert/)
+        expect(await stateOf(id)).toBe(s0)
+        expect((await elig(id)).reasons).toContain('NO_SEND_AUDIT')
+      }
+      log.push(`C9b ok: ${label} → ${allowed ? 'mahnbar' : 'gesperrt'}`)
+    })
+  }
+
+  // ── Z Abschluss-Invarianten ───────────────────────────────────────────────────────────────────────────────────
+  test('Z Fremdbestand (Rechnungen, Mahnungen, Zahlungen, bestehende Audits) und Stammdaten unverändert; Nummernkreis nur durch eigene Testrechnungen erhöht; alles geparkt', async () => {
+    await park()
+    for (const id of created) await adoptNotices(id)
+    expect(await fremd()).toBe(fremdBefore)
+    expect(await stamm()).toBe(stammBefore)
+    const numbered = await prisma.$queryRaw`SELECT count(*)::int AS n FROM invoices WHERE id = ANY(${created}::text[]) AND invoice_number IS NOT NULL`
+    expect((await seqValue()) - seqBefore).toBe(numbered[0].n)
+    const notParked = await prisma.$queryRaw`SELECT count(*)::int AS n FROM invoices WHERE id = ANY(${created}::text[]) AND due_date IS DISTINCT FROM ${PARK}`
+    expect(notParked[0].n).toBe(0)
+    const foreignDun = await prisma.$queryRaw`SELECT count(*)::int AS n FROM dunning_notices WHERE id = ANY(${createdNotices}::text[]) AND invoice_id <> ALL(${created}::text[])`
+    expect(foreignDun[0].n).toBe(0)                                                    // eigene Mahnungen hängen nur an eigenen Rechnungen
+    // Keine Mahnung/Zahlung dieses Laufs an einer fremden Rechnung (Zahlungen sind über die Referenz "P53-DB <Lauf>" erkennbar):
+    const foreignPay = await prisma.$queryRaw`SELECT count(*)::int AS n FROM payments WHERE reference LIKE ${OWN_LIKE} AND invoice_id <> ALL(${created}::text[])`
+    expect(foreignPay[0].n).toBe(0)
+    const ownNoticeRows = await prisma.$queryRaw`SELECT count(*)::int AS n FROM dunning_notices WHERE id = ANY(${createdNotices}::text[])`
+    expect(ownNoticeRows[0].n).toBe(createdNotices.length)                              // jede registrierte Mahnung existiert
+    const stranger = await prisma.$queryRaw`SELECT count(*)::int AS n FROM dunning_notices dn WHERE dn.created_by_id = ${userId} AND dn.invoice_id <> ALL(${created}::text[])
+      AND dn.id = ANY(${createdNotices}::text[])`
+    expect(stranger[0].n).toBe(0)
+    const unregistered = await prisma.$queryRaw`SELECT count(*)::int AS n FROM dunning_notices WHERE invoice_id = ANY(${created}::text[]) AND id <> ALL(${createdNotices}::text[])`
+    expect(unregistered[0].n).toBe(0)                                                  // keine unregistrierte Mahnung an eigenen Rechnungen
+    log.push(`Z ok: Nummernkreis ${seqBefore} → ${await seqValue()} = ${numbered[0].n} nummerierte Testrechnungen (gesamt ${created.length} Rechnungen, ${createdNotices.length} Mahnungen); Fremdbestand (Rechnungen, Mahnungen, Zahlungen, ${auditCutoff} und früher Audits) und Stammdaten unverändert; alle Testrechnungen geparkt`)
+  })
+})

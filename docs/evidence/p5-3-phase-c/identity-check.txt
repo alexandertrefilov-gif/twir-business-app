@@ -1,0 +1,9 @@
+Verbindung: {"db":"twir_g6_test","port":5432,"ro":"on","tz":"Europe/Berlin","v":"PostgreSQL 16.13 (Homebrew) on aarch64-apple-darwin25.2.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit"}
+Spalten dunning_notices/invoices: ["dunning_notices.id:text","dunning_notices.invoice_id:text","dunning_notices.level:integer","dunning_notices.level_label:text","dunning_notices.sent_at:timestamp without time zone","dunning_notices.due_date:timestamp without time zone","dunning_notices.fee:numeric","dunning_notices.pdf_path:text","dunning_notices.created_by_id:text","dunning_notices.created_at:timestamp without time zone","dunning_notices.deleted_at:timestamp without time zone","invoices.status:USER-DEFINED","invoices.type:USER-DEFINED","invoices.original_invoice_id:text","invoices.due_date:timestamp without time zone","invoices.sent_at:timestamp without time zone","invoices.total_gross:numeric","invoices.paid_amount:numeric"]
+Enums: ["InvoiceStatus.DRAFT","InvoiceStatus.FINALIZED","InvoiceStatus.SENT","InvoiceStatus.PARTIALLY_PAID","InvoiceStatus.PAID","InvoiceStatus.OVERDUE","InvoiceStatus.CANCELLED","InvoiceStatus.CORRECTED","InvoiceType.STANDARD","InvoiceType.ADVANCE","InvoiceType.PARTIAL","InvoiceType.FINAL","InvoiceType.CORRECTION","InvoiceType.CANCELLATION"]
+Zähler: {"invoices":443,"dunning_notices":131,"payments":143,"audit_logs":2345,"users":7,"customers":6,"company_settings":1}
+Vorhandene P53-DB-Reste: 179
+Sitzungen mit Lock-Wartezustand: 0
+Nummernkreise: [{"type":"INVOICE","last_number":421},{"type":"OFFER","last_number":6},{"type":"OFFER","last_number":3},{"type":"OFFER","last_number":3},{"type":"OFFER","last_number":30},{"type":"OFFER","last_number":2},{"type":"ORDER","last_number":86},{"type":"SERVICE_REPORT","last_number":13}]
+Migrationen: {"n":12,"letzte":"20261008121000_invoice_buyer_reference"}
+IDENTITÄTSPRÜFUNG OK (nur lesend).

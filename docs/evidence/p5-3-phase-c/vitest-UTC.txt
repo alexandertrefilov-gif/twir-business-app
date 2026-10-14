@@ -1,0 +1,60 @@
+
+ RUN  v2.1.9 /Users/alexandertrefilov/Downloads/p5-3-db
+
+stdout | p5-3-dunning-db.test.ts > REQ-029 P5-3 Phase C – Mahnwesen auf twir_g6_test
+
+=== P5-3 DB-Protokoll ===
+Verbindung ok: twir_g6_test:5432, Lauf 20261014194936, Nummernkreis vorher 421, Audit-Obergrenze 2026-10-11 16:39:51.463
+C1 ok: SENT →(L1) SENT →(L2) OVERDUE →(L3) OVERDUE; 3 Mahnungen mit je 1 CREATE-Audit (Snapshot exakt), 1 Dunning-Statusaudit, L4 abgelehnt
+C2 ok: FINALIZED (nicht versendet) → "Für Rechnungen im Status „Finalisiert“ kann keine Mahnung erstellt werden."
+C2 ok: DRAFT → "Für Rechnungen im Status „Entwurf“ kann keine Mahnung erstellt werden."
+C2 ok: sentAt fehlt (Altdaten: Status SENT ohne Versanddatum) → "Die Rechnung ist nicht als versendet dokumentiert (Versanddatum fehlt)."
+C2 ok: Versand-Audit fehlt (Altdaten: SENT + sentAt ohne Audit) → "Der Rechnungsversand ist nicht nachvollziehbar dokumentiert (Statuswechsel auf „Versendet“ fehlt)."
+C2 ok: Versand-Audit nur vom Systemakteur (userId null) → "Der Rechnungsversand ist nicht nachvollziehbar dokumentiert (Statuswechsel auf „Versendet“ fehlt)."
+C2 ok: Versand-Audit in falscher Richtung (SENT → OVERDUE) → "Der Rechnungsversand ist nicht nachvollziehbar dokumentiert (Statuswechsel auf „Versendet“ fehlt)."
+C2 ok: Versand-Audit außerhalb der Toleranz (+61 s) → "Der Rechnungsversand ist nicht nachvollziehbar dokumentiert (Statuswechsel auf „Versendet“ fehlt)."
+C2 ok: Stornorechnung (CANCELLATION) → "Für Stornorechnungen kann keine Mahnung erstellt werden."
+C2 ok: Korrekturrechnung (CORRECTION) → "Für Korrekturrechnungen kann keine Mahnung erstellt werden."
+C2 ok: Status PAID (Vollzahlung über den Zahlungsservice) → "Für Rechnungen im Status „Bezahlt“ kann keine Mahnung erstellt werden."
+C2 ok: Status CANCELLED (Original einer Stornierung) → "Für Rechnungen im Status „Storniert“ kann keine Mahnung erstellt werden."
+C2 ok: Restbetrag 0 trotz Status OVERDUE (aktive Zahlungen = Brutto) → "Es ist kein offener Betrag vorhanden."
+C2 ok: Rechnung ohne Zahlungsziel → "Die Rechnung hat kein Zahlungsziel."
+C2 ok: Zahlungsziel noch nicht überschritten (Fälligkeitstag selbst) → "Das Zahlungsziel (20.01.1995) ist noch nicht überschritten."
+C2 ok: Stufe 2 ohne vorhandene Stufe 1 → "Die nächste Mahnstufe muss 1 sein (aktuell: 0)."
+C2 ok: neues Zahlungsziel = heutiger Berliner Tag → "Das neue Zahlungsziel der Mahnung muss nach dem heutigen Tag liegen."
+C2 ok: neues Zahlungsziel in der Vergangenheit → "Das neue Zahlungsziel der Mahnung muss nach dem heutigen Tag liegen."
+C2 ok: ungültige Mahngebühr (3 Nachkommastellen, keine stille Rundung) → "Mahngebühr: höchstens 2 Nachkommastellen erlaubt. Der Wert wird nicht automatisch gerundet – bitte korrigieren."
+C2 ok Berlin Winter (CET): gesperrt bis 1995-01-15T22:59:59.999Z, mahnbar ab 1995-01-15T23:00:00.000Z
+C2 ok Berlin Sommer (CEST): gesperrt bis 1995-07-15T21:59:59.999Z, mahnbar ab 1995-07-15T22:00:00.000Z
+C2 ok Berlin Umstellung Frühjahr (23-h-Tag): gesperrt bis 1995-03-26T21:59:59.999Z, mahnbar ab 1995-03-26T22:00:00.000Z
+C2 ok Berlin Umstellung Herbst (25-h-Tag): gesperrt bis 1995-09-24T22:59:59.999Z, mahnbar ab 1995-09-24T23:00:00.000Z
+C3 ok: Brutto 107.10, Zahlungen 42.84+32.13=74.97, Cache absichtlich 0.01 → Basis aus Zahlungszeilen; PARTIALLY_PAID → OVERDUE (L2), bleibt OVERDUE
+C4a ok: Halter-PID 94117, A-PID 94134, B-PID 94135 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C4b ok: Halter-PID 94135, A-PID 94134, B-PID 94117 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C4c ok: Halter-PID 94117, A-PID 94134, B-PID 94135 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete); Snapshot activePaymentsSum 42.84
+C4d ok: Halter-PID 94135, A-PID 94134, B-PID 94136 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C4e ok: Halter-PID 94136, A-PID 94134, B-PID 94117 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C4f ok: Halter-PID 94117, A-PID 94136, B-PID 94134 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C5a ok: Gewinner A (zuerst wartend); Halter-PID 94134, A-PID 94136, B-PID 94117 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete); Verlierer: "Die nächste Mahnstufe muss 2 sein (aktuell: 1)."
+C5b ok: Halter-PID 94117, A-PID 94136, B-PID 94134 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C5c ok: 1,1,1 Mahnung(en) je Runde
+C6a ok: Halter-PID 94135, A-PID 94117, B-PID 94134 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C6b ok: Halter-PID 94134, A-PID 94135, B-PID 94117 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C7a ok: Gewinner A; Halter-PID 94117, A-PID 94135, B-PID 94136 (PIDs sind nur Kennungen; Beweis der Reihenfolge: A wartete nachweislich allein, bevor B startete)
+C7b ok: 3 Runden je 1 Erfolg
+C7c ok: PAID → Markierung verweigert
+C8 ok: Snapshot L1 (0.00 gezahlt) unverändert nach Zahlung 42.84; L2 trägt neuen Stand
+C9a ok: 8 reale Wechsel, Differenz Audit−sentAt: min 0 ms, max 1 ms (fachlicher Assert: ≤ 60000 ms; diagnostischer Richtwert 6000 ms eingehalten) – Konstante unverändert
+C9b ok: +60000 ms (Grenze, inklusive) → mahnbar
+C9b ok: −60000 ms (Grenze, inklusive) → mahnbar
+C9b ok: +60001 ms → gesperrt
+C9b ok: −60001 ms → gesperrt
+Z ok: Nummernkreis 421 → 477 = 56 nummerierte Testrechnungen (gesamt 57 Rechnungen, 36 Mahnungen); Fremdbestand (Rechnungen, Mahnungen, Zahlungen, 2026-10-11 16:39:51.463 und früher Audits) und Stammdaten unverändert; alle Testrechnungen geparkt
+
+ ✓ p5-3-dunning-db.test.ts (46 tests) 2574ms
+
+ Test Files  1 passed (1)
+      Tests  46 passed (46)
+   Start at  19:49:36
+   Duration  2.74s (transform 112ms, setup 0ms, collect 42ms, tests 2.57s, environment 0ms, prepare 33ms)
+

@@ -1,0 +1,7 @@
+Release-Worktree: /Users/alexandertrefilov/Downloads/release/business-app-release @ ee2316c1238176a8b871573a44b408b9cdd602b8
+Ziel-DB (hart): twir_g6_test @ localhost:5432
+Identitaetspruefung OK
+TZ=UTC rc=0        Tests  46 passed (46)
+TZ=Europe/Berlin rc=0        Tests  46 passed (46)
+TZ=America/New_York rc=0        Tests  46 passed (46)
+P5-3 PHASE C: alle Laeufe rc=0. Logs: /Users/alexandertrefilov/Downloads/p5-3-phaseC-run
