@@ -28,6 +28,7 @@ import type { PaymentCreateInput } from '@/lib/validators/payment.schema'
 import { toMoney, remainingMoney, normalizeMoneyInput, derivePaymentStatus, PAYMENT_AMOUNT_SPEC } from '@/lib/billing/payment-math'
 import { toCentString } from '@/lib/billing/money'
 import { moneyToNumber } from '@/lib/services/money-output'
+import { calendarDayRange } from '@/lib/utils/date-range-filter'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -310,10 +311,12 @@ export async function getPaymentJournal(
 ): Promise<{ entries: PaymentJournalEntry[]; total: number; totalAmount: number }> {
   const { search = '', page = 1, pageSize = 50, from, to } = params
 
+  const paymentDateRange = calendarDayRange(from, to)
+
   const where: Prisma.PaymentWhereInput = {
     deletedAt: null,
-    ...(from && { paymentDate: { gte: from } }),
-    ...(to   && { paymentDate: { lte: to } }),
+    // Zahlungsdatum ist ein Kalendertag (UTC-Mitternacht): eine gemeinsame Bedingung, Bis-Tag vollständig.
+    ...(paymentDateRange && { paymentDate: paymentDateRange }),
     ...(search && {
       OR: [
         { reference: { contains: search, mode: 'insensitive' } },

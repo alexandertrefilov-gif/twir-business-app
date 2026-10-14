@@ -253,7 +253,7 @@ export function InvoiceForm({
             <ul className="mt-2 space-y-1 text-xs">
               {reportDeviations.map((deviation) => (
                 <li key={deviation.position}>
-                  Position {deviation.position} „{deviation.description}": Leistungsnachweis {formatDecimalDe(deviation.previousNet)} € → Rechnung {formatDecimalDe(deviation.recalculatedNet)} € (Differenz {formatDecimalDe(deviation.difference)} €)
+                  Position {deviation.position} „{deviation.description}&quot;: Leistungsnachweis {formatDecimalDe(deviation.previousNet)} € → Rechnung {formatDecimalDe(deviation.recalculatedNet)} € (Differenz {formatDecimalDe(deviation.difference)} €)
                 </li>
               ))}
             </ul>

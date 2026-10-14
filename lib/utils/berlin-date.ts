@@ -227,3 +227,42 @@ export function formatBerlinDateTimeWithSeconds(value: Date | string | number): 
   const p = berlinInstantParts(value, 'formatBerlinDateTimeWithSeconds')
   return `${p.day}.${p.month}.${p.year}, ${p.hour}:${p.minute}:${p.second}`
 }
+
+// ── P5-6 C-1: Berliner Tages- und Monatsgrenzen als ECHTE ZEITPUNKTE ──────────────────────────────────
+// Achtung: `berlinDayStartUtc` (oben) liefert die UTC-Mitternacht eines Kalendertags (Darstellung gespeicherter
+// Kalendertage). Die Funktionen hier liefern dagegen den realen Zeitpunkt „00:00 Uhr in Europe/Berlin“ und sind
+// nur für Felder gedacht, die echte Zeitpunkte speichern (createdAt, finalizedAt, ...).
+
+/** Differenz Berliner Wanduhr − UTC in Millisekunden am gegebenen Zeitpunkt (+3 600 000 im Winter, +7 200 000 im Sommer). */
+function berlinOffsetMs(instantMs: number): number {
+  const p = berlinInstantParts(new Date(instantMs), 'berlinOffsetMs')
+  const wall = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second))
+  return wall - Math.floor(instantMs / 1000) * 1000
+}
+
+/**
+ * Realer Zeitpunkt von 00:00:00.000 Uhr Europe/Berlin am Kalendertag `isoDate` (`JJJJ-MM-TT`).
+ * Unabhängig von process.env.TZ. Sommer-/Winterzeit-Umstellungen liegen in Berlin nie um Mitternacht, daher ist
+ * das Ergebnis eindeutig.
+ */
+export function berlinDayStartInstant(isoDate: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
+  if (!match) throw new RangeError(`berlinDayStartInstant: ungültiges Datum „${isoDate}“`)
+  const wallMidnightAsUtc = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  if (formatUtcCalendarDate(new Date(wallMidnightAsUtc)) !== isoDate) {
+    throw new RangeError(`berlinDayStartInstant: ungültiges Datum „${isoDate}“`)
+  }
+  // Zwei Schritte: Offset am Näherungswert bestimmen, dann am korrigierten Wert erneut (deckt die Umstellungstage ab).
+  const first = wallMidnightAsUtc - berlinOffsetMs(wallMidnightAsUtc)
+  return new Date(wallMidnightAsUtc - berlinOffsetMs(first))
+}
+
+/** Beginn des FOLGENDEN Berliner Kalendertags nach `isoDate` als echter Zeitpunkt (exklusive Obergrenze für den Tag `isoDate`). */
+export function berlinNextDayStartInstant(isoDate: string): Date {
+  return berlinDayStartInstant(addCalendarDaysIso(isoDate, 1))
+}
+
+/** Beginn des aktuellen Berliner Kalendermonats (00:00 Uhr am Monatsersten, Europe/Berlin) als echter Zeitpunkt. */
+export function berlinMonthStartInstant(now: Date = new Date()): Date {
+  return berlinDayStartInstant(`${berlinCalendarDate(now).slice(0, 8)}01`)
+}

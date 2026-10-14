@@ -10,6 +10,7 @@
 import { prisma }      from '@/lib/db/prisma'
 import { Prisma }      from '@prisma/client'
 import type { AuditAction } from '@prisma/client'
+import { instantRangeForBerlinDays } from '@/lib/utils/date-range-filter'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -97,13 +98,15 @@ export async function getAuditLogs(
     pageSize = 50,
   } = params
 
+  const createdAtRange = instantRangeForBerlinDays(from, to)
+
   const where: Prisma.AuditLogWhereInput = {
     ...(userId     && { userId }),
     ...(entityType && { entityType }),
     ...(action     && { action }),
     ...(entityId   && { entityId }),
-    ...(from       && { createdAt: { gte: from } }),
-    ...(to         && { createdAt: { lte: to } }),
+    // `from`/`to` = gewählte Berliner Kalendertage (UTC-Mitternacht). Eine gemeinsame Bedingung, Bis-Tag vollständig.
+    ...(createdAtRange && { createdAt: createdAtRange }),
     ...(search && {
       OR: [
         { entityId:   { contains: search, mode: 'insensitive' } },

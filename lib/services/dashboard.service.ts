@@ -1,9 +1,10 @@
 import { Action, hasPermission, Resource } from '@/lib/auth/permissions'
 import { prisma } from '@/lib/db/prisma'
+import { berlinMonthStartInstant } from '@/lib/utils/berlin-date'
 
 export async function getDashboardStats() {
-  const now   = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  // Monatsbeginn nach Berliner Geschäftskalender (00:00 Uhr Europe/Berlin), nicht nach der Prozess-Zeitzone.
+  const start = berlinMonthStartInstant()
 
   const [
     canReadOffers,
