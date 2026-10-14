@@ -18,8 +18,10 @@ describe('WF-1A gemeinsamer Dokumentkopf in den Seiten', () => {
     })
   }
 
-  it('Rechnungsseite bleibt unverändert und ohne neue Kopfkomponente', () => {
-    expect(src('app/(dashboard)/invoices/[id]/page.tsx')).not.toContain('BusinessDocumentMeta')
+  // WF-1B hebt die WF-1A-Ausnahme der Rechnungsseite bewusst auf: Sie nutzt jetzt
+  // dieselbe gemeinsame Kopfkomponente (siehe wf1b-invoice-header.test.ts).
+  it('Rechnungsseite nutzt seit WF-1B die gemeinsame Kopfkomponente', () => {
+    expect(src('app/(dashboard)/invoices/[id]/page.tsx')).toContain('<BusinessDocumentMeta')
   })
 
   it('verwendet nur bestehende Leseberechtigungen', () => {

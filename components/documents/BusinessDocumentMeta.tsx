@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 import type { BusinessDocumentHeaderModel } from '@/lib/workflow/document-header'
 import {
   CUSTOMER_ORDER_DATE_LABEL,
@@ -17,14 +18,18 @@ function Item({ label, children, mono }: { label: string; children: React.ReactN
   )
 }
 
+export { Item as DocumentMetaItem }
+
 function RefValue({ number, href }: { number: string; href: string | null }) {
   return href
     ? <Link href={href} className="text-sm text-blue-700 hover:underline mono">{number}</Link>
     : <span className="mono">{number}</span>
 }
 
-export function BusinessDocumentMeta({ model }: { model: BusinessDocumentHeaderModel }) {
-  const { customer } = model
+// WF-1B: optionale `leadingItems` (z. B. Status-Badge) werden vor den Datumsfeldern
+// gerendert. Ohne Angabe und ohne Rechnungsadresse bleibt die Darstellung unverändert.
+export function BusinessDocumentMeta({ model, leadingItems }: { model: BusinessDocumentHeaderModel; leadingItems?: ReactNode }) {
+  const { customer, recipient } = model
   return (
     <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4" data-testid="business-document-meta">
       <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
@@ -43,6 +48,29 @@ export function BusinessDocumentMeta({ model }: { model: BusinessDocumentHeaderM
         </dd>
       </div>
 
+      {recipient && (
+        <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2" data-testid="business-document-recipient">
+          <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Rechnungsadresse</dt>
+          <dd className="mt-0.5">
+            {recipient.sourceLabel && <p className="text-xs text-muted-foreground">{recipient.sourceLabel}</p>}
+            <p className="mt-1 text-sm font-600">{recipient.name}</p>
+            {recipient.additional && <p className="text-sm text-muted-foreground">{recipient.additional}</p>}
+            {recipient.contactName && <p className="text-sm text-muted-foreground">{recipient.contactName}</p>}
+            {recipient.lines.length > 0 && (
+              <address className="mt-1 text-sm not-italic leading-5 text-muted-foreground">
+                {recipient.lines.map((line, index) => (
+                  <span key={`${index}-${line}`}>{index > 0 && <br />}{line}</span>
+                ))}
+              </address>
+            )}
+            {recipient.email && <p className="mt-1 text-xs text-muted-foreground">{recipient.email}</p>}
+            {recipient.vatId && <p className="text-xs text-muted-foreground mono">USt-IdNr.: {recipient.vatId}</p>}
+          </dd>
+        </div>
+      )}
+
+      {leadingItems}
+
       {model.fields.map((field) => (
         <Item key={field.label} label={field.label}>{field.value}</Item>
       ))}
@@ -54,8 +82,8 @@ export function BusinessDocumentMeta({ model }: { model: BusinessDocumentHeaderM
         <Item label={CUSTOMER_ORDER_DATE_LABEL}>{model.customerOrderDate}</Item>
       )}
 
-      {model.references.map((ref) => (
-        <Item key={`${ref.label}-${ref.number}`} label={ref.label}>
+      {model.references.map((ref, index) => (
+        <Item key={`${ref.label}-${ref.number}-${index}`} label={ref.label}>
           <RefValue number={ref.number} href={ref.href} />
         </Item>
       ))}

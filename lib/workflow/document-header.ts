@@ -1,6 +1,7 @@
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
 import { CUSTOMER_ORDER_LABEL } from '@/lib/workflow/document-labels'
+import { INVOICE_TYPE_LABELS, type InvoiceType } from '@/types/enums'
 import type { BusinessProcessData } from '@/lib/services/business-process.service'
 
 // WF-1A: reines View-Model für den gemeinsamen Dokumentkopf
@@ -28,6 +29,18 @@ export interface HeaderPermissions {
 }
 
 export interface HeaderField { label: string; value: string }
+
+// WF-1B: Rechnungsadresse (gespeicherter Rechnungs-Snapshot). Wird bewusst getrennt
+// vom Kunden-Stammdatensatz geführt und nur für Rechnungen übergeben.
+export interface HeaderRecipient {
+  sourceLabel: string | null
+  name: string
+  additional: string | null
+  contactName: string | null
+  email: string | null
+  vatId: string | null
+  lines: string[]
+}
 export interface HeaderReference { label: string; number: string; href: string | null }
 export interface HeaderDocumentLink { id: string; name: string; href: string; group: string }
 
@@ -40,10 +53,16 @@ export interface BusinessDocumentHeaderModel {
   references: HeaderReference[]
   project: HeaderReference | null
   documents: HeaderDocumentLink[]
+  /** WF-1B: nur gesetzt, wenn eine Rechnungsadresse übergeben wurde. */
+  recipient?: HeaderRecipient
 }
 
 export interface BuildHeaderInput {
-  current: 'offer' | 'order' | 'serviceReport'
+  current: 'offer' | 'order' | 'serviceReport' | 'invoice'
+  /** WF-1B: ID der aktuellen Rechnung; sie wird nie als Bezug aufgeführt. */
+  currentInvoiceId?: string
+  /** WF-1B: Rechnungsadresse aus dem Rechnungs-Snapshot. */
+  recipient?: HeaderRecipient | null
   customer: HeaderCustomer
   /** Dokumentspezifische Datumsfelder in gewünschter Reihenfolge; leere Werte entfallen. */
   dates: { label: string; value: Date | string | null | undefined; pattern?: string }[]
@@ -98,8 +117,25 @@ export function buildBusinessDocumentHeader(input: BuildHeaderInput): BusinessDo
     }
   }
   if (permissions.readInvoice) {
-    for (const invoice of process.invoices) {
-      references.push({ label: 'Rechnung', number: invoice.number, href: `/invoices/${invoice.id}` })
+    if (current === 'invoice') {
+      // WF-1B: Auf der Rechnungsseite nur andere Rechnungen desselben Vorgangs;
+      // die aktuelle Rechnung wird nie selbst aufgeführt. Ohne bekannte
+      // aktuelle ID wird nichts angezeigt (keine Selbstreferenz möglich).
+      for (const invoice of input.currentInvoiceId ? process.invoices : []) {
+        if (invoice.id === input.currentInvoiceId) continue
+        const typeLabel = invoice.type && invoice.type !== 'STANDARD'
+          ? INVOICE_TYPE_LABELS[invoice.type as InvoiceType] ?? null
+          : null
+        references.push({
+          label: 'Weitere Rechnung',
+          number: typeLabel ? `${invoice.number} · ${typeLabel}` : invoice.number,
+          href: `/invoices/${invoice.id}`,
+        })
+      }
+    } else {
+      for (const invoice of process.invoices) {
+        references.push({ label: 'Rechnung', number: invoice.number, href: `/invoices/${invoice.id}` })
+      }
     }
   }
 
@@ -130,5 +166,6 @@ export function buildBusinessDocumentHeader(input: BuildHeaderInput): BusinessDo
     references,
     project,
     documents,
+    ...(input.recipient ? { recipient: input.recipient } : {}),
   }
 }

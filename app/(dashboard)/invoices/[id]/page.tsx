@@ -28,6 +28,11 @@ import { getBusinessProcessForInvoice } from '@/lib/services/business-process.se
 import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
 import { BusinessDocumentLayout, BusinessDocumentSidebar } from '@/components/documents/BusinessDocumentLayout'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
+import { BusinessDocumentMeta, DocumentMetaItem } from '@/components/documents/BusinessDocumentMeta'
+import { buildBusinessDocumentHeader } from '@/lib/workflow/document-header'
+import { getHeaderPermissions } from '@/lib/workflow/document-header-permissions'
+import { buildInvoiceHeaderFields, buildInvoiceRecipient } from '@/lib/workflow/invoice-header'
+import { getInvoiceHeaderProject } from '@/lib/services/invoice-header-project.service'
 import { DocumentSectionCard } from '@/components/documents/DocumentSectionCard'
 import { OfferRichText } from '@/components/offers/OfferRichText'
 import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
@@ -118,7 +123,6 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   }))
 
   const fmt  = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  const fmtD = (d: Date) => format(new Date(d), 'dd. MMMM yyyy', { locale: de })
   const cs   = invoice.customerSnapshot as Record<string, any> | null
   const cmp  = invoice.companySnapshot  as Record<string, any> | null
   const supplierNumber = invoice.status === InvoiceStatus.DRAFT
@@ -129,71 +133,56 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   const canAddPayment = canCreatePayment && remaining > 0 &&
     !['DRAFT', 'PAID', 'CANCELLED'].includes(invoice.status)
 
+  // WF-1B: gemeinsames Kopfmodell (WF-1A). Kunde = Stammdatensatz, Rechnungsadresse =
+  // gespeicherter Rechnungs-Snapshot. Ein direkt an der Rechnung hängendes Projekt
+  // (Invoice.projectId) wird nur ergänzt, wenn der Vorgang kein Projekt liefert.
+  const headerPermissions = await getHeaderPermissions(processPermissions)
+  const headerProject = !process.project && headerPermissions.readProject
+    ? await getInvoiceHeaderProject(invoice.projectId)
+    : null
+  const headerModel = buildBusinessDocumentHeader({
+    current: 'invoice',
+    currentInvoiceId: invoice.id,
+    customer: { id: invoice.customerId, name: invoice.customer.name },
+    recipient: buildInvoiceRecipient(invoice.customerSnapshot),
+    process: headerProject ? { ...process, project: headerProject } : process,
+    permissions: headerPermissions,
+    dates: [],
+    extraFields: buildInvoiceHeaderFields({
+      invoiceDate: invoice.invoiceDate,
+      deliveryDate: invoice.deliveryDate,
+      deliveryPeriodStart: invoice.deliveryPeriodStart,
+      deliveryPeriodEnd: invoice.deliveryPeriodEnd,
+      dueDate: invoice.dueDate,
+      finalizedAt: invoice.finalizedAt,
+      sentAt: invoice.sentAt,
+      supplierNumber,
+    }),
+  })
+
   return (
     <div>
       <BusinessDocumentHeader
         title={invoice.invoiceNumber ?? 'Rechnungsentwurf'}
-        description={invoice.order
-          ? `Auftrag ${invoice.order.orderNumber}${invoice.order.title ? ` · ${invoice.order.title}` : ''}`
-          : undefined}
+        description={headerPermissions.readOrder ? invoice.order?.title : undefined}
         titleId="invoice-detail-title"
         detailsLabel="Kunden- und Rechnungsdaten"
       >
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="sm:col-span-2 xl:col-span-1 xl:row-span-2">
-            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Kunde</dt>
-            <dd className="mt-0.5">
-              <Link href={`/customers/${invoice.customerId}`} className="text-sm font-600 text-blue-700 hover:underline">
-                {cs?.name ?? invoice.customer.name}
-              </Link>
-              {(cs?.street || cs?.city) && (
-                <address className="mt-3 text-sm not-italic leading-5 text-muted-foreground">
-                  {cs.street} {cs.houseNumber}<br />
-                  {cs.postalCode} {cs.city}
-                </address>
-              )}
-            </dd>
-          </div>
-          <HeaderReference
-            label="Angebot"
-            value={invoice.order?.offer?.offerNumber}
-            href={invoice.order?.offer ? `/offers/${invoice.order.offer.id}` : undefined}
-            canLink={processPermissions.readOffer}
-          />
-          <HeaderReference
-            label="Auftrag"
-            value={invoice.order?.orderNumber}
-            href={invoice.order ? `/orders/${invoice.order.id}` : undefined}
-            canLink={processPermissions.readOrder}
-          />
-          <HeaderReference
-            label="Leistungsnachweis"
-            value={invoice.order?.serviceReports[0]?.reportNumber}
-            href={invoice.order?.serviceReports[0] ? `/services/${invoice.order.serviceReports[0].id}` : undefined}
-            canLink={processPermissions.readServiceReport}
-          />
-          <HeaderReference label="Rechnung" value={invoice.invoiceNumber ?? 'Entwurf'} />
-          {supplierNumber && <HeaderValue label="Lieferantennummer" value={supplierNumber} />}
-          <HeaderValue label="Rechnungsdatum" value={fmtD(invoice.invoiceDate)} />
-          {invoice.dueDate && <HeaderValue label="Zahlungsziel" value={fmtD(invoice.dueDate)} />}
-          <div>
-            <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Status</dt>
-            <dd className="mt-1 flex flex-wrap items-center gap-2">
-              <InvoiceStatusBadge status={invoice.status} />
-              {invoice.type !== 'STANDARD' && (
-                <span className="rounded border border-stone-200 bg-stone-100 px-2 py-0.5 text-xs text-muted-foreground mono">
-                  {INVOICE_TYPE_LABELS[invoice.type as keyof typeof INVOICE_TYPE_LABELS] ?? invoice.type}
-                </span>
-              )}
-            </dd>
-          </div>
-          {invoice.finalizedAt && (
-            <HeaderValue label="Finalisiert am" value={format(new Date(invoice.finalizedAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
-          )}
-          {invoice.sentAt && (
-            <HeaderValue label="Versendet am" value={format(new Date(invoice.sentAt), 'dd.MM.yyyy', { locale: de })} />
-          )}
-        </dl>
+        <BusinessDocumentMeta
+          model={headerModel}
+          leadingItems={
+            <DocumentMetaItem label="Status">
+              <span className="flex flex-wrap items-center gap-2">
+                <InvoiceStatusBadge status={invoice.status} />
+                {invoice.type !== 'STANDARD' && (
+                  <span className="rounded border border-stone-200 bg-stone-100 px-2 py-0.5 text-xs text-muted-foreground mono">
+                    {INVOICE_TYPE_LABELS[invoice.type as keyof typeof INVOICE_TYPE_LABELS] ?? invoice.type}
+                  </span>
+                )}
+              </span>
+            </DocumentMetaItem>
+          }
+        />
       </BusinessDocumentHeader>
 
       <div className="p-6">
@@ -219,10 +208,12 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
                       )}
                     </div>
                   ) : (
-                    <Link href={`/customers/${invoice.customerId}`}
-                      className="font-600 text-sm text-blue-700 hover:underline">
-                      {invoice.customer.name}
-                    </Link>
+                    headerPermissions.readCustomer
+                      ? <Link href={`/customers/${invoice.customerId}`}
+                          className="font-600 text-sm text-blue-700 hover:underline">
+                          {invoice.customer.name}
+                        </Link>
+                      : <span className="font-600 text-sm">{invoice.customer.name}</span>
                   )}
                 </div>
                 {cmp && (
@@ -386,7 +377,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
               <MI label="Rechnungs-ID" value={invoice.id.slice(0,8)+'…'} mono />
               <MI label="Angelegt von" value={`${invoice.createdBy.firstName} ${invoice.createdBy.lastName}`} />
               <MI label="Angelegt am"  value={format(new Date(invoice.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
-              {invoice.order && (
+              {invoice.order && headerPermissions.readOrder && (
                 <div>
                   <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Auftrag</p>
                   <Link href={`/orders/${invoice.order.id}`} className="text-sm text-blue-700 hover:underline mono">
@@ -409,28 +400,6 @@ function MI({ label, value, mono }: { label: string; value: string; mono?: boole
       <dd className={`mt-0.5 text-sm text-foreground ${mono ? 'mono' : ''}`}>{value}</dd>
     </div>
   )
-}
-
-function HeaderReference({ label, value, href, canLink = false }: {
-  label: string
-  value?: string | null
-  href?: string
-  canLink?: boolean
-}) {
-  return (
-    <div>
-      <dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 text-sm mono">
-        {value && href && canLink
-          ? <Link href={href} className="text-blue-700 hover:underline">{value}</Link>
-          : value ?? '—'}
-      </dd>
-    </div>
-  )
-}
-
-function HeaderValue({ label, value }: { label: string; value: string }) {
-  return <div><dt className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">{label}</dt><dd className="mt-0.5 text-sm text-foreground">{value}</dd></div>
 }
 
 function TR({ label, value, bold, muted, green, amber }: {

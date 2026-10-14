@@ -38,15 +38,15 @@ describe('Einheitlicher Rechnungskopf', () => {
     expect(page).toContain('<DunningPanel')
   })
 
-  it('zeigt die Dokumentkette und den gespeicherten Abrechnungstext vor den Positionen', () => {
+  it('zeigt die Dokumentkette über das gemeinsame Kopfmodell und den Abrechnungstext vor den Positionen', () => {
     const page = source('app/(dashboard)/invoices/[id]/page.tsx')
-    for (const label of ['Angebot', 'Auftrag', 'Leistungsnachweis', 'Rechnung']) {
-      expect(page).toContain(`label="${label}"`)
-    }
-    expect(page).toContain("value ?? '—'")
-    expect(page).toContain('canLink={processPermissions.readOffer}')
-    expect(page).toContain('canLink={processPermissions.readOrder}')
-    expect(page).toContain('canLink={processPermissions.readServiceReport}')
+    // WF-1B: Angebot, Auftrag, Leistungsnachweis und weitere Rechnungen kommen aus dem
+    // gemeinsamen Kopfmodell (Leserechte werden dort angewendet), nicht aus Einzel-Links.
+    expect(page).toContain('<BusinessDocumentMeta')
+    expect(page).toContain("current: 'invoice'")
+    expect(page).toContain('getHeaderPermissions(processPermissions)')
+    expect(page).not.toContain('HeaderReference')
+    expect(page).not.toContain("value ?? '—'")
     expect(page).toContain('<OfferRichText value={invoice.introText} />')
     expect(page.indexOf('Leistungsbeschreibung / Abrechnungstext')).toBeLessThan(page.indexOf('title={`Positionen (${items.length})`}'))
   })
