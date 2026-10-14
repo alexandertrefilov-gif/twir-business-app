@@ -9,6 +9,11 @@ import { InvoiceDraftPdfPreview } from '@/components/invoices/InvoiceDraftPdfPre
 import type { ActionState } from '@/app/(dashboard)/invoices/actions'
 import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEditor'
 import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
+import { calculateInvoice, type CalcLineInput } from '@/lib/billing/invoice-calculator'
+import { DISCOUNT_SPEC, QUANTITY_SPEC, UNIT_PRICE_SPEC, validateDecimalField } from '@/lib/billing/decimal-input'
+import { formatDecimalDe } from '@/lib/billing/format'
+import type { NetDeviation } from '@/lib/billing/service-report-transfer'
+import { berlinTodayIso, berlinTodayPlusDaysIso } from '@/lib/utils/berlin-date'
 
 interface CustomerOption {
   id: string; name: string; number: string; legalName?: string | null
@@ -19,7 +24,7 @@ interface OrderOption    { id: string; orderNumber: string; title: string | null
 
 interface ItemRow {
   _key: string; description: string; quantity: string
-  unit: string; unitPrice: string; taxRate: string
+  unit: string; unitPrice: string; discountRate: string; taxRate: string
 }
 
 interface InvoiceFormProps {
@@ -40,19 +45,18 @@ interface InvoiceFormProps {
   lockCustomer?: boolean
   lockOrder?:    boolean
   invoiceId?:    string
+  /** R-1: Cent-Abweichungen zwischen Leistungsnachweis und neu berechnetem Rechnungs-Netto (nur Hinweis). */
+  reportDeviations?: NetDeviation[]
 }
 
 const UNITS    = ['Stk.', 'Std.', 'Psch.', 'kg', 't', 'm', 'm²', 'm³', 'l', 'km']
 const TAX_OPTS = [{ v: '19', l: '19 %' }, { v: '7', l: '7 %' }, { v: '0', l: '0 %' }]
 const INIT: ActionState = {}
-const todayStr = () => new Date().toISOString().slice(0, 10)
-function addDays(n: number) {
-  const d = new Date(); d.setDate(d.getDate() + n)
-  return d.toISOString().slice(0, 10)
-}
+const todayStr = () => berlinTodayIso()
+const addDays = (n: number) => berlinTodayPlusDaysIso(n)
 
 export function InvoiceForm({
-  mode, customers, orders, defaults = {}, action, lockCustomer, lockOrder, invoiceId,
+  mode, customers, orders, defaults = {}, action, lockCustomer, lockOrder, invoiceId, reportDeviations = [],
 }: InvoiceFormProps) {
   const [state, formAction, isPending] = useActionState(action, INIT)
   const router = useRouter()
@@ -67,32 +71,41 @@ export function InvoiceForm({
   )
 
   function newRow(): ItemRow {
-    return { _key: crypto.randomUUID(), description: '', quantity: '1', unit: 'Stk.', unitPrice: '', taxRate: '19' }
+    return { _key: crypto.randomUUID(), description: '', quantity: '1', unit: 'Stk.', unitPrice: '', discountRate: '0', taxRate: '19' }
   }
 
-  const computed = useMemo(() => items.map((r) => {
-    const net = Math.round((parseFloat(r.quantity)||0)*(parseFloat(r.unitPrice)||0)*100)/100
-    const tax = Math.round(net*(parseFloat(r.taxRate)||0)/100*100)/100
-    return { ...r, net, tax, gross: Math.round((net+tax)*100)/100 }
-  }), [items])
+  // Vorschau über den kanonischen Calculator (DEC-015): exakte Decimal-Arithmetik, keine parseFloat-Geldrechnung.
+  // Maßgeblich bleibt der serverseitig gespeicherte Entwurf.
+  const preview = useMemo(() => {
+    const lines: CalcLineInput[] = []
+    const rowNet: Record<string, string | null> = {}
+    const invalid: number[] = []
+    items.forEach((row, index) => {
+      const quantity  = validateDecimalField(row.quantity, QUANTITY_SPEC)
+      const unitPrice = validateDecimalField(row.unitPrice.trim() || '0', UNIT_PRICE_SPEC)
+      const discount  = validateDecimalField(row.discountRate.trim() || '0', DISCOUNT_SPEC)
+      if (!quantity.ok || !unitPrice.ok || !discount.ok) { rowNet[row._key] = null; invalid.push(index + 1); return }
+      lines.push({ key: row._key, quantity: quantity.value, unitPrice: unitPrice.value, discountRate: discount.value, taxRate: row.taxRate, taxCategory: 'S' })
+    })
+    const result = calculateInvoice(lines)
+    for (const line of result.lines) rowNet[line.key] = line.lineNet
+    return { rowNet, result, invalid }
+  }, [items])
 
-  const totals = useMemo(() => {
-    const net = computed.reduce((s,i)=>s+i.net,0)
-    const groups: Record<string,number> = {}
-    for (const i of computed) groups[i.taxRate] = Math.round(((groups[i.taxRate]??0)+i.tax)*100)/100
-    const tax = Object.values(groups).reduce((s,v)=>s+v,0)
-    return { net:Math.round(net*100)/100, groups, tax:Math.round(tax*100)/100, gross:Math.round((net+tax)*100)/100 }
-  }, [computed])
+  const computed = items.map((row) => ({ ...row, net: preview.rowNet[row._key] ?? null }))
+  const totals = preview.result.totals
 
   function upd(key:string,f:keyof ItemRow,v:string){setItems(p=>p.map(r=>r._key===key?{...r,[f]:v}:r))}
 
+  // Mengen/Preise werden als Text übertragen und serverseitig streng geprüft (max. 2 Nachkommastellen beim Preis).
+  // Leerer Preis = 0 wie bisher.
   const serialized = JSON.stringify(items.map((r,i)=>({
-    position:i+1, description:r.description, quantity:parseFloat(r.quantity)||0,
-    unit:r.unit, unitPrice:parseFloat(r.unitPrice)||0, taxRate:parseFloat(r.taxRate)||0,
+    position:i+1, description:r.description, quantity:r.quantity.trim(),
+    unit:r.unit, unitPrice:r.unitPrice.trim()||'0', discountRate:r.discountRate.trim()||'0', taxRate:Number(r.taxRate)||0,
   })))
 
   const fe = state.fieldErrors ?? {}
-  const fmt = (n:number) => n.toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})
+  const fmt = (value: string | null) => value === null ? '–' : formatDecimalDe(value)
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId)
   const selectedBillingAddress = selectedCustomer?.billingAddresses.find(address => address.id === billingAddressId)
 
@@ -233,15 +246,29 @@ export function InvoiceForm({
           </button>
         </div>
 
-        <div className="hidden md:grid grid-cols-[2fr_80px_90px_100px_70px_90px_36px] gap-2 px-1 mb-1">
-          {['Beschreibung *','Menge *','Einheit','Einzelpreis *','MwSt.','Netto',''].map(h=>(
+        {reportDeviations.length > 0 && (
+          <div role="status" className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-600">Abweichung zum Leistungsnachweis</p>
+            <p className="mt-1 text-xs">Durch die einheitliche Berechnung (einmalige Rundung des Positions-Netto) ergibt sich bei folgenden Positionen ein anderer Cent-Betrag als im Leistungsnachweis. Der Nachweis bleibt unverändert; die Rechnung kann trotzdem erstellt werden.</p>
+            <ul className="mt-2 space-y-1 text-xs">
+              {reportDeviations.map((deviation) => (
+                <li key={deviation.position}>
+                  Position {deviation.position} „{deviation.description}&quot;: Leistungsnachweis {formatDecimalDe(deviation.previousNet)} € → Rechnung {formatDecimalDe(deviation.recalculatedNet)} € (Differenz {formatDecimalDe(deviation.difference)} €)
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="hidden md:grid grid-cols-[2fr_80px_90px_100px_80px_70px_90px_36px] gap-2 px-1 mb-1">
+          {['Beschreibung *','Menge *','Einheit','Einzelpreis *','Rabatt %','MwSt.','Netto',''].map(h=>(
             <span key={h} className="text-[10px] font-600 uppercase tracking-wider text-muted-foreground">{h}</span>
           ))}
         </div>
 
         <div className="space-y-2">
           {computed.map((item,idx)=>(
-            <div key={item._key} className="grid grid-cols-1 md:grid-cols-[2fr_80px_90px_100px_70px_90px_36px] gap-2 p-3 md:p-0 rounded md:rounded-none bg-stone-50 md:bg-transparent border border-stone-100 md:border-none items-center">
+            <div key={item._key} className="grid grid-cols-1 md:grid-cols-[2fr_80px_90px_100px_80px_70px_90px_36px] gap-2 p-3 md:p-0 rounded md:rounded-none bg-stone-50 md:bg-transparent border border-stone-100 md:border-none items-center">
               <input type="text" value={item.description} onChange={e=>upd(item._key,'description',e.target.value)} placeholder="Leistungsbeschreibung …"
                 className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
               <input type="number" value={item.quantity} onChange={e=>upd(item._key,'quantity',e.target.value)} min="0.001" step="0.001" placeholder="1"
@@ -255,6 +282,8 @@ export function InvoiceForm({
                   className="w-full h-9 pl-3 pr-6 rounded-md border border-stone-200 bg-white text-sm text-right mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">€</span>
               </div>
+              <input type="number" value={item.discountRate} onChange={e=>upd(item._key,'discountRate',e.target.value)} min="0" max="100" step="0.01" placeholder="0" aria-label={`Rabatt in Prozent, Position ${idx+1}`}
+                className="w-full h-9 px-3 rounded-md border border-stone-200 bg-white text-sm text-right mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent" />
               <select value={item.taxRate} onChange={e=>upd(item._key,'taxRate',e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-stone-200 bg-white text-sm mono focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent">
                 {TAX_OPTS.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
@@ -273,13 +302,11 @@ export function InvoiceForm({
         {/* Totals */}
         <div className="mt-6 border-t border-stone-200 pt-4 flex justify-end">
           <div className="w-72 space-y-1.5">
-            <TRow label="Nettobetrag"  value={`${fmt(totals.net)} €`} />
-            {Object.entries(totals.groups).filter(([,v])=>v>0).sort(([a],[b])=>parseFloat(b)-parseFloat(a)).map(([rate,amount])=>(
-              <TRow key={rate} label={`zzgl. ${rate}% MwSt.`} value={`${fmt(amount)} €`} muted />
-            ))}
-            <div className="border-t border-stone-300 pt-1.5 mt-1.5">
-              <TRow label="Bruttobetrag" value={`${fmt(totals.gross)} €`} bold />
-            </div>
+            <TRow label="Positions-Netto" value={`${fmt(totals.lineNetSum)} €`} />
+            <p className="pt-1 text-[11px] leading-snug text-muted-foreground">
+              Die verbindliche Steuerberechnung (Umsatzsteuer und Bruttobetrag) erfolgt im Rechnungsentwurf nach dem Speichern.
+              {preview.invalid.length > 0 && ` Position ${preview.invalid.join(', ')}: Eingabe unvollständig oder ungültig (Menge höchstens 3, Preis und Rabatt höchstens 2 Nachkommastellen; Rabatt 0–100 %) – nicht in den Summen enthalten.`}
+            </p>
           </div>
         </div>
       </div>

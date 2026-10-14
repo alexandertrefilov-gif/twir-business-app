@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db/prisma'
 import { buildCustomerArchiveDirectory } from '@/lib/documents/archive-naming'
 import { LocalFilesystemArchiveStorage } from '@/lib/documents/archive-storage'
+import { berlinYear } from '@/lib/utils/berlin-date'
 
 export type CustomerArchiveResult =
   | { status: 'created'; relativePath: string }
@@ -19,7 +20,7 @@ export async function ensureCustomerArchiveDirectory(customer: {
   if (!settings.documentArchivePath) return { status: 'failed', error: 'Dokumentenarchiv ist aktiv, aber kein Basispfad konfiguriert.' }
 
   const relativePath = buildCustomerArchiveDirectory({
-    year: (customer.createdAt ?? new Date()).getFullYear(),
+    year: berlinYear(customer.createdAt ?? new Date()),
     customerNumber: customer.number,
     customerName: customer.name,
   })

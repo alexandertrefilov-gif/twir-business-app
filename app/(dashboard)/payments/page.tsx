@@ -5,8 +5,7 @@ import { PageHeader }      from '@/components/shared/PageHeader'
 import { getPaymentJournal } from '@/lib/services/payment.service'
 import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { PAYMENT_METHODS } from '@/lib/validators/payment.schema'
-import { format }          from 'date-fns'
-import { de }              from 'date-fns/locale'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Zahlungen' }
 
@@ -33,7 +32,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
   const fmt = (n: number) =>
     n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
   const fmtDate = (d: Date) =>
-    format(new Date(d), 'dd.MM.yyyy', { locale: de })
+    formatCalendarDate(d)
 
   function methodLabel(m: string | null) {
     if (!m) return '–'

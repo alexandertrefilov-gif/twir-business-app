@@ -7,26 +7,28 @@ import { useRouter }      from 'next/navigation'
 import { ConfirmDialog }  from '@/components/shared/ConfirmDialog'
 import { removePaymentAction } from '@/app/(dashboard)/payments/actions'
 import { PAYMENT_METHODS } from '@/lib/validators/payment.schema'
-import { format }         from 'date-fns'
-import { de }             from 'date-fns/locale'
 import type { PaymentSummary } from '@/lib/services/payment.service'
+import { formatDecimalDe }  from '@/lib/billing/format'
+import { isPositiveMoney }  from '@/lib/billing/open-amount'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 interface PaymentJournalProps {
   payments:    PaymentSummary[]
-  totalGross:  number
-  paidAmount:  number
+  /** Fertige Cent-Strings aus resolveOpenAmount (Server); die Komponente rechnet nicht selbst. */
+  paidAmount:  string
+  remainingAmount: string
   invoiceStatus: string
   canDelete:   boolean
 }
 
 export function PaymentJournal({
-  payments, totalGross, paidAmount, invoiceStatus, canDelete,
+  payments, paidAmount, remainingAmount, invoiceStatus, canDelete,
 }: PaymentJournalProps) {
   const router = useRouter()
   const fmt    = (n: number) =>
     n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-  const remaining = Math.round((totalGross - paidAmount) * 100) / 100
+  const hasRemaining = isPositiveMoney(remainingAmount)
 
   function methodLabel(m: string | null) {
     if (!m) return '–'
@@ -57,7 +59,7 @@ export function PaymentJournal({
           {payments.map((p) => (
             <tr key={p.id}>
               <td className="mono text-xs">
-                {format(new Date(p.paymentDate), 'dd.MM.yyyy', { locale: de })}
+                {formatCalendarDate(p.paymentDate)}
               </td>
               <td className="text-sm">{methodLabel(p.method)}</td>
               <td>
@@ -104,14 +106,14 @@ export function PaymentJournal({
         </span>
         <div className="flex gap-6 text-sm">
           <span className="text-muted-foreground">
-            Bezahlt: <span className="mono font-500 text-emerald-700">{fmt(paidAmount)} €</span>
+            Bezahlt: <span className="mono font-500 text-emerald-700">{formatDecimalDe(paidAmount)} €</span>
           </span>
-          {remaining > 0 && (
+          {hasRemaining && (
             <span className="text-muted-foreground">
-              Offen: <span className="mono font-500 text-amber-700">{fmt(remaining)} €</span>
+              Offen: <span className="mono font-500 text-amber-700">{formatDecimalDe(remainingAmount)} €</span>
             </span>
           )}
-          {remaining <= 0 && (
+          {!hasRemaining && (
             <span className="text-emerald-600 font-500 text-xs flex items-center gap-1">
               <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd"/></svg>
               Vollständig bezahlt

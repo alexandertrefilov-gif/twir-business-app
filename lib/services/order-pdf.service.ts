@@ -1,4 +1,3 @@
-import { format } from 'date-fns'
 import type { OrderPdfData } from '@/lib/pdf-templates/order.template'
 import { getOrderById } from '@/lib/services/order.service'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
@@ -6,6 +5,7 @@ import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.ser
 import type { OrderPdfOptions } from '@/lib/validators/order-pdf.schema'
 import { orderDescriptionWithOfferFallback } from '@/lib/offers/rich-text'
 import { prisma } from '@/lib/db/prisma'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 type CustomerSnapshot = {
   name?: string
@@ -36,7 +36,7 @@ export async function getOrderPdfData(
   return {
     options,
     ...(options.showOrderNumber && { orderNumber: order.orderNumber }),
-    ...(options.showOrderDate && { orderDate: format(order.orderDate, 'dd.MM.yyyy') }),
+    ...(options.showOrderDate && { orderDate: formatCalendarDate(order.orderDate) }),
     ...(options.showTitle && { title: order.title }),
     ...(options.showDescription && {
       description: orderDescriptionWithOfferFallback(
@@ -46,12 +46,12 @@ export async function getOrderPdfData(
       ),
     }),
     ...(options.showServicePeriod && {
-      startDate: order.startDate ? format(order.startDate, 'dd.MM.yyyy') : null,
-      endDate: order.endDate ? format(order.endDate, 'dd.MM.yyyy') : null,
+      startDate: order.startDate ? formatCalendarDate(order.startDate) : null,
+      endDate: order.endDate ? formatCalendarDate(order.endDate) : null,
     }),
     ...(options.showOfferReference && { offerNumber: order.offer?.offerNumber }),
     ...(purchaseOrder?.orderNumber?.trim() && { customerOrderNumber: purchaseOrder.orderNumber.trim() }),
-    ...(purchaseOrder?.orderDate && { customerOrderDate: format(purchaseOrder.orderDate, 'dd.MM.yyyy') }),
+    ...(purchaseOrder?.orderDate && { customerOrderDate: formatCalendarDate(purchaseOrder.orderDate) }),
     logoDataUri: logo?.dataUri,
     logoScale: company.logoScale,
     logoSourceWidth: logo?.width ?? company.logoWidth ?? undefined,

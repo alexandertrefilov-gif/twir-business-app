@@ -5,22 +5,27 @@
 
 import { useActionState, useState } from 'react'
 import { PAYMENT_METHODS }          from '@/lib/validators/payment.schema'
+import { formatDecimalDe }          from '@/lib/billing/format'
+import { isPositiveMoney }          from '@/lib/billing/open-amount'
 import { FormSubmitButton }         from '@/components/shared/FormSubmitButton'
 import type { ActionState }         from '@/app/(dashboard)/payments/actions'
+import { berlinTodayIso } from '@/lib/utils/berlin-date'
 
 interface PaymentFormProps {
   invoiceId:    string
-  totalGross:   number
-  paidAmount:   number
+  /** Fertige Cent-Strings aus resolveOpenAmount (Server); die Komponente rechnet nicht selbst. */
+  totalGross:   string
+  paidAmount:   string
+  remainingAmount: string
   action:       (prev: ActionState, fd: FormData) => Promise<ActionState>
   onSuccess?:   () => void
 }
 
-const todayStr = () => new Date().toISOString().slice(0, 10)
+const todayStr = () => berlinTodayIso()
 const INIT: ActionState = {}
 
 export function PaymentForm({
-  invoiceId, totalGross, paidAmount, action, onSuccess,
+  invoiceId, totalGross, paidAmount, remainingAmount, action, onSuccess,
 }: PaymentFormProps) {
   const [state, formAction] = useActionState(
     async (prev: ActionState, fd: FormData) => {
@@ -31,9 +36,9 @@ export function PaymentForm({
     INIT,
   )
 
-  const remaining   = Math.round((totalGross - paidAmount) * 100) / 100
-  const fe          = state.fieldErrors ?? {}
-  const fmt         = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const hasRemaining = isPositiveMoney(remainingAmount)
+  const fe           = state.fieldErrors ?? {}
+  const fmt          = formatDecimalDe
 
   return (
     <form action={formAction} className="space-y-4">
@@ -64,8 +69,8 @@ export function PaymentForm({
         </div>
         <div className="text-center">
           <p className="text-[10px] font-600 uppercase tracking-wider text-muted-foreground">Offen</p>
-          <p className={`mono text-sm font-600 mt-0.5 ${remaining > 0 ? 'text-amber-700' : 'text-stone-400'}`}>
-            {fmt(remaining)} €
+          <p className={`mono text-sm font-600 mt-0.5 ${hasRemaining ? 'text-amber-700' : 'text-stone-400'}`}>
+            {fmt(remainingAmount)} €
           </p>
         </div>
       </div>
@@ -79,9 +84,9 @@ export function PaymentForm({
           <div className="relative">
             <input
               id="pay-amount" name="amount" type="number"
-              step="0.01" min="0.01" max={remaining} required
-              defaultValue={remaining > 0 ? remaining.toFixed(2) : ''}
-              placeholder={fmt(remaining)}
+              step="0.01" min="0.01" max={remainingAmount} required
+              defaultValue={hasRemaining ? remainingAmount : ''}
+              placeholder={fmt(remainingAmount)}
               className={`w-full h-9 pl-3 pr-6 rounded-md border bg-white text-sm mono text-right focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent ${fe.amount ? 'border-red-400' : 'border-stone-200'}`}
             />
             <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">€</span>
@@ -135,7 +140,7 @@ export function PaymentForm({
         <FormSubmitButton
           idleLabel="Zahlung erfassen"
           pendingLabel="Wird gespeichert…"
-          disabled={remaining <= 0}
+          disabled={!hasRemaining}
           className="h-9 px-5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-500 disabled:opacity-50 transition-colors"
         />
       </div>

@@ -1,14 +1,10 @@
 // app/(dashboard)/offers/[id]/page.tsx
 import type { Metadata }    from 'next'
 import { notFound }         from 'next/navigation'
-import Link                 from 'next/link'
 import { OfferConvertAction, OfferStatusActions } from '@/components/offers/OfferStatusActions'
 import { OfferRichText }      from '@/components/offers/OfferRichText'
 import { getOfferById }     from '@/lib/services/offer.service'
 import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
-import { calcOfferTotals }  from '@/lib/validators/offer.schema'
-import { format }           from 'date-fns'
-import { de }               from 'date-fns/locale'
 import type { OfferStatus } from '@/types/enums'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
 import { getSupplierNumber } from '@/lib/services/settings.service'
@@ -25,6 +21,7 @@ import { offerNumberForDisplay } from '@/lib/offers/offer-display'
 import { CustomerPurchaseOrderDialog } from '@/components/offers/CustomerPurchaseOrderDialog'
 import { ProjectAssignmentAction } from '@/components/workflow/ProjectAssignmentAction'
 import { listProjectsForCustomer } from '@/lib/services/project.service'
+import { formatBerlinDate, formatBerlinDateTime } from '@/lib/utils/berlin-date'
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -67,10 +64,10 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
     dates: [
       { label: 'Angebotsdatum', value: offer.offerDate, pattern: 'dd. MMMM yyyy' },
       { label: 'Gültig bis', value: offer.validUntil, pattern: 'dd. MMMM yyyy' },
-      { label: 'Versendet am', value: offer.sentAt, pattern: 'dd.MM.yyyy HH:mm' },
-      { label: 'Angenommen am', value: offer.acceptedAt },
+      { label: 'Versendet am', value: offer.sentAt, pattern: 'dd.MM.yyyy HH:mm', kind: 'instant' },
+      { label: 'Angenommen am', value: offer.acceptedAt, kind: 'instant' },
       { label: 'Auftragsdatum', value: offer.order?.orderDate, pattern: 'dd. MMMM yyyy' },
-      { label: 'Abgeschlossen', value: offer.order?.completedAt },
+      { label: 'Abgeschlossen', value: offer.order?.completedAt, kind: 'instant' },
     ],
   })
 
@@ -210,7 +207,7 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
                 : undefined}
               offerLifecycle={{
                 status: offer.status,
-                sentDate: offer.sentAt ? format(new Date(offer.sentAt), 'dd.MM.yyyy', { locale: de }) : undefined,
+                sentDate: offer.sentAt ? formatBerlinDate(offer.sentAt) : undefined,
                 actions: (
                   <OfferStatusActions
                     offerId={offer.id}
@@ -236,9 +233,9 @@ export default async function OfferDetailPage({ params }: { params: Promise<{ id
               <MetaItem label="Angelegt von"
                 value={`${offer.createdBy.firstName} ${offer.createdBy.lastName}`} />
               <MetaItem label="Angelegt am"
-                value={format(new Date(offer.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+                value={formatBerlinDateTime(offer.createdAt)} />
               <MetaItem label="Letzte Änderung"
-                value={format(new Date(offer.updatedAt), 'dd.MM.yyyy HH:mm', { locale: de })} />
+                value={formatBerlinDateTime(offer.updatedAt)} />
               {supplierNumber && <MetaItem label="Lieferantennummer" value={supplierNumber} mono />}
               {offer.status === 'DRAFT' && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">

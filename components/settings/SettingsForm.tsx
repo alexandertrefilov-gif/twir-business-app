@@ -9,6 +9,7 @@ import {
   updateSettingsAction,
 } from '@/app/(dashboard)/settings/actions'
 import { FormSubmitButton } from '@/components/shared/FormSubmitButton'
+import { berlinYear } from '@/lib/utils/berlin-date'
 
 interface SequenceStatus {
   type:       string
@@ -196,7 +197,7 @@ export function SettingsForm({ defaults, sequences }: SettingsFormProps) {
         {sequences.length > 0 && (
           <div className="mb-4 p-3 rounded-md bg-stone-50 border border-stone-200">
             <p className="text-xs font-600 uppercase tracking-wider text-muted-foreground mb-2">
-              Aktuelle Zähler ({new Date().getFullYear()})
+              Aktuelle Zähler ({berlinYear(new Date())})
             </p>
             <div className="flex gap-6 flex-wrap">
               {sequences.map((s) => (

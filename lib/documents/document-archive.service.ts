@@ -17,6 +17,7 @@ import { buildArchiveFilename, buildBusinessCaseArchiveDirectory, existingBusine
 import { LocalFilesystemArchiveStorage } from '@/lib/documents/archive-storage'
 import type { RoleName } from '@/types/enums'
 import type { DocumentFormat } from '@prisma/client'
+import { calendarYear } from '@/lib/utils/berlin-date'
 
 export type ArchivableDocumentKind = 'offer' | 'order' | 'serviceReport' | 'invoice'
 export type ArchiveLifecycle = 'DRAFT' | 'FINAL'
@@ -55,24 +56,24 @@ async function loadContext(kind: ArchivableDocumentKind, id: string): Promise<Ar
   if (kind === 'offer') {
     const row = await prisma.offer.findUnique({ where: { id }, include: { customer: true, documents: { where: { deletedAt: null }, select: { storagePath: true } } } })
     if (!row) throw new Error('Angebot nicht gefunden.')
-    return { number: row.offerNumber, year: row.offerDate.getFullYear(), customerId: row.customerId, customerNumber: row.customer.number, customerName: row.customer.name, areaName: row.areaName ?? row.title,
+    return { number: row.offerNumber, year: calendarYear(row.offerDate), customerId: row.customerId, customerNumber: row.customer.number, customerName: row.customer.name, areaName: row.areaName ?? row.title,
       businessCaseId: `offer-${row.id}`, existingBusinessCaseDirectory: existingBusinessCaseArchiveDirectory(row.documents.map(document => document.storagePath)), category: '01_Angebot', documentType: 'OFFER_PDF', links: { offerId: id }, status: row.status, finalizedAt: row.sentAt }
   }
   if (kind === 'order') {
     const row = await prisma.order.findUnique({ where: { id }, include: { customer: true, offer: { include: { documents: { where: { deletedAt: null }, select: { storagePath: true } } } } } })
     if (!row) throw new Error('Auftrag nicht gefunden.')
-    return { number: row.orderNumber, year: (row.offer?.offerDate ?? row.orderDate).getFullYear(), customerId: row.customerId, customerNumber: row.customer.number, customerName: row.customer.name, areaName: row.offer?.areaName ?? row.offer?.title ?? row.title,
+    return { number: row.orderNumber, year: calendarYear(row.offer?.offerDate ?? row.orderDate), customerId: row.customerId, customerNumber: row.customer.number, customerName: row.customer.name, areaName: row.offer?.areaName ?? row.offer?.title ?? row.title,
       businessCaseId: row.offer ? `offer-${row.offer.id}` : `order-${row.id}`, existingBusinessCaseDirectory: existingBusinessCaseArchiveDirectory(row.offer?.documents.map(document => document.storagePath) ?? []), category: '03_Auftrag', documentType: 'ORDER_PDF', links: { orderId: id }, status: row.status, finalizedAt: row.completedAt }
   }
   if (kind === 'serviceReport') {
     const row = await prisma.serviceReport.findUnique({ where: { id }, include: { order: { include: { customer: true, offer: { include: { documents: { where: { deletedAt: null }, select: { storagePath: true } } } } } } } })
     if (!row) throw new Error('Leistungsnachweis nicht gefunden.')
-    return { number: row.reportNumber, year: (row.order.offer?.offerDate ?? row.order.orderDate).getFullYear(), customerId: row.order.customerId, customerNumber: row.order.customer.number, customerName: row.order.customer.name, areaName: row.order.offer?.areaName ?? row.order.offer?.title ?? row.order.title,
+    return { number: row.reportNumber, year: calendarYear(row.order.offer?.offerDate ?? row.order.orderDate), customerId: row.order.customerId, customerNumber: row.order.customer.number, customerName: row.order.customer.name, areaName: row.order.offer?.areaName ?? row.order.offer?.title ?? row.order.title,
       businessCaseId: row.order.offer ? `offer-${row.order.offer.id}` : `order-${row.order.id}`, existingBusinessCaseDirectory: existingBusinessCaseArchiveDirectory(row.order.offer?.documents.map(document => document.storagePath) ?? []), category: '04_Leistung', documentType: 'SERVICE_REPORT_PDF', links: { orderId: row.orderId, serviceReportId: id }, status: row.status, finalizedAt: row.finalizedAt }
   }
   const row = await prisma.invoice.findUnique({ where: { id }, include: { customer: true, order: { include: { offer: { include: { documents: { where: { deletedAt: null }, select: { storagePath: true } } } } } } } })
   if (!row) throw new Error('Rechnung nicht gefunden.')
-  return { number: row.invoiceNumber ?? `Rechnungsentwurf-${id.slice(0, 8)}`, year: (row.order?.offer?.offerDate ?? row.order?.orderDate ?? row.invoiceDate).getFullYear(), customerId: row.customerId, customerNumber: row.customer.number, customerName: row.customer.name, areaName: row.order?.offer?.areaName ?? row.order?.offer?.title ?? row.order?.title ?? null,
+  return { number: row.invoiceNumber ?? `Rechnungsentwurf-${id.slice(0, 8)}`, year: calendarYear(row.order?.offer?.offerDate ?? row.order?.orderDate ?? row.invoiceDate), customerId: row.customerId, customerNumber: row.customer.number, customerName: row.customer.name, areaName: row.order?.offer?.areaName ?? row.order?.offer?.title ?? row.order?.title ?? null,
     businessCaseId: row.order?.offer ? `offer-${row.order.offer.id}` : row.order ? `order-${row.order.id}` : `invoice-${row.id}`, existingBusinessCaseDirectory: existingBusinessCaseArchiveDirectory(row.order?.offer?.documents.map(document => document.storagePath) ?? []), category: '05_Rechnung', documentType: 'INVOICE_PDF', links: { orderId: row.orderId ?? undefined, invoiceId: id }, status: row.status, finalizedAt: row.finalizedAt }
 }
 

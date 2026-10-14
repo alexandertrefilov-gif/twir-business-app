@@ -7,10 +7,9 @@ import Link                from 'next/link'
 import { OfferStatusBadge } from './OfferStatusBadge'
 import type { OfferListItem } from '@/lib/services/offer.service'
 import { OFFER_STATUS_LABELS } from '@/types/enums'
-import { format } from 'date-fns'
-import { de }     from 'date-fns/locale'
 import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
 import { offerNumberForDisplay } from '@/lib/offers/offer-display'
+import { formatCalendarDate, isCalendarDatePast } from '@/lib/utils/berlin-date'
 
 interface OfferTableProps {
   offers:     OfferListItem[]
@@ -108,7 +107,7 @@ export function OfferTable({
               const isExpired =
                 o.status === 'SENT' &&
                 o.validUntil &&
-                new Date(o.validUntil) < new Date()
+                isCalendarDatePast(o.validUntil, new Date())
 
               return (
                 <tr
@@ -135,13 +134,13 @@ export function OfferTable({
                   </td>
                   <td className="whitespace-nowrap">
                     <span className="mono text-xs">
-                      {format(new Date(o.offerDate), 'dd.MM.yyyy', { locale: de })}
+                      {formatCalendarDate(o.offerDate)}
                     </span>
                   </td>
                   <td className="whitespace-nowrap">
                     {o.validUntil ? (
                       <span className={`mono text-xs ${isExpired ? 'text-red-600' : ''}`}>
-                        {format(new Date(o.validUntil), 'dd.MM.yyyy', { locale: de })}
+                        {formatCalendarDate(o.validUntil)}
                         {isExpired && ' ⚠'}
                       </span>
                     ) : (

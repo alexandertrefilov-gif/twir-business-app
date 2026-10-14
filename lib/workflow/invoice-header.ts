@@ -84,8 +84,8 @@ export function buildInvoiceHeaderFields(input: InvoiceHeaderFieldInput): Header
   push('Rechnungsdatum', formatHeaderDate(input.invoiceDate, LONG_DATE))
   fields.push(...buildServiceDateFields(input))
   push('Zahlungsziel', formatHeaderDate(input.dueDate, LONG_DATE))
-  push('Finalisiert am', formatHeaderDate(input.finalizedAt, 'dd.MM.yyyy HH:mm'))
-  push('Versendet am', formatHeaderDate(input.sentAt, 'dd.MM.yyyy'))
+  push('Finalisiert am', formatHeaderDate(input.finalizedAt, 'dd.MM.yyyy HH:mm', 'instant'))
+  push('Versendet am', formatHeaderDate(input.sentAt, 'dd.MM.yyyy', 'instant'))
   push('Lieferantennummer', input.supplierNumber?.trim() || null)
   return fields
 }

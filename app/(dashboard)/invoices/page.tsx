@@ -6,10 +6,9 @@ import { InvoiceStatusBadge } from '@/components/invoices/InvoiceStatusBadge'
 import { getInvoices }        from '@/lib/services/invoice-query.service'
 import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
 import { INVOICE_STATUS_LABELS } from '@/types/enums'
-import { format }             from 'date-fns'
-import { de }                 from 'date-fns/locale'
 import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
+import { calendarDaysUntil, classifyDueDistance, formatCalendarDate } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Rechnungen' }
 
@@ -29,9 +28,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
     hasPermission(Resource.INVOICE, Action.DELETE),
   ])
 
-  const today = new Date(); today.setHours(0,0,0,0)
+  const now   = new Date()
   const fmt   = (n: number) => n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
-  const fmtD  = (d: Date)   => format(new Date(d), 'dd.MM.yyyy', { locale: de })
+  const fmtD  = (d: Date)   => formatCalendarDate(d)
 
   return (
     <div>
@@ -89,8 +88,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: Pro
                   </td></tr>
                 )}
                 {result.invoices.map((inv) => {
+                  // B-2 (E-2): überfällig, heute fällig oder in 1–2 Berliner Kalendertagen fällig (bestehende Schwelle).
                   const isOverdueSoon = inv.dueDate &&
-                    new Date(inv.dueDate) < new Date(today.getTime() + 3 * 86400000) &&
+                    classifyDueDistance(calendarDaysUntil(inv.dueDate, now)) !== 'LATER' &&
                     !['PAID', 'CANCELLED', 'DRAFT'].includes(inv.status)
 
                   return (

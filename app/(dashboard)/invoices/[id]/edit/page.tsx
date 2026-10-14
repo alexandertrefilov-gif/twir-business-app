@@ -121,6 +121,8 @@ export default async function EditInvoicePage({ params }: { params: Promise<{ id
               quantity:    item.quantity.toNumber().toString(),
               unit:        item.unit,
               unitPrice:   item.unitPrice.toNumber().toString(),
+              // Altbestand (NULL) wird im Formular als 0 gezeigt; beim Speichern wird ausdrücklich 0.00 geschrieben.
+              discountRate: (item.discountRate ?? 0).toString(),
               taxRate:     item.taxRate.toNumber().toString(),
             })),
           }}

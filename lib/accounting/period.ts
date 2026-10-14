@@ -1,3 +1,10 @@
+// REQ-029 P5-6 B-1 (B1): Buchhaltungsperioden sind Kalendergrenzen in Europe/Berlin.
+//
+// Datumsmodell (E7): Rechnungs-/Zahlungsdaten sind Kalendertage, gespeichert als UTC-Mitternacht. Die Periodengrenzen
+// werden deshalb in derselben Darstellung gebildet (UTC-Mitternacht des Kalendertags) und sind damit direkt mit den
+// gespeicherten Werten vergleichbar – unabhängig von process.env.TZ. „Heute" ist der Berliner Kalendertag.
+import { berlinDayStartUtc, formatUtcCalendarDate } from '@/lib/utils/berlin-date'
+
 export type AccountingPeriodPreset = 'month' | 'quarter' | 'year' | 'custom'
 
 export interface AccountingPeriod {
@@ -9,28 +16,29 @@ export interface AccountingPeriod {
   label: string
 }
 
-function startOfLocalDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+/** UTC-Mitternacht des Kalendertags; Überlauf von Tag/Monat wird kalendarisch normalisiert (Tag 0 = Vormonatsletzter). */
+function calendarDate(year: number, monthIndex: number, day: number): Date {
+  return new Date(Date.UTC(year, monthIndex, day))
 }
 
-function addDays(date: Date, days: number) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days)
+function addDays(date: Date, days: number): Date {
+  return calendarDate(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days)
 }
 
-function parseLocalDate(value: string | undefined): Date | null {
+/** Streng `JJJJ-MM-TT` und kalendarisch gültig (kein 29.02.2027); sonst `null`. */
+function parseCalendarDate(value: string | undefined): Date | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null
   const [year, month, day] = value.split('-').map(Number)
-  const parsed = new Date(year, month - 1, day)
-  return parsed.getFullYear() === year && parsed.getMonth() === month - 1 && parsed.getDate() === day
+  const parsed = calendarDate(year, month - 1, day)
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day
     ? parsed
     : null
 }
 
-function inputDate(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+/** `TT.MM.JJJJ` aus dem Kalendertag (keine Locale-/Zeitzonenabhängigkeit). */
+function germanDate(date: Date): string {
+  const [year, month, day] = formatUtcCalendarDate(date).split('-')
+  return `${day}.${month}.${year}`
 }
 
 export function resolveAccountingPeriod(
@@ -41,32 +49,34 @@ export function resolveAccountingPeriod(
   const preset: AccountingPeriodPreset = requested === 'quarter' || requested === 'year' || requested === 'custom'
     ? requested
     : 'month'
-  const today = startOfLocalDay(now)
+  const today = berlinDayStartUtc(now)
+  const year = today.getUTCFullYear()
+  const month = today.getUTCMonth()
   let from: Date
   let toInclusive: Date
 
   if (preset === 'custom') {
-    from = parseLocalDate(query.from) ?? new Date(today.getFullYear(), today.getMonth(), 1)
-    toInclusive = parseLocalDate(query.to) ?? today
+    from = parseCalendarDate(query.from) ?? calendarDate(year, month, 1)
+    toInclusive = parseCalendarDate(query.to) ?? today
     if (toInclusive < from) [from, toInclusive] = [toInclusive, from]
   } else if (preset === 'quarter') {
-    const quarterMonth = Math.floor(today.getMonth() / 3) * 3
-    from = new Date(today.getFullYear(), quarterMonth, 1)
-    toInclusive = new Date(today.getFullYear(), quarterMonth + 3, 0)
+    const quarterMonth = Math.floor(month / 3) * 3
+    from = calendarDate(year, quarterMonth, 1)
+    toInclusive = calendarDate(year, quarterMonth + 3, 0)
   } else if (preset === 'year') {
-    from = new Date(today.getFullYear(), 0, 1)
-    toInclusive = new Date(today.getFullYear(), 11, 31)
+    from = calendarDate(year, 0, 1)
+    toInclusive = calendarDate(year, 11, 31)
   } else {
-    from = new Date(today.getFullYear(), today.getMonth(), 1)
-    toInclusive = new Date(today.getFullYear(), today.getMonth() + 1, 0)
+    from = calendarDate(year, month, 1)
+    toInclusive = calendarDate(year, month + 1, 0)
   }
 
   return {
     preset,
     from,
     toExclusive: addDays(toInclusive, 1),
-    fromInput: inputDate(from),
-    toInput: inputDate(toInclusive),
-    label: `${from.toLocaleDateString('de-DE')} – ${toInclusive.toLocaleDateString('de-DE')}`,
+    fromInput: formatUtcCalendarDate(from),
+    toInput: formatUtcCalendarDate(toInclusive),
+    label: `${germanDate(from)} – ${germanDate(toInclusive)}`,
   }
 }

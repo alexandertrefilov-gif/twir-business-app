@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import type { ArchiveSort, ArchiveSortDirection, SerializedArchiveEntry } from '@/lib/documents/archive-explorer.service'
 import { formatFileSize } from '@/lib/services/document.service'
+import { formatBerlinDateTime } from '@/lib/utils/berlin-date'
 
 interface DocumentExplorerProps {
   entries: SerializedArchiveEntry[]
@@ -172,7 +173,7 @@ export function DocumentExplorer(props: DocumentExplorerProps) {
                     {entry.kind === 'directory' ? `Ordner · ${entry.itemCount ?? 0}` : TYPE_LABELS[entry.fileType]}
                   </td>
                   <td className="hidden px-3 py-3 text-sm text-muted-foreground md:table-cell">
-                    {new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(entry.modifiedAt))}
+                    {formatBerlinDateTime(entry.modifiedAt)}
                   </td>
                   <td className="hidden px-3 py-3 text-sm tabular-nums text-muted-foreground lg:table-cell">
                     {entry.size === null ? '–' : formatFileSize(entry.size)}

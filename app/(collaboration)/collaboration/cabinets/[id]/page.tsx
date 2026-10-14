@@ -11,6 +11,7 @@ import {
   type GgaControlTowerCabinetEntry, type GgaControlTowerReasonBadge, type GgaPruefart, type GgaWorklistCabinetInput,
   type GgaCabinetPruefstatus, type GgaCabinetBetreiberstatus,
 } from '@/lib/collaboration/cabinet-workflow'
+import { formatBerlinDateTime, formatCalendarDateCompact, isCalendarDatePast } from '@/lib/utils/berlin-date'
 import { GgaCabinetSollIstComparison } from '@/components/collaboration/GgaCabinetSollIstComparison'
 import { GgaCabinetTechnicalForm } from '@/components/collaboration/GgaCabinetTechnicalForm'
 import { GgaCabinetDocumentUpload } from '@/components/collaboration/GgaCabinetDocumentUpload'
@@ -340,11 +341,11 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-stone-200 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-2">Titel</th><th className="px-4 py-2">Phase</th><th className="px-4 py-2">Priorität</th><th className="px-4 py-2">Fälligkeit</th><th className="px-4 py-2">Status</th><th className="px-4 py-2">Verantwortlich</th></tr></thead>
             <tbody className="divide-y divide-stone-100">
-              {rows.map((task) => <tr key={task.id} className={task.dueDate && task.dueDate < new Date() && !['DONE', 'SKIPPED'].includes(task.status) ? 'bg-red-50' : undefined}>
+              {rows.map((task) => <tr key={task.id} className={task.dueDate && isCalendarDatePast(task.dueDate, new Date()) && !['DONE', 'SKIPPED'].includes(task.status) ? 'bg-red-50' : undefined}>
                 <td className="px-4 py-2">{task.title}</td>
                 <td className="px-4 py-2 text-xs text-muted-foreground">{task.stage.title}</td>
                 <td className="px-4 py-2 text-xs">{priorityLabels[task.priority]}</td>
-                <td className="px-4 py-2 text-xs tabular-nums">{task.dueDate ? new Date(task.dueDate).toLocaleDateString('de-DE') : '–'}</td>
+                <td className="px-4 py-2 text-xs tabular-nums">{task.dueDate ? formatCalendarDateCompact(task.dueDate) : '–'}</td>
                 <td className="px-4 py-2">{taskStatusLabels[task.status]}</td>
                 <td className="px-4 py-2 text-xs">{task.responsibleMembership?.user ? `${task.responsibleMembership.user.firstName} ${task.responsibleMembership.user.lastName}` : '–'}</td>
               </tr>)}
@@ -454,7 +455,7 @@ export default async function GgaCabinetDetailPage({ params }: { params: Promise
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-stone-200 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-2">Zeitpunkt</th><th className="px-4 py-2">Bereich</th><th className="px-4 py-2">Aktion</th><th className="px-4 py-2">Von</th></tr></thead>
           <tbody className="divide-y divide-stone-100">
-            {history.map((entry) => <tr key={entry.id}><td className="px-4 py-2 text-xs tabular-nums">{entry.createdAt.toLocaleString('de-DE')}</td><td className="px-4 py-2 text-xs text-muted-foreground">{entityTypeLabels[entry.entityType] ?? entry.entityType}</td><td className="px-4 py-2 text-xs">{entry.action}</td><td className="px-4 py-2 text-xs text-muted-foreground">{entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : (entry.userEmail ?? '–')}</td></tr>)}
+            {history.map((entry) => <tr key={entry.id}><td className="px-4 py-2 text-xs tabular-nums">{formatBerlinDateTime(entry.createdAt)}</td><td className="px-4 py-2 text-xs text-muted-foreground">{entityTypeLabels[entry.entityType] ?? entry.entityType}</td><td className="px-4 py-2 text-xs">{entry.action}</td><td className="px-4 py-2 text-xs text-muted-foreground">{entry.user ? `${entry.user.firstName} ${entry.user.lastName}` : (entry.userEmail ?? '–')}</td></tr>)}
           </tbody>
         </table>
         {history.length === 0 && <p className="px-4 py-6 text-sm text-muted-foreground">Keine Historieneinträge.</p>}

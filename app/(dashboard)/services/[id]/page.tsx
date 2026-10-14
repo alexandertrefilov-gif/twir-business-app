@@ -1,11 +1,8 @@
 // app/(dashboard)/services/[id]/page.tsx
 import type { Metadata }  from 'next'
 import { notFound }       from 'next/navigation'
-import Link               from 'next/link'
 import { getServiceReportById } from '@/lib/services/service-report.service'
 import { requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
-import { format } from 'date-fns'
-import { de }     from 'date-fns/locale'
 import { BusinessProcessWorkflow } from '@/components/workflow/BusinessProcessWorkflow'
 import { getBusinessProcessForServiceReport } from '@/lib/services/business-process.service'
 import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-permissions'
@@ -18,6 +15,7 @@ import { buildBusinessDocumentHeader } from '@/lib/workflow/document-header'
 import { getHeaderPermissions } from '@/lib/workflow/document-header-permissions'
 import { buildServiceReportDocumentSections } from '@/lib/documents/service-report-document'
 import { ServiceReportFinalizeButton } from '@/components/service-reports/ServiceReportFinalizeButton'
+import { formatBerlinDateTime } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Leistungsnachweis' }
 
@@ -122,7 +120,7 @@ export default async function ServiceReportDetailPage({ params }: { params: Prom
               </div>
               <div>
                 <p className="text-[11px] font-500 uppercase tracking-wider text-muted-foreground">Angelegt am</p>
-                <p className="text-sm">{format(new Date(report.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })}</p>
+                <p className="text-sm">{formatBerlinDateTime(report.createdAt)}</p>
               </div>
             </div>
 

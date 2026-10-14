@@ -13,6 +13,7 @@ import { getBusinessProcessPermissions } from '@/lib/workflow/business-process-p
 import { copyDocumentTextModules } from '@/lib/offers/rich-text'
 import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID } from '@/components/documents/DocumentFormWorkflowActions'
 import { SERVICE_REPORT_READY_FOR_INVOICE_WHERE } from '@/lib/workflow/invoice-eligibility'
+import { prepareInvoiceItemsFromServiceReport } from '@/lib/billing/service-report-transfer'
 
 export const metadata: Metadata = { title: 'Neue Rechnung' }
 
@@ -49,7 +50,7 @@ export default async function NewInvoicePage({
           // Für vor dem Unique-Constraint entstandene Legacy-Dubletten verwenden
           // wir deterministisch den zuletzt erfassten Stand statt gar keinen.
           orderBy: [{ reportDate: 'desc' }, { createdAt: 'desc' }], take: 1,
-          select: { id: true, reportNumber: true, reportDate: true, description: true, items: { orderBy: { position: 'asc' }, select: { id: true, description: true, quantity: true, unit: true, netAmount: true, taxRate: true } } },
+          select: { id: true, reportNumber: true, reportDate: true, description: true, items: { orderBy: { position: 'asc' }, select: { id: true, description: true, quantity: true, unit: true, unitPrice: true, discountRate: true, netAmount: true, taxRate: true } } },
         },
       },
     }),
@@ -78,14 +79,11 @@ export default async function NewInvoicePage({
     getBusinessProcessPermissions(),
   ])
   const serviceReport = selectedOrder?.serviceReports[0] ?? null
-  const reportItems = serviceReport?.items.map((item) => ({
-    _key: item.id,
-    description: item.description,
-    quantity: item.quantity.toString(),
-    unit: item.unit,
-    unitPrice: item.quantity.isZero() ? '0' : item.netAmount.dividedBy(item.quantity).toString(),
-    taxRate: item.taxRate.toString(),
-  }))
+  // Einzelpreis, Menge, Einheit und Steuersatz werden direkt aus dem Leistungsnachweis übernommen
+  // (kein Zurückrechnen aus dem Netto). Der Positionsrabatt wird mit übernommen (P4-B);
+  // Cent-Abweichungen zum Nachweis-Netto werden als Hinweis angezeigt (R-1).
+  const transfer = serviceReport ? prepareInvoiceItemsFromServiceReport(serviceReport.items) : null
+  const reportItems = transfer && !transfer.blocked ? transfer.items : undefined
 
   return (
     <div>
@@ -100,6 +98,12 @@ export default async function NewInvoicePage({
       <div className="p-4 sm:p-6">
         <BusinessDocumentLayout>
           <div className="min-w-0">
+            {transfer?.blocked ? (
+              <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                <p className="font-600">Rechnung aus diesem Leistungsnachweis noch nicht möglich</p>
+                <p className="mt-1">{transfer.blocked.reason}</p>
+              </div>
+            ) : (
             <InvoiceForm
           mode="create"
           customers={customerOptions}
@@ -116,7 +120,9 @@ export default async function NewInvoicePage({
             outroText:  settings.defaultInvoiceOutro ?? undefined,
             items: reportItems,
           }}
+          reportDeviations={transfer?.deviations ?? []}
             />
+            )}
           </div>
           <BusinessDocumentSidebar sticky>
             {process ? (

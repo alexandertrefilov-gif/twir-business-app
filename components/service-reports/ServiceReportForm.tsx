@@ -7,9 +7,10 @@ import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEdit
 import { ServiceReportPositionsEditor, type ServiceReportPositionValue } from '@/components/service-reports/ServiceReportPositionsEditor'
 import { ServiceReportPdfPreview } from '@/components/service-reports/ServiceReportPdfPreview'
 import type { ActionState } from '@/app/(dashboard)/services/actions'
-import type { ServiceReportItemInput } from '@/lib/validators/service-report.schema'
+import type { ServiceReportItemFormInput } from '@/lib/validators/service-report.schema'
 import { decodeOfferText } from '@/lib/offers/rich-text'
 import { DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
+import { berlinTodayIso } from '@/lib/utils/berlin-date'
 
 interface OrderOption { id: string; orderNumber: string; title: string | null; customerName?: string; contactName?: string }
 
@@ -29,7 +30,12 @@ interface ServiceReportFormProps {
   reportId?: string
 }
 
-const todayStr = () => new Date().toISOString().slice(0, 10)
+// Reine Textprüfung statt parseFloat: "0", "0.00", "" → kein Preis; jede andere nicht negative Zahl → Preis > 0
+const hasPositivePrice = (value: string | number) => {
+  const text = String(value).trim()
+  return text !== '' && !text.startsWith('-') && /[1-9]/.test(text)
+}
+const todayStr = () => berlinTodayIso()
 const INIT: ActionState = {}
 const FORM_ID = 'service-report-form'
 const WORKFLOW_ACTIONS_ID = 'service-report-workflow-actions'
@@ -45,12 +51,12 @@ export function ServiceReportForm({
   const [description, setDescription] = useState(defaults.description ?? '')
   const [selectedOrderId, setSelectedOrderId] = useState(defaults.orderId ?? '')
   const [reportDate, setReportDate] = useState(defaults.reportDate ?? todayStr())
-  const [previewItems, setPreviewItems] = useState<ServiceReportItemInput[]>([])
+  const [previewItems, setPreviewItems] = useState<ServiceReportItemFormInput[]>([])
   const [positionDefaults, setPositionDefaults] = useState(defaults.items)
   const positionsHaveData = previewItems.some((item) =>
-    item.description.trim() || item.notes?.trim() || item.unitPrice > 0,
+    item.description.trim() || item.notes?.trim() || hasPositivePrice(item.unitPrice),
   ) || Boolean(positionDefaults?.some((item) =>
-    item.description.trim() || item.notes.trim() || Number.parseFloat(item.unitPrice) > 0,
+    item.description.trim() || item.notes.trim() || hasPositivePrice(item.unitPrice),
   ))
 
   const fe = state.fieldErrors ?? {}

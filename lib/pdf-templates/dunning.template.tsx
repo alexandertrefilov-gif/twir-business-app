@@ -9,6 +9,8 @@ import {
   PDF_HEADER_HEADING_STYLE,
   PDF_HEADER_TEXT_STYLE,
 } from '@/lib/pdf-templates/document-header'
+import { formatDecimalDe } from '@/lib/billing/format'
+import { isPositiveMoney } from '@/lib/billing/open-amount'
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -18,7 +20,8 @@ export interface DunningPdfData {
   dueDate:       string
   level:         1 | 2 | 3
   levelLabel:    string
-  fee?:          number | null
+  /** Mahngebühr als Cent-String (Snapshot `feeAmount`), sonst null. */
+  fee?:          string | null
 
   company: {
     companyName:  string
@@ -47,12 +50,35 @@ export interface DunningPdfData {
   invoice: {
     invoiceNumber: string
     invoiceDate:   string
-    totalGross:    number
-    paidAmount:    number
+    /** Cent-Strings aus dem eingefrorenen Snapshot `dunning-basis-v1` (grossAmount / activePaymentsSum). */
+    totalGross:    string
+    paidAmount:    string
     dueDate:       string
   }
 
-  feeTotal:    number   // totalGross + fee
+  /** Offener Betrag zum Erstellungszeitpunkt (Snapshot `outstandingAmount`) – wird NICHT neu berechnet. */
+  outstandingAmount: string
+  /** Gesamtforderung = offener Betrag + Gebühr, fertig geliefert (Cent-String). */
+  feeTotal:    string
+}
+
+/**
+ * Anzeigewerte des Dokuments. Reine Formatierung: Das Template rechnet nie (kein Brutto − bezahlt, keine Summe aus
+ * offenem Betrag und Gebühr). Die Beträge sind die eingefrorene Grundlage der Mahnung (REQ-029 P5-4, Entscheidung 1/2);
+ * ein späterer Nachdruck zeigt deshalb auch nach zwischenzeitlichen Zahlungen denselben Forderungsbetrag.
+ * Produktiv ist noch kein Erzeuger von DunningPdfData angebunden (Backlog Mahn-PDF/Nummer/Archivierung).
+ */
+export function buildDunningAmountView(data: DunningPdfData) {
+  const eur = (value: string) => `${formatDecimalDe(value)} €`
+  const hasPaid = isPositiveMoney(data.invoice.paidAmount)
+  const hasFee  = data.fee != null && isPositiveMoney(data.fee)
+  return {
+    totalGross:  eur(data.invoice.totalGross),
+    paid:        hasPaid ? eur(data.invoice.paidAmount) : null,
+    outstanding: eur(data.outstandingAmount),
+    fee:         hasFee ? eur(data.fee as string) : null,
+    total:       eur(data.feeTotal),
+  }
 }
 
 // ── Styles ────────────────────────────────────────────────────
@@ -125,8 +151,7 @@ export function DunningDocument({ data }: { data: DunningPdfData }) {
   const c        = data.company
   const inv      = data.invoice
   const levelColor = LEVEL_COLORS[data.level]
-  const remaining  = Math.round((inv.totalGross - inv.paidAmount) * 100) / 100
-  const fmt        = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+  const amounts    = buildDunningAmountView(data)
 
   return (
     <Document title={`${data.levelLabel} ${inv.invoiceNumber}`} author={c.companyName}>
@@ -186,17 +211,17 @@ export function DunningDocument({ data }: { data: DunningPdfData }) {
           </View>
           <View style={S.boxRow}>
             <Text style={S.boxLabel}>Rechnungsbetrag</Text>
-            <Text style={S.boxValue}>{fmt(inv.totalGross)}</Text>
+            <Text style={S.boxValue}>{amounts.totalGross}</Text>
           </View>
-          {inv.paidAmount > 0 && (
+          {amounts.paid && (
             <View style={S.boxRow}>
               <Text style={S.boxLabel}>Bereits bezahlt</Text>
-              <Text style={[S.boxValue, { color: '#059669' }]}>– {fmt(inv.paidAmount)}</Text>
+              <Text style={[S.boxValue, { color: '#059669' }]}>– {amounts.paid}</Text>
             </View>
           )}
           <View style={[S.boxRow, { borderTop: '0.5 solid #d8d6d0', marginTop: 4, paddingTop: 4 }]}>
             <Text style={S.boxBold}>Offener Betrag</Text>
-            <Text style={[S.boxBold, S.mono]}>{fmt(remaining)}</Text>
+            <Text style={[S.boxBold, S.mono]}>{amounts.outstanding}</Text>
           </View>
         </View>
 
@@ -208,21 +233,21 @@ export function DunningDocument({ data }: { data: DunningPdfData }) {
 
         {/* Total with fee */}
         <View style={S.totalBox}>
-          {data.fee && data.fee > 0 && (
+          {amounts.fee && (
             <View style={S.totalRow}>
               <Text style={{ fontSize: 9, color: '#854d0e' }}>Offener Betrag</Text>
-              <Text style={[S.mono, { fontSize: 9, color: '#854d0e' }]}>{fmt(remaining)}</Text>
+              <Text style={[S.mono, { fontSize: 9, color: '#854d0e' }]}>{amounts.outstanding}</Text>
             </View>
           )}
-          {data.fee && data.fee > 0 && (
+          {amounts.fee && (
             <View style={S.totalRow}>
               <Text style={{ fontSize: 9, color: '#854d0e' }}>Mahngebühr</Text>
-              <Text style={[S.mono, { fontSize: 9, color: '#854d0e' }]}>{fmt(data.fee)}</Text>
+              <Text style={[S.mono, { fontSize: 9, color: '#854d0e' }]}>{amounts.fee}</Text>
             </View>
           )}
-          <View style={[S.totalRow, { marginTop: data.fee ? 4 : 0 }]}>
+          <View style={[S.totalRow, { marginTop: amounts.fee ? 4 : 0 }]}>
             <Text style={[S.bold, { fontSize: 10 }]}>Gesamtbetrag</Text>
-            <Text style={[S.bold, S.mono, { fontSize: 10 }]}>{fmt(data.feeTotal)}</Text>
+            <Text style={[S.bold, S.mono, { fontSize: 10 }]}>{amounts.total}</Text>
           </View>
           <View style={[S.totalRow, { marginTop: 4 }]}>
             <Text style={{ fontSize: 8.5, color: '#854d0e' }}>Zahlbar bis</Text>

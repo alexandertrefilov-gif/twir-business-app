@@ -1,5 +1,4 @@
-import { format } from 'date-fns'
-import { de } from 'date-fns/locale'
+import { formatBerlinDate, formatBerlinDateTime, formatCalendarDate, formatCalendarDateLong } from '@/lib/utils/berlin-date'
 import { CUSTOMER_ORDER_LABEL } from '@/lib/workflow/document-labels'
 import { INVOICE_TYPE_LABELS, type InvoiceType } from '@/types/enums'
 import type { BusinessProcessData } from '@/lib/services/business-process.service'
@@ -65,18 +64,37 @@ export interface BuildHeaderInput {
   recipient?: HeaderRecipient | null
   customer: HeaderCustomer
   /** Dokumentspezifische Datumsfelder in gewünschter Reihenfolge; leere Werte entfallen. */
-  dates: { label: string; value: Date | string | null | undefined; pattern?: string }[]
+  dates: { label: string; value: Date | string | null | undefined; pattern?: string; kind?: HeaderDateKind }[]
   /** Zusätzliche Felder (z. B. "Erfasst von"). */
   extraFields?: HeaderField[]
   process: BusinessProcessData
   permissions: HeaderPermissions
 }
 
-export function formatHeaderDate(value: Date | string | null | undefined, pattern = 'dd.MM.yyyy'): string | null {
+/**
+ * REQ-029/B-3 + WF-1A: Zwei Datumsarten werden getrennt dargestellt.
+ * - `calendar` (Standard): Kalendertag-Felder (Angebots-/Auftrags-/Rechnungsdatum, Fristen, Leistungsdatum) über UTC-Komponenten.
+ * - `instant`: echte Zeitpunkte (sentAt, acceptedAt, completedAt, finalizedAt …) in Europe/Berlin.
+ * Beides unabhängig von process.env.TZ. Nicht vorgesehene Muster/Arten-Kombinationen werfen laut (kein stilles Falschformatieren).
+ */
+export type HeaderDateKind = 'calendar' | 'instant'
+
+export function formatHeaderDate(
+  value: Date | string | null | undefined,
+  pattern = 'dd.MM.yyyy',
+  kind: HeaderDateKind = 'calendar',
+): string | null {
   if (!value) return null
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return null
-  return format(date, pattern, { locale: de })
+  if (kind === 'calendar') {
+    if (pattern === 'dd. MMMM yyyy') return formatCalendarDateLong(date)
+    if (pattern === 'dd.MM.yyyy') return formatCalendarDate(date)
+  } else {
+    if (pattern === 'dd.MM.yyyy HH:mm') return formatBerlinDateTime(date)
+    if (pattern === 'dd.MM.yyyy') return formatBerlinDate(date)
+  }
+  throw new RangeError(`formatHeaderDate: Muster „${pattern}“ ist für die Datumsart „${kind}“ nicht vorgesehen`)
 }
 
 export function documentDownloadHref(id: string): string {
@@ -87,7 +105,7 @@ export function buildBusinessDocumentHeader(input: BuildHeaderInput): BusinessDo
   const { process, permissions, current } = input
   const fields: HeaderField[] = []
   for (const entry of input.dates) {
-    const value = formatHeaderDate(entry.value, entry.pattern)
+    const value = formatHeaderDate(entry.value, entry.pattern, entry.kind)
     if (value) fields.push({ label: entry.label, value })
   }
   fields.push(...(input.extraFields ?? []))

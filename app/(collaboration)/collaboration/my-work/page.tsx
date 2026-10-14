@@ -8,6 +8,7 @@ import {
   type GgaControlTowerCabinetEntry, type GgaWorklistCabinetInput, type GgaWorklistCabinetTask, type GgaWorklistCabinetBlocker,
   type GgaWorklistEntryType, type GgaWorklistUrgency, type GgaPruefart, type GgaControlTowerReasonBadge, type GgaPresentationStatus,
 } from '@/lib/collaboration/cabinet-workflow'
+import { formatCalendarDateCompact } from '@/lib/utils/berlin-date'
 
 // GGA-Portal Produktblock 4 Abschnitt 7/9: welche Filterkategorie ein
 // Worklist-Eintragstyp bedient — reine Anzeige-Gruppierung der bereits
@@ -266,7 +267,7 @@ export default async function CollaborationMyWorkPage({ searchParams }: { search
               <td className="px-3 py-3 text-xs">{z.cabinetId ? <Link href={`/collaboration/cabinets/${z.cabinetId}`} className="font-600 text-blue-700 hover:underline">{z.kennung}</Link> : <span className="text-muted-foreground">Projektweit</span>}</td>
               <td className="px-3 py-3 text-xs text-slate-800">{z.problem}</td>
               <td className="px-3 py-3 text-xs text-slate-700">{z.naechsterSchritt}</td>
-              <td className="px-3 py-3 text-xs tabular-nums text-muted-foreground">{z.dueDate ? z.dueDate.toLocaleDateString('de-DE') : '–'}</td>
+              <td className="px-3 py-3 text-xs tabular-nums text-muted-foreground">{z.dueDate ? formatCalendarDateCompact(z.dueDate) : '–'}</td>
               <td className="px-3 py-3"><Link href={z.aktion.href} className="text-xs font-600 text-blue-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600">{z.aktion.label} →</Link></td>
             </tr>)}
           </tbody>

@@ -4,6 +4,8 @@
 // jedem Aufruf aus den verknüpften Tasks/Checklistenpunkten/Blockern/
 // Approvals berechnet (siehe GGA-Cabinet-Report, Abschnitt "Statusableitung").
 
+import { berlinDayStartUtc, calendarDaysUntil } from '@/lib/utils/berlin-date'
+
 export type GgaCabinetTaskSnapshot = {
   id: string
   title: string
@@ -165,10 +167,6 @@ function progressForStages(
   return Math.round((done / total) * 100)
 }
 
-function monthsBetween(from: Date, to: Date): number {
-  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
-}
-
 function derivePruefstatus(cabinet: GgaCabinetSnapshot, now: Date): GgaCabinetPruefstatus {
   const inspectionApprovals = cabinet.approvals
     .filter((approval) => INSPECTION_STAGE_CODES.has(approval.stageCode) && approval.approvalType === 'INTERNAL')
@@ -179,21 +177,43 @@ function derivePruefstatus(cabinet: GgaCabinetSnapshot, now: Date): GgaCabinetPr
   if (latest.status === 'REQUESTED') return 'GEPLANT'
   if (latest.status === 'REJECTED') return 'BEANSTANDET'
 
-  // APPROVED: bestanden, außer die Prüffrist ist inzwischen wieder abgelaufen
-  if (cabinet.letztePruefungAm && cabinet.pruefintervallMonate) {
-    if (monthsBetween(cabinet.letztePruefungAm, now) >= cabinet.pruefintervallMonate) return 'UEBERFAELLIG'
-  }
+  // APPROVED: bestanden, außer die Prüffrist ist inzwischen wieder abgelaufen. Maßgeblich ist dasselbe
+  // Fälligkeitsdatum (faelligAm) wie für BALD_FAELLIG – überfällig erst ab dem Kalendertag NACH der Fälligkeit.
+  const faelligkeit = berechnePruefFaelligkeit(cabinet, now)
+  if (faelligkeit && faelligkeit.tageBisFaellig < 0) return 'UEBERFAELLIG'
   return 'BESTANDEN'
 }
 
-function addMonthsToDate(date: Date, months: number): Date {
-  const result = new Date(date.getTime())
-  result.setMonth(result.getMonth() + months)
-  return result
+const MS_PRO_TAG = 24 * 60 * 60 * 1000
+
+/**
+ * Kalendertag + Monate, begrenzt auf den letzten gültigen Tag des Zielmonats (31.08. + 6 Monate → 28.02.,
+ * 31.01. + 1 Monat → 28.02. bzw. 29.02. im Schaltjahr; kein Überlauf in den Folgemonat).
+ * Gespeicherte Kalendertage sind UTC-Mitternacht (Datumsmodell E7); gerechnet wird ausschließlich mit UTC-Komponenten,
+ * unabhängig von process.env.TZ und von der Zeitzone des Servers. Ergebnis: UTC-Mitternacht des Zieltags.
+ */
+export function addMonthsToCalendarDate(date: Date, months: number): Date {
+  const total = date.getUTCMonth() + months
+  const year = date.getUTCFullYear() + Math.floor(total / 12)
+  const month = ((total % 12) + 12) % 12
+  const lastDayOfTargetMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+  return new Date(Date.UTC(year, month, Math.min(date.getUTCDate(), lastDayOfTargetMonth)))
 }
 
-function daysBetween(from: Date, to: Date): number {
-  return Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24))
+/**
+ * SSOT der Prüffälligkeit: faelligAm = letztePruefungAm + pruefintervallMonate (Kalendertag).
+ * `tageBisFaellig` = ganze Kalendertage von HEUTE (Berlin) bis faelligAm: > 0 vor der Fälligkeit, 0 am Fälligkeitstag,
+ * < 0 nach der Fälligkeit. Beide Seiten sind UTC-Mitternachten → exakte ganze Tage, keine Rundung, keine DST-Effekte.
+ * Aus diesem einen Wert werden UEBERFAELLIG (< 0), BALD_FAELLIG (≤ 30) und BESTANDEN abgeleitet.
+ */
+export function berechnePruefFaelligkeit(
+  cabinet: Pick<GgaCabinetSnapshot, 'letztePruefungAm' | 'pruefintervallMonate'>,
+  now: Date,
+): { faelligAm: Date; tageBisFaellig: number } | null {
+  if (!cabinet.letztePruefungAm || !cabinet.pruefintervallMonate) return null
+  const faelligAm = addMonthsToCalendarDate(cabinet.letztePruefungAm, cabinet.pruefintervallMonate)
+  const tageBisFaellig = Math.round((faelligAm.getTime() - berlinDayStartUtc(now).getTime()) / MS_PRO_TAG)
+  return { faelligAm, tageBisFaellig }
 }
 
 function deriveBetriebsstatus(
@@ -225,15 +245,15 @@ function deriveBetriebsstatus(
   }
   // pruefstatus === 'BESTANDEN': ohne bekannte Frist bleibt es bei der
   // generischen Aussage — mit Frist wird der Countdown zur Kernaussage.
-  if (!cabinet.letztePruefungAm || !cabinet.pruefintervallMonate) {
+  const faelligkeit = berechnePruefFaelligkeit(cabinet, now)
+  if (!faelligkeit) {
     return { status: 'BETRIEBSBEREIT', tageBisFaellig: null }
   }
-  const faelligAm = addMonthsToDate(cabinet.letztePruefungAm, cabinet.pruefintervallMonate)
-  const tageBisFaellig = daysBetween(now, faelligAm)
-  if (tageBisFaellig <= BALD_FAELLIG_VORLAUF_TAGE) {
+  // Vorlauf inklusiv: exakt 30 Tage vor faelligAm gilt bereits als bald fällig; am Fälligkeitstag (0) noch nicht überfällig.
+  if (faelligkeit.tageBisFaellig <= BALD_FAELLIG_VORLAUF_TAGE) {
     return { status: 'BALD_FAELLIG', tageBisFaellig: null }
   }
-  return { status: 'FAELLIG_IN_TAGEN', tageBisFaellig }
+  return { status: 'FAELLIG_IN_TAGEN', tageBisFaellig: faelligkeit.tageBisFaellig }
 }
 
 function deriveBetreiberstatus(cabinet: GgaCabinetSnapshot): GgaCabinetBetreiberstatus {
@@ -586,19 +606,16 @@ export type GgaWorklistCabinetInput = {
 // (BALD_FAELLIG_VORLAUF_TAGE = 30 Tage dort) — Maßnahmen sind feingranularer.
 const AUFGABE_DEMNAECHST_VORLAUF_TAGE = 7
 
-function istGleicherKalendertag(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
-}
-
 // GGA-Portal Produktblock 7 Abschnitt 8: exportiert (war zuvor datei-lokal),
 // damit die persönliche Arbeitsoberfläche (/collaboration/my-work) dieselbe
 // Fristigkeits-Einstufung für Projekt-/Phasen-Aufgaben (ohne cabinetId)
 // wiederverwenden kann, statt eine zweite, konkurrierende Priorität-Engine
 // zu bauen — identische Regel wie für Schrank-Maßnahmen.
 export function tagesUrgency(dueDate: Date, now: Date): { urgency: GgaWorklistUrgency; ueberfaellig: boolean; baldFaellig: boolean } {
-  if (dueDate.getTime() < now.getTime()) return { urgency: 1, ueberfaellig: true, baldFaellig: false }
-  if (istGleicherKalendertag(dueDate, now)) return { urgency: 3, ueberfaellig: false, baldFaellig: false }
-  const tageBisFaellig = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+  // REQ-029 P5-6 B-2 (D-3): Kalendertage in Europe/Berlin – der Fälligkeitstag selbst ist nicht überfällig.
+  const tageBisFaellig = calendarDaysUntil(dueDate, now)
+  if (tageBisFaellig < 0) return { urgency: 1, ueberfaellig: true, baldFaellig: false }
+  if (tageBisFaellig === 0) return { urgency: 3, ueberfaellig: false, baldFaellig: false }
   return { urgency: 4, ueberfaellig: false, baldFaellig: tageBisFaellig <= AUFGABE_DEMNAECHST_VORLAUF_TAGE }
 }
 

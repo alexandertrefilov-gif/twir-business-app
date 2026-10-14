@@ -2,6 +2,8 @@
 // als auch im externen Betreiberportal verwendet (Abschnitt 18). Baut
 // ausschließlich auf den bestehenden CollaborationApproval-Datensätzen auf,
 // keine eigene Historientabelle.
+import { formatBerlinDate } from '@/lib/utils/berlin-date'
+
 
 export type GgaFreigabehistorieEntry = {
   id: string
@@ -45,7 +47,7 @@ export function GgaCabinetFreigabehistorie({ approvals, audience = 'INTERNAL' }:
     {events.map((event, index) => <li key={index} className="rounded-lg border border-stone-200 bg-white p-3 text-sm">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="font-600">{event.label}</span>
-        <span className="text-xs tabular-nums text-muted-foreground">{new Date(event.at).toLocaleDateString('de-DE')}</span>
+        <span className="text-xs tabular-nums text-muted-foreground">{formatBerlinDate(event.at)}</span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">{event.who}</p>
       {event.note && <p className="mt-1 text-sm italic text-stone-700">„{event.note}“</p>}

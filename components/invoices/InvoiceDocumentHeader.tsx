@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { BusinessDocumentHeader } from '@/components/documents/BusinessDocumentHeader'
+import { formatCalendarDateLong } from '@/lib/utils/berlin-date'
 
 interface Props {
   title: string
@@ -26,7 +27,7 @@ export function InvoiceDocumentHeader({ title, projectTitle, customer, order, of
         {order && <HeaderLink label="Auftrag" href={`/orders/${order.id}`} value={order.orderNumber} />}
         {offer && <HeaderLink label="Angebotsbezug" href={`/offers/${offer.id}`} value={offer.offerNumber} />}
         {serviceReport && <HeaderLink label="Leistungsnachweis" href={`/services/${serviceReport.id}`} value={serviceReport.reportNumber} />}
-        {serviceReport?.reportDate && <HeaderValue label="Leistungsdatum" value={serviceReport.reportDate.toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })} />}
+        {serviceReport?.reportDate && <HeaderValue label="Leistungsdatum" value={formatCalendarDateLong(serviceReport.reportDate)} />}
       </dl>
     </BusinessDocumentHeader>
   )

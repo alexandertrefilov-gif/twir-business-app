@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { berlinTodayIso } from '@/lib/utils/berlin-date'
 
 type CabinetDoc = { id: string; documentKind: string; originalName: string; fileSize: number; uploadedBy?: { firstName: string; lastName: string } | null; createdAt?: string }
 
@@ -133,7 +134,7 @@ export function GgaCabinetIntakeWizard({ cabinetId, projectId, canEdit, initial,
   const abschliessen = async () => {
     try {
       await save({})
-      await patchCabinet(cabinetId, { bestandsaufnahmeAm: new Date().toISOString() })
+      await patchCabinet(cabinetId, { bestandsaufnahmeAm: berlinTodayIso() })
       try { window.sessionStorage.removeItem(storageKey) } catch { /* siehe oben */ }
       router.push(`/collaboration/cabinets/${cabinetId}`)
       router.refresh()

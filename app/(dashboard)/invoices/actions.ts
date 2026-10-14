@@ -13,17 +13,13 @@ import { requirePermission, Resource, Action } from '@/lib/auth/permissions'
 import { InvoiceDraftSchema } from '@/lib/validators/invoice.schema'
 import {
   createInvoiceDraft,
-  resolveInvoiceRecipientSnapshot,
+  updateInvoiceDraft,
   deleteInvoiceDraft,
   finalizeInvoice,
   cancelInvoice,
+  changeInvoiceStatus,
 } from '@/lib/services/invoice.service'
-import { prisma } from '@/lib/db/prisma'
-import { Prisma } from '@prisma/client'
-import { InvoiceStatus, isInvoiceTransitionAllowed } from '@/types/enums'
-import { BusinessRuleError, ConflictError, NotFoundError } from '@/lib/auth/permissions'
-import { buildAuditLogCreate } from '@/lib/services/audit.service'
-import { AuditAction } from '@/types/enums'
+import type { InvoiceStatus } from '@/types/enums'
 import { requireTestDeleteEnabled } from '@/lib/security/test-delete'
 import { archiveBusinessDocument } from '@/lib/documents/document-archive.service'
 import type { RoleName } from '@/types/enums'
@@ -45,6 +41,12 @@ function parseItems(formData: FormData) {
   const raw = formData.get('itemsJson')
   if (!raw || typeof raw !== 'string') return []
   try { return JSON.parse(raw) as unknown[] } catch { return [] }
+}
+
+// REQ-029 P3: Käuferreferenz nur übernehmen, wenn das Feld übermittelt wurde (kein UI-Feld in P3 –
+// ein fehlendes Feld darf einen bereits gesetzten Wert nicht löschen).
+function readBuyerReference(formData: FormData): FormDataEntryValue | undefined {
+  return formData.has('buyerReference') ? formData.get('buyerReference') ?? undefined : undefined
 }
 
 // ── CREATE DRAFT ──────────────────────────────────────────────
@@ -78,6 +80,7 @@ export async function createInvoiceDraftAction(
     paymentTermDays:     formData.get('paymentTermDays')    || null,
     introText:           formData.get('introText')  || null,
     outroText:           formData.get('outroText')  || null,
+    buyerReference:      readBuyerReference(formData),
     items:               parseItems(formData),
   }
 
@@ -128,7 +131,7 @@ export async function createInvoiceDraftAction(
 }
 
 // ── UPDATE DRAFT ──────────────────────────────────────────────
-// Nutzt direktes Prisma-Update (kein Duplikat von invoice.service — dort nur create/finalize/cancel)
+// Seit P4-A über invoice.service.updateInvoiceDraft (Sperre + zentrale Berechnung).
 
 export async function updateInvoiceDraftAction(
   invoiceId: string,
@@ -160,6 +163,7 @@ export async function updateInvoiceDraftAction(
     paymentTermDays:     formData.get('paymentTermDays')    || null,
     introText:           formData.get('introText')  || null,
     outroText:           formData.get('outroText')  || null,
+    buyerReference:      readBuyerReference(formData),
     items:               parseItems(formData),
   }
 
@@ -173,86 +177,34 @@ export async function updateInvoiceDraftAction(
   }
 
   try {
-    // Guard: nur DRAFT editierbar
-    const existing = await prisma.invoice.findUnique({
-      where:  { id: invoiceId },
-      select: { status: true },
-    })
-    if (!existing) throw new NotFoundError('Rechnung nicht gefunden')
-    if (existing.status !== InvoiceStatus.DRAFT) {
-      throw new BusinessRuleError('Nur Rechnungsentwürfe können bearbeitet werden.')
-    }
-
-    const customer = await prisma.customer.findFirst({ where: { id: result.data.customerId, deletedAt: null } })
-    if (!customer) throw new NotFoundError('Kunde nicht gefunden')
-    const items = result.data.items
-    let totalNet = 0, totalTax = 0
-    for (const item of items) {
-      const net = item.quantity * item.unitPrice
-      totalNet += net
-      totalTax += net * item.taxRate / 100
-    }
-    totalNet   = Math.round(totalNet * 100) / 100
-    totalTax   = Math.round(totalTax * 100) / 100
-    const totalGross = Math.round((totalNet + totalTax) * 100) / 100
-
-    await prisma.$transaction(async (tx) => {
-      const customerSnapshot = await resolveInvoiceRecipientSnapshot(customer, {
-        invoiceRecipientSource: result.data.invoiceRecipientSource,
-        billingAddressId: result.data.billingAddressId ?? undefined,
-        recipientName: result.data.recipientName ?? undefined,
-        recipientAdditional: result.data.recipientAdditional ?? undefined,
-        recipientStreet: result.data.recipientStreet ?? undefined,
+    // P4-A: Statusprüfung, Sperre, Berechnung und Schreiben liegen vollständig im Service
+    // (eine Transaktion, Zeilensperre, Statusbedingung) – die Action prüft nichts mehr selbst.
+    await updateInvoiceDraft(
+      invoiceId,
+      {
+        ...result.data,
+        orderId:              result.data.orderId              ?? undefined,
+        billingAddressId:     result.data.billingAddressId     ?? undefined,
+        recipientName:        result.data.recipientName        ?? undefined,
+        recipientAdditional:  result.data.recipientAdditional  ?? undefined,
+        recipientStreet:      result.data.recipientStreet      ?? undefined,
         recipientHouseNumber: result.data.recipientHouseNumber ?? undefined,
-        recipientPostalCode: result.data.recipientPostalCode ?? undefined,
-        recipientCity: result.data.recipientCity ?? undefined,
-        recipientCountry: result.data.recipientCountry ?? undefined,
+        recipientPostalCode:  result.data.recipientPostalCode  ?? undefined,
+        recipientCity:        result.data.recipientCity        ?? undefined,
+        recipientCountry:     result.data.recipientCountry     ?? undefined,
         recipientContactName: result.data.recipientContactName ?? undefined,
-        recipientEmail: result.data.recipientEmail ?? undefined,
-      }, tx)
-      await tx.invoiceItem.deleteMany({ where: { invoiceId } })
-      await tx.invoice.update({
-        where: { id: invoiceId },
-        data: {
-          customerId:          result.data.customerId,
-          customerSnapshot:    customerSnapshot as Prisma.InputJsonValue,
-          orderId:             result.data.orderId             ?? null,
-          invoiceDate:         result.data.invoiceDate,
-          dueDate:             result.data.dueDate             ?? null,
-          deliveryDate:        result.data.deliveryDate        ?? null,
-          deliveryPeriodStart: result.data.deliveryPeriodStart ?? null,
-          deliveryPeriodEnd:   result.data.deliveryPeriodEnd   ?? null,
-          paymentTermDays:     result.data.paymentTermDays     ?? null,
-          introText:           result.data.introText           ?? null,
-          outroText:           result.data.outroText           ?? null,
-          totalNet,
-          totalTax,
-          totalGross,
-          items: {
-            create: items.map((item) => ({
-              position:    item.position,
-              description: item.description,
-              quantity:    item.quantity,
-              unit:        item.unit ?? 'Stk.',
-              unitPrice:   item.unitPrice,
-              taxRate:     item.taxRate,
-              netAmount:   Math.round(item.quantity * item.unitPrice * 100) / 100,
-              taxAmount:   Math.round(item.quantity * item.unitPrice * item.taxRate / 100 * 100) / 100,
-              grossAmount: Math.round(item.quantity * item.unitPrice * (1 + item.taxRate / 100) * 100) / 100,
-              notes:       item.notes ?? null,
-            })),
-          },
-        },
-      })
-
-      await buildAuditLogCreate(tx, {
-        userId, userEmail,
-        action:     AuditAction.UPDATE,
-        entityType: 'invoice',
-        entityId:   invoiceId,
-        newValue:   { totalNet, totalGross, itemCount: items.length },
-      })
-    })
+        recipientEmail:       result.data.recipientEmail       ?? undefined,
+        dueDate:              result.data.dueDate              ?? undefined,
+        deliveryDate:         result.data.deliveryDate         ?? undefined,
+        deliveryPeriodStart:  result.data.deliveryPeriodStart  ?? undefined,
+        deliveryPeriodEnd:    result.data.deliveryPeriodEnd    ?? undefined,
+        paymentTermDays:      result.data.paymentTermDays      ?? undefined,
+        introText:            result.data.introText            ?? undefined,
+        outroText:            result.data.outroText            ?? undefined,
+      },
+      userId,
+      userEmail,
+    )
     await archiveBusinessDocument('invoice', invoiceId, 'DRAFT', await getActor())
   } catch (e: unknown) {
     return { success: false, error: e instanceof Error ? e.message : 'Fehler beim Speichern' }
@@ -329,38 +281,8 @@ export async function changeInvoiceStatusAction(
   const { userId, userEmail } = await getActor()
 
   try {
-    const invoice = await prisma.invoice.findUnique({
-      where:  { id: invoiceId },
-      select: { status: true },
-    })
-    if (!invoice) throw new NotFoundError('Rechnung nicht gefunden')
-
-    if (!isInvoiceTransitionAllowed(invoice.status as InvoiceStatus, toStatus)) {
-      throw new BusinessRuleError(`Statuswechsel nach „${toStatus}" nicht erlaubt.`)
-    }
-
-    await prisma.$transaction(async (tx) => {
-      // Optimistische Bedingung auf den Ausgangsstatus: verhindert, dass zwei
-      // parallele Requests denselben Übergang doppelt anwenden bzw. doppelt auditieren.
-      const updated = await tx.invoice.updateMany({
-        where: { id: invoiceId, status: invoice.status },
-        data: {
-          status:  toStatus,
-          ...(toStatus === InvoiceStatus.SENT ? { sentAt: new Date() } : {}),
-        },
-      })
-      if (updated.count === 0) {
-        throw new ConflictError('Der Rechnungsstatus wurde zwischenzeitlich geändert.')
-      }
-      await buildAuditLogCreate(tx, {
-        userId, userEmail,
-        action:     AuditAction.STATUS_CHANGE,
-        entityType: 'invoice',
-        entityId:   invoiceId,
-        oldValue:   { status: invoice.status },
-        newValue:   { status: toStatus },
-      })
-    })
+    // P4-C: Prüfung (Whitelist manueller Übergänge), Sperre, Statusbedingung und Audit liegen im Service.
+    await changeInvoiceStatus(invoiceId, toStatus, userId, userEmail)
 
     revalidatePath(`/invoices/${invoiceId}`)
     revalidatePath('/invoices')

@@ -6,7 +6,17 @@
 
 import { prisma } from '@/lib/db/prisma'
 import { NumberSequenceType } from '@/types/enums'
+import { berlinCalendarDate } from '@/lib/utils/berlin-date'
 import { Prisma } from '@prisma/client'
+
+/**
+ * Berliner Kalenderjahr und -monat eines Zeitpunkts (REQ-029 P5-6 B-1, Owner-Entscheidung D-2):
+ * Nummernkreise wechseln mit dem Kalendertag in Europe/Berlin, nicht mit UTC und nicht mit process.env.TZ.
+ */
+function berlinYearMonth(at: Date): { year: number; month: number } {
+  const [year, month] = berlinCalendarDate(at).split('-').map(Number)
+  return { year, month }
+}
 
 /**
  * Gibt die nächste Nummer für einen Nummernkreis zurück.
@@ -27,11 +37,11 @@ export async function nextNumber(
   tx: Prisma.TransactionClient,
 ): Promise<string> {
   const now = new Date()
-  const year = now.getFullYear()
+  const { year, month } = berlinYearMonth(now)
   // Angebotsnummern laufen monatlich. Das bestehende eindeutige Feld `year`
   // wird dafür ohne Schemaänderung als YYYYMM-Periodenschlüssel verwendet.
   const period = type === NumberSequenceType.OFFER
-    ? year * 100 + now.getMonth() + 1
+    ? year * 100 + month
     : year
 
   // Zeile sperren (FOR UPDATE) — verhindert parallele Vergaben
@@ -114,8 +124,10 @@ export async function nextNumber(
  * Beispiel: erster Vorgang im Juli 2026 → AN 260701
  */
 export function formatOfferNumber(date: Date, prefix: string, number: number): string {
-  const shortYear = String(date.getFullYear()).slice(-2)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
+  // `date` ist ein Zeitpunkt; maßgeblich ist sein Kalendermonat in Europe/Berlin.
+  const berlin = berlinYearMonth(date)
+  const shortYear = String(berlin.year).slice(-2)
+  const month = String(berlin.month).padStart(2, '0')
   const sequence = String(number).padStart(2, '0')
   return `${prefix} ${shortYear}${month}${sequence}`
 }
@@ -173,9 +185,8 @@ function getPrefixFromSettings(
  * Nur lesen — keine Änderungen.
  */
 export async function getSequenceStatus() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const offerPeriod = year * 100 + now.getMonth() + 1
+  const { year, month } = berlinYearMonth(new Date())
+  const offerPeriod = year * 100 + month
   return prisma.numberSequence.findMany({
     where: {
       OR: [

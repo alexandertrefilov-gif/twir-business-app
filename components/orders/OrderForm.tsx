@@ -6,6 +6,7 @@ import { useRouter }   from 'next/navigation'
 import type { ActionState } from '@/app/(dashboard)/orders/actions'
 import { RichTextSectionsEditor } from '@/components/offers/RichTextSectionsEditor'
 import { DOCUMENT_CREATE_WORKFLOW_ACTIONS_ID, DocumentFormWorkflowActions } from '@/components/documents/DocumentFormWorkflowActions'
+import { berlinTodayIso } from '@/lib/utils/berlin-date'
 
 interface CustomerOption { id: string; name: string; number: string }
 
@@ -42,7 +43,7 @@ const TAX_OPTS = [{ value: '19', label: '19 %' }, { value: '7', label: '7 %' }, 
 function newRow(): ItemRow {
   return { _key: crypto.randomUUID(), description: '', quantity: '1', unit: 'Stk.', unitPrice: '', taxRate: '19', notes: '' }
 }
-const todayStr = () => new Date().toISOString().slice(0, 10)
+const todayStr = () => berlinTodayIso()
 const INIT: ActionState = {}
 
 export function OrderForm({ mode, customers, defaults = {}, action, lockCustomer }: OrderFormProps) {

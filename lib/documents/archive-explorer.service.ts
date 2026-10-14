@@ -8,6 +8,7 @@ import {
 import { offerDisplayName } from '@/lib/offers/offer-display'
 import { offerProjectDesignation } from '@/lib/offers/rich-text'
 import { buildBusinessCaseArchiveDirectory, BUSINESS_CASE_DIRECTORY_PREFIX } from '@/lib/documents/archive-naming'
+import { calendarYear } from '@/lib/utils/berlin-date'
 
 export type ArchiveSort = 'name' | 'type' | 'modified' | 'size'
 export type ArchiveSortDirection = 'asc' | 'desc'
@@ -277,7 +278,7 @@ async function offerArchiveIndex(): Promise<OfferArchiveIndex> {
       ...(offer.order?.invoices?.map(invoice => invoice.invoiceNumber) ?? []),
     ].filter(Boolean).join(' ')
     const caseCategory = buildBusinessCaseArchiveDirectory({
-      year: offer.offerDate.getFullYear(), customerNumber: offer.customer?.number,
+      year: calendarYear(offer.offerDate), customerNumber: offer.customer?.number,
       customerName: offer.customer?.name ?? 'Kunde', areaName: offer.areaName ?? offer.title,
       businessCaseId: `offer-${offer.id}`, category: '01_Angebot',
     })

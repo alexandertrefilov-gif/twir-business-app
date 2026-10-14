@@ -92,8 +92,20 @@ export interface XRechnungLineItem {
   unitCode:       string
   // BT-131: Nettobetrag Zeile
   lineAmount:     number
-  // BT-146: Einzelpreis netto
+  // BT-146: Einzelpreis netto (vor Positionsnachlass: BT-146 = Preis ohne den Nachlass aus BG-27)
   unitPrice:      number
+  // REQ-029 P4-B: Positionsnachlass (BG-27). Nur gesetzt, wenn der Positionsrabatt > 0 ist.
+  //   OFFEN (vor dem E-Rechnungs-Generator zu klären): Die Rechnung rundet das Positionsnetto (BT-131) genau einmal
+  //   aus Menge × Preis × (1 − Rabatt/100). BT-136 muss so abgeleitet werden, dass die Prüfregel
+  //   BT-131 = Menge × Preis − BT-136 exakt aufgeht; die Ableitung ist hier bewusst noch nicht festgelegt.
+  allowance?: {
+    // BT-136: Nachlassbetrag der Position
+    amount:  number
+    // BT-138: Nachlass in Prozent
+    percent: number
+    // BT-137: Basisbetrag des Nachlasses (Dezimal-String)
+    baseAmount: string
+  }
   // BT-152: Steuersatz (%)
   taxRate:        number
 }

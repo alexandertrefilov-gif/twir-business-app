@@ -8,6 +8,8 @@ import { prisma }     from '@/lib/db/prisma'
 import { Prisma }     from '@prisma/client'
 import { NotFoundError } from '@/lib/auth/permissions'
 import type { InvoiceStatus } from '@/types/enums'
+import { toMoney, remainingMoney } from '@/lib/billing/payment-math'
+import { moneyToNumber } from '@/lib/services/money-output'
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -104,8 +106,9 @@ export async function getInvoices(
 
   return {
     invoices: raw.map((inv) => {
-      const totalGross = inv.totalGross.toNumber()
-      const paidAmount = inv.paidAmount.toNumber()
+      // REQ-029 P4-D: Restbetrag exakt per Dezimalarithmetik; number nur an der Ausgabegrenze.
+      const totalGross = moneyToNumber(toMoney(inv.totalGross))
+      const paidAmount = moneyToNumber(toMoney(inv.paidAmount))
       return {
         id:             inv.id,
         invoiceNumber:  inv.invoiceNumber,
@@ -118,7 +121,7 @@ export async function getInvoices(
         dueDate:        inv.dueDate,
         totalGross,
         paidAmount,
-        remainingAmount: Math.round((totalGross - paidAmount) * 100) / 100,
+        remainingAmount: moneyToNumber(remainingMoney(inv.totalGross, inv.paidAmount)),
         finalizedAt:    inv.finalizedAt,
         createdAt:      inv.createdAt,
       }
@@ -204,18 +207,18 @@ export async function getInvoiceSummary() {
     }),
   ])
 
-  const openGross = totalOpen._sum.totalGross?.toNumber() ?? 0
-  const openPaid  = totalOpen._sum.paidAmount?.toNumber()  ?? 0
+  const openGross = totalOpen._sum.totalGross ?? '0'
+  const openPaid  = totalOpen._sum.paidAmount ?? '0'
 
   return {
-    openAmount:          Math.round((openGross - openPaid) * 100) / 100,
+    openAmount:          moneyToNumber(remainingMoney(openGross, openPaid)),
     overdueCount:        totalOverdue,
-    monthlyRevenue:      totalThisMonth._sum.totalGross?.toNumber() ?? 0,
+    monthlyRevenue:      moneyToNumber(toMoney(totalThisMonth._sum.totalGross ?? '0')),
     recentInvoices:      recentInvoices.map((inv) => ({
       id:            inv.id,
       invoiceNumber: inv.invoiceNumber,
       status:        inv.status,
-      totalGross:    inv.totalGross.toNumber(),
+      totalGross:    moneyToNumber(toMoney(inv.totalGross)),
       customerName:  inv.customer.name,
     })),
   }

@@ -191,7 +191,8 @@ describe('WF-1B Rechnungsadresse aus dem Snapshot', () => {
 })
 
 describe('WF-1B Leistungsdatum, Leistungszeitraum und Rechnungsfelder', () => {
-  const d = (iso: string) => new Date(`${iso}T12:00:00`)
+  // Kalendertage sind UTC-Mitternacht (REQ-029/B-3); Zeitpunkte werden in Europe/Berlin dargestellt.
+  const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`)
 
   it('zeigt das Leistungsdatum', () => {
     expect(buildServiceDateFields({ deliveryDate: d('2026-09-10') })).toEqual([{ label: 'Leistungsdatum', value: '10. September 2026' }])
@@ -217,7 +218,7 @@ describe('WF-1B Leistungsdatum, Leistungszeitraum und Rechnungsfelder', () => {
   it('liefert die Rechnungsfelder in fester Reihenfolge ohne leere Zeilen', () => {
     const fields = buildInvoiceHeaderFields({
       invoiceDate: d('2026-10-01'), deliveryDate: d('2026-09-10'), dueDate: d('2026-10-31'),
-      finalizedAt: new Date(2026, 9, 2, 14, 30), sentAt: d('2026-10-03'), supplierNumber: ' 4711 ',
+      finalizedAt: new Date('2026-10-02T12:30:00.000Z'), sentAt: new Date('2026-10-03T10:00:00.000Z'), supplierNumber: ' 4711 ',
     })
     expect(fields).toEqual([
       { label: 'Rechnungsdatum', value: '01. Oktober 2026' },
@@ -226,6 +227,19 @@ describe('WF-1B Leistungsdatum, Leistungszeitraum und Rechnungsfelder', () => {
       { label: 'Finalisiert am', value: '02.10.2026 14:30' },
       { label: 'Versendet am', value: '03.10.2026' },
       { label: 'Lieferantennummer', value: '4711' },
+    ])
+  })
+
+  it('stellt Zeitpunkte in Europe/Berlin und Kalendertage zeitzonenunabhängig dar (REQ-029/B-3)', () => {
+    const fields = buildInvoiceHeaderFields({
+      invoiceDate: new Date('2026-10-20T17:42:00.000Z'), dueDate: new Date('2026-10-19T22:00:00.000Z'),
+      finalizedAt: new Date('2026-10-02T22:30:00.000Z'), sentAt: new Date('2026-10-02T22:30:00.000Z'),
+    })
+    expect(fields).toEqual([
+      { label: 'Rechnungsdatum', value: '20. Oktober 2026' },
+      { label: 'Zahlungsziel', value: '19. Oktober 2026' },
+      { label: 'Finalisiert am', value: '03.10.2026 00:30' },
+      { label: 'Versendet am', value: '03.10.2026' },
     ])
   })
 

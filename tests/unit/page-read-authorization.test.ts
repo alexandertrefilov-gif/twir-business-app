@@ -21,6 +21,7 @@ const queries = vi.hoisted(() => ({
   getInvoiceById: vi.fn(),
   getInvoicePayments: vi.fn(),
   getDunningNoticesForInvoice: vi.fn(),
+  getDunningEligibility: vi.fn(),
 }))
 
 vi.mock('next-auth', () => ({
@@ -69,6 +70,7 @@ vi.mock('@/lib/services/invoice-query.service', () => ({
 
 vi.mock('@/lib/services/dunning.service', () => ({
   getDunningNoticesForInvoice: queries.getDunningNoticesForInvoice,
+  getDunningEligibility: queries.getDunningEligibility,
 }))
 
 import {
@@ -217,6 +219,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
     )
     queries.getInvoicePayments.mockResolvedValue([])
     queries.getDunningNoticesForInvoice.mockResolvedValue([])
+    queries.getDunningEligibility.mockResolvedValue(null)
   })
 
   it.each(protectedPages)('blockiert EMPLOYEE vor der Abfrage: $name', async (entry) => {
@@ -264,6 +267,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
 
     expect(queries.getInvoiceById).not.toHaveBeenCalled()
     expect(queries.getDunningNoticesForInvoice).not.toHaveBeenCalled()
+    expect(queries.getDunningEligibility).not.toHaveBeenCalled()
   })
 
   it('liefert bei invoice:read ohne payment:read keine Zahlungsdetails', async () => {
@@ -277,6 +281,7 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
       .toHaveBeenCalledWith(Resource.PAYMENT, Action.READ)
     expect(queries.getInvoicePayments).not.toHaveBeenCalled()
     expect(queries.getDunningNoticesForInvoice).not.toHaveBeenCalled()
+    expect(queries.getDunningEligibility).not.toHaveBeenCalled()
   })
 
   it('lädt Zahlungsdetails für eine payment:read-berechtigte Rolle erst nach der Prüfung', async () => {
@@ -295,6 +300,8 @@ describe('serverseitige READ-Autorisierung der direkten Seitenzugriffe', () => {
   })
 })
 
+// P5-4 Fixture-Kompatibilität: Das Test-Double bildet die reale Prisma.Decimal-Schnittstelle (toFixed) nach,
+// die die Rechnungsseite seit P5-4 Schritt 3 verwendet. Keine fachliche Änderung der P5-3-Berechtigungsprüfung.
 function invoiceFixture() {
   return {
     id: 'invoice-1',
@@ -307,10 +314,10 @@ function invoiceFixture() {
     order: null,
     customer: { name: 'Testkunde' },
     items: [],
-    totalNet: { toNumber: () => 100 },
-    totalTax: { toNumber: () => 19 },
-    totalGross: { toNumber: () => 119 },
-    paidAmount: { toNumber: () => 20 },
+    totalNet: { toNumber: () => 100, toFixed: () => '100.00' },
+    totalTax: { toNumber: () => 19, toFixed: () => '19.00' },
+    totalGross: { toNumber: () => 119, toFixed: () => '119.00' },
+    paidAmount: { toNumber: () => 20, toFixed: () => '20.00' },
     invoiceDate: new Date('2026-01-01'),
     dueDate: new Date('2026-01-15'),
     finalizedAt: new Date('2026-01-01'),

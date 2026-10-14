@@ -4,10 +4,9 @@ import Link                from 'next/link'
 import { PageHeader }      from '@/components/shared/PageHeader'
 import { getServiceReports } from '@/lib/services/service-report.service'
 import { hasPermission, requirePagePermission, Resource, Action } from '@/lib/auth/permissions'
-import { format } from 'date-fns'
-import { de }     from 'date-fns/locale'
 import { RecordDeleteButton } from '@/components/shared/RecordDeleteButton'
 import { isTestDeleteEnabled } from '@/lib/security/test-delete'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 export const metadata: Metadata = { title: 'Leistungen' }
 
@@ -96,7 +95,7 @@ export default async function ServicesPage({ searchParams }: { searchParams: Pro
                     </td>
                     <td className="text-sm">{r.customerName}</td>
                     <td className="mono text-xs">
-                      {format(new Date(r.reportDate), 'dd.MM.yyyy', { locale: de })}
+                      {formatCalendarDate(r.reportDate)}
                     </td>
                     {user.role !== 'EMPLOYEE' && (
                       <td className="text-sm text-muted-foreground">{r.createdByName}</td>

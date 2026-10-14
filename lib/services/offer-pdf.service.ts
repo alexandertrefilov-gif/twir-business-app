@@ -1,8 +1,8 @@
-import { format } from 'date-fns'
 import type { OfferPdfData } from '@/lib/pdf-templates/offer.template'
 import { getOfferById } from '@/lib/services/offer.service'
 import { getCompanySnapshot } from '@/lib/services/settings.service'
 import { loadCompanyLogoForPdf } from '@/lib/services/company-logo-rendering.service'
+import { formatCalendarDate } from '@/lib/utils/berlin-date'
 
 export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
   const [offer, liveCompany] = await Promise.all([
@@ -36,8 +36,8 @@ export async function getOfferPdfData(offerId: string): Promise<OfferPdfData> {
 
   return {
     offerNumber: offer.offerNumber,
-    offerDate: format(offer.offerDate, 'dd.MM.yyyy'),
-    validUntil: offer.validUntil ? format(offer.validUntil, 'dd.MM.yyyy') : undefined,
+    offerDate: formatCalendarDate(offer.offerDate),
+    validUntil: offer.validUntil ? formatCalendarDate(offer.validUntil) : undefined,
     title: offer.title,
     introText: offer.introText,
     outroText: offer.outroText,

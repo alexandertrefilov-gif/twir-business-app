@@ -7,9 +7,8 @@ import { useRouter }          from 'next/navigation'
 import { ConfirmDialog }      from '@/components/shared/ConfirmDialog'
 import { deleteDocumentAction, retryDocumentArchiveAction } from '@/app/(dashboard)/documents/actions'
 import { formatFileSize }     from '@/lib/services/document.service'
-import { format }             from 'date-fns'
-import { de }                 from 'date-fns/locale'
 import type { DocumentListItem } from '@/lib/services/document.service'
+import { formatBerlinDateTime } from '@/lib/utils/berlin-date'
 
 interface DocumentArchiveProps {
   documents:   DocumentListItem[]
@@ -99,7 +98,7 @@ export function DocumentArchive({
                 </div>
                 <div className="flex gap-3 mt-0.5 text-xs text-muted-foreground">
                   <span className="mono">{formatFileSize(doc.fileSize)}</span>
-                  <span>{format(new Date(doc.createdAt), 'dd.MM.yyyy HH:mm', { locale: de })}</span>
+                  <span>{formatBerlinDateTime(doc.createdAt)}</span>
                   {doc.entityLabel !== '–' && (
                     <span className="mono">{doc.entityLabel}</span>
                   )}

@@ -1,3 +1,4 @@
+import { isCalendarDatePast } from '@/lib/utils/berlin-date'
 import type { CollaborationHealthStatus, CollaborationProjectStatus, CollaborationStageStatus } from '@/types/enums'
 
 export type CollaborationTaskSnapshot = {
@@ -231,9 +232,9 @@ export function calculateProjectHealth(
   now = new Date(),
 ): CollaborationHealthStatus {
   if (stages.some((stage) => stage.isRequired && (stage.status === 'BLOCKED' || (stage.blockedReason ?? '').trim() || stage.blockers?.some((blocker) => blocker.status === 'OPEN')))) return 'RED'
-  if (stages.some((stage) => stage.isRequired && stage.tasks?.some((task) => task.isRequired && task.dueDate && task.dueDate < now && !['DONE', 'SKIPPED'].includes(task.status)))) return 'YELLOW'
+  if (stages.some((stage) => stage.isRequired && stage.tasks?.some((task) => task.isRequired && task.dueDate && isCalendarDatePast(task.dueDate, now) && !['DONE', 'SKIPPED'].includes(task.status)))) return 'YELLOW'
   if (stages.some((stage) => stage.isRequired && stage.requiresApproval === true && stage.status === 'WAITING_FOR_APPROVAL')) return 'YELLOW'
-  if (stages.some((stage) => stage.isRequired && stage.plannedEnd && stage.plannedEnd < now && !completeStatuses.has(stage.status))) return 'YELLOW'
+  if (stages.some((stage) => stage.isRequired && stage.plannedEnd && isCalendarDatePast(stage.plannedEnd, now) && !completeStatuses.has(stage.status))) return 'YELLOW'
   return 'GREEN'
 }
 
